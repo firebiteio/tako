@@ -1,0 +1,44 @@
+<idea-plugin>
+  <id>io.firebite.tako</id>
+  <name>Tako</name>
+  <vendor url="https://firebite.io">Firebite</vendor>
+  <description><![CDATA[
+    A chat for coding agents in the IDE. It runs the Claude Code (<code>claude</code>) or Codex (<code>codex</code>)
+    you have installed, or any agent that speaks the Agent Client Protocol, such as Gemini CLI.
+    Answers stream in, tool calls show as cards, and permission prompts open the change in the IDE diff viewer.
+    The editor selection and inspection results go along as context, and you can resume the agents' own sessions.
+  ]]></description>
+
+  <resource-bundle>messages.TakoBundle</resource-bundle>
+
+  <depends>com.intellij.modules.platform</depends>
+  <depends>com.intellij.modules.jcef</depends>
+
+  <extensions defaultExtensionNs="com.intellij">
+    <toolWindow id="Tako" anchor="right" secondary="false" icon="/icons/tako.svg"
+                factoryClass="io.firebite.tako.chat.ChatToolWindowFactory"/>
+    <applicationConfigurable parentId="tools" id="io.firebite.tako.settings" key="configurable.tako"
+                             instance="io.firebite.tako.settings.ChatSettingsConfigurable"/>
+    <applicationConfigurable parentId="io.firebite.tako.settings" id="io.firebite.tako.settings.claude"
+                             key="configurable.claude" instance="io.firebite.tako.settings.ClaudeCodeConfigurable"/>
+    <applicationConfigurable parentId="io.firebite.tako.settings" id="io.firebite.tako.settings.codex"
+                             key="configurable.codex" instance="io.firebite.tako.settings.CodexConfigurable"/>
+    <applicationConfigurable parentId="io.firebite.tako.settings" id="io.firebite.tako.settings.acp"
+                             key="configurable.acp" instance="io.firebite.tako.settings.AcpAgentsConfigurable"/>
+    <notificationGroup id="Tako" displayType="BALLOON" key="notification.group.tako"/>
+  </extensions>
+
+  <actions>
+    <action id="Tako.NewChat" class="io.firebite.tako.ide.actions.NewChatAction" icon="AllIcons.General.Add">
+      <add-to-group group-id="ToolsMenu" anchor="last"/>
+    </action>
+    <group id="Tako.ContextGroup" popup="true" icon="/icons/tako.svg">
+      <action id="Tako.AddToChat" class="io.firebite.tako.ide.actions.AddToChatAction">
+        <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift K"/>
+      </action>
+      <action id="Tako.FixProblems" class="io.firebite.tako.ide.actions.FixProblemsAction"/>
+      <add-to-group group-id="EditorPopupMenu" anchor="last"/>
+      <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
+    </group>
+  </actions>
+</idea-plugin>

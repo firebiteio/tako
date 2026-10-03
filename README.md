@@ -1,0 +1,68 @@
+<p align="center"><img src="docs/tako.svg" width="128" alt="Tako"></p>
+
+# Tako
+
+Tako puts coding agents in an IntelliJ tool window. It starts the agent CLI you already have installed and shows the conversation as a chat, with tool calls as cards and file edits in the IDE's diff viewer.
+
+It works with:
+
+- Claude Code (`claude`)
+- Codex (`codex app-server`)
+- Any agent that speaks the [Agent Client Protocol](https://agentclientprotocol.com), such as Gemini CLI (`gemini --acp`) or OpenCode (`opencode acp`)
+
+## Features
+
+- Answers stream in as the agent writes them
+- Before an edit, the permission prompt can open the change in the IDE diff viewer
+- After each turn you get a diff of every file the agent touched
+- Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
+- Each thread has its own model, mode and effort
+- Type `@` to mention a file, paste images, or send the editor selection
+- Fix Problems sends a file's inspection results to the agent
+- For Claude Code, a context meter and a usage view with cost and tokens per session
+
+## Requirements
+
+- An IntelliJ-based IDE, 2026.2 or newer, with JCEF
+- At least one agent CLI, either on your `PATH` or with its path set in the settings
+
+## Usage
+
+Open the Tako tool window on the right, click New Tako Chat, pick an agent and type.
+
+In the editor or project view, right-click and choose Tako > Add to Tako (`Ctrl+Alt+Shift+K`) to attach the selection or file. Fix Problems with Tako is in the same menu.
+
+Settings are under Settings > Tools > Tako. The top page sets the agent for new threads. Each agent has its own page below it for the executable and the default model, mode and effort. ACP agents go in a table, one name and command line per row.
+
+### Signing in
+
+Codex and ACP agents use their own CLI login. Run `codex login`, for example.
+
+Claude Code is different. Tako passes it an Anthropic API key, which it keeps in the IDE password safe. [Anthropic doesn't allow](https://code.claude.com/docs/en/agent-sdk/overview#get-started) third-party tools to offer a claude.ai subscription login without its approval. There is a Claude CLI login option, but you use it at your own risk.
+
+## Building
+
+Gradle needs JDK 17 or newer to start. It downloads JDK 25 and Node for the build on its own.
+
+```sh
+./gradlew buildPlugin   # plugin zip in build/distributions
+./gradlew runIde        # sandbox IDE with the plugin
+./gradlew check         # tests, Checkstyle, formatting
+./gradlew verifyPlugin  # JetBrains Plugin Verifier
+./gradlew spotlessApply # format Java and TypeScript
+```
+
+The build downloads the IntelliJ IDEA version in `gradle.properties` (`platformVersion`). To build against an IDE you already have, set `tako.platformLocalPath` in `~/.gradle/gradle.properties` to its folder.
+
+### Releasing
+
+Push a tag like `v0.2.0`. The release workflow builds that version, runs the checks, signs the plugin, publishes it to the JetBrains Marketplace and creates a GitHub release with the signed zip. It needs these repository secrets:
+
+- `PUBLISH_TOKEN`, a JetBrains Marketplace token
+- `CERTIFICATE_CHAIN`, `PRIVATE_KEY` and `PRIVATE_KEY_PASSWORD` for [plugin signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html)
+
+Publishing can only update a plugin that already exists on the Marketplace, so upload the first version by hand.
+
+## License
+
+Copyright 2026 The Tako Authors. Licensed under the [Apache License 2.0](LICENSE).

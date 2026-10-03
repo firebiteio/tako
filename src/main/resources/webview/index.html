@@ -1,0 +1,96 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Tako</title>
+  <style id="theme">/*THEME*/</style>
+  <style>/*STYLE*/</style>
+</head>
+<body class="draft">
+<aside id="sidebar">
+  <div class="sidebar-head">
+    <span class="sidebar-title">{{sidebar.threads}}</span>
+    <button id="sidebar-history" class="icon-button" title="{{sidebar.history}}"></button>
+    <button id="sidebar-add-project" class="icon-button" title="{{sidebar.add.project}}"></button>
+    <button id="sidebar-new" class="icon-button" title="{{common.new.thread}}"></button>
+  </div>
+  <div id="thread-list"></div>
+  <div id="archived-section" hidden>
+    <button id="archived-toggle" class="archived-toggle"></button>
+    <div id="archived-list" hidden></div>
+  </div>
+  <div class="sidebar-footer">
+    <button id="usage-button" class="sidebar-footer-button" title="{{sidebar.usage.title}}"></button>
+  </div>
+</aside>
+<div id="sidebar-backdrop"></div>
+
+<div id="main">
+  <header id="header">
+    <button id="sidebar-toggle" class="icon-button" title="{{sidebar.threads}}"></button>
+    <div class="crumb">
+      <span id="project-name" class="crumb-project"></span>
+      <span class="crumb-sep">/</span>
+      <span id="thread-title" class="crumb-title">{{common.new.chat}}</span>
+    </div>
+    <div id="git-chips"></div>
+    <span id="meta"></span>
+    <button id="new-chat" class="icon-button" title="{{common.new.thread}}"></button>
+  </header>
+
+  <div id="alerts"></div>
+  <section id="usage-view" hidden></section>
+  <section id="task-panel" hidden></section>
+
+  <main id="scroll">
+    <div id="timelines" class="lane">
+      <div id="hero">
+        <h1 id="hero-title">{{header.hero.build}}</h1>
+        <p id="hero-hint"></p>
+      </div>
+    </div>
+  </main>
+
+  <button id="scroll-end" class="glass-pill" hidden></button>
+
+  <div id="dock">
+    <div class="lane">
+      <div id="tasks-tray" hidden></div>
+      <div id="drawer" hidden></div>
+      <div id="composer">
+        <div id="slash" class="menu" hidden></div>
+        <div id="attachments"></div>
+        <div id="chips"></div>
+        <textarea id="input" rows="1" spellcheck="false"></textarea>
+        <div class="composer-footer">
+          <div class="composer-controls">
+            <button id="agent-picker" class="control" hidden></button>
+            <span class="control-sep" id="agent-sep" hidden></span>
+            <button id="model-picker" class="control"></button>
+            <span class="control-sep"></span>
+            <button id="effort-picker" class="control"></button>
+            <span class="control-sep" id="effort-sep"></span>
+            <button id="mode-picker" class="control"></button>
+            <span class="control-sep" id="mode-sep"></span>
+            <button id="file-toggle" class="control" aria-pressed="true" title="{{composer.include.file}}"></button>
+          </div>
+          <div class="composer-actions">
+            <button id="cache-timer" class="cache-timer" hidden></button>
+            <button id="context-meter" class="context-meter" hidden></button>
+            <button id="attach" class="icon-button" title="{{composer.attach}}"></button>
+            <button id="send" class="send-button" title="{{composer.send}}"></button>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="lightbox" hidden><img alt=""></div>
+<div id="context-panel" class="menu context-panel" hidden></div>
+
+<script>/*STRINGS*/</script>
+<script>/*BRIDGE*/</script>
+<script>/*APP*/</script>
+</body>
+</html>
