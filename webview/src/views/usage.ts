@@ -74,7 +74,7 @@ function tile(label: string, value: string, detail: string): HTMLElement {
   return node;
 }
 
-function table(headers: string[], rows: HTMLElement[]): HTMLElement {
+export function table(headers: string[], rows: HTMLElement[]): HTMLElement {
   const wrap = el('div', 'table-wrap');
   const node = el('table', 'usage-table');
   const head = el('tr');

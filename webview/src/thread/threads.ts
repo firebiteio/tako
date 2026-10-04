@@ -1,6 +1,6 @@
 /** Threads: creating them from the IDE's records, switching between them and their lifecycle. */
 import type { AgentEvent, AgentInfo } from '../bridge/agent';
-import { sendThread, type ThreadItem } from '../bridge/protocol';
+import { send, sendThread, type ThreadItem } from '../bridge/protocol';
 import { cancelAllApprovals, renderDrawer } from '../composer/approvals';
 import { autosize, hidePopup, input, renderAttachments, renderChips, renderSend } from '../composer/composer';
 import { renderContextControls } from '../composer/contextMeter';
@@ -62,6 +62,8 @@ export function makeThread(item: ThreadItem): Thread {
     projectRoot: null,
     agent: item.agent,
     hasSession: !!item.hasSession,
+    firstTurnMillis: item.firstTurnMillis || 0,
+    runs: [],
     info: null,
     contextWindow: null,
     scratchpad: null,
@@ -87,6 +89,7 @@ export function updateThread(t: Thread, item: ThreadItem): void {
   t.projectPath = item.projectPath || null;
   t.pullRequest = item.pullRequest || null;
   t.hasSession = !!item.hasSession;
+  t.firstTurnMillis = item.firstTurnMillis || 0;
   if (item.agent && item.agent !== t.agent) {
     t.agent = item.agent;
     t.info = null;
@@ -149,6 +152,12 @@ export function activate(t: Thread | undefined): void {
   if (window.innerWidth <= NARROW) setSidebarOpen(false);
   scheduleSidebar();
   input.focus();
+}
+
+/** Shows the thread and tells the IDE, which starts its agent if needed. */
+export function openThread(t: Thread): void {
+  activate(t);
+  send({ op: 'select', thread: t.id });
 }
 
 export function setBusy(t: Thread, busy: boolean): void {
@@ -229,6 +238,7 @@ export function onInit(t: Thread, info: AgentInfo, projectRoot: string | undefin
   t.info = info;
   const wanted = info.model || '';
   const models = info.models;
+  if (models.length) workspace.agentModels.set(t.agent, models);
   const match = models.find(model => model.value === wanted) || models.find(model => model.resolvedModel === wanted);
   if (!t.model || !models.some(model => model.value === t.model)) {
     t.model = match ? match.value : models[0]?.value || null;

@@ -89,7 +89,70 @@ public sealed interface PageMessage {
     @Nullable String worktree,
     @Nullable String projectPath,
     @Nullable GitInfo.PullRequest pullRequest,
-    String agent
+    String agent,
+    long firstTurnMillis
+  ) {
+  }
+
+  /** What the settings let the page offer. */
+  record Settings(
+    boolean parallelRuns
+  ) implements WorkspaceMessage {
+  }
+
+  record Benches(
+    List<BenchItem> items
+  ) implements WorkspaceMessage {
+  }
+
+  /**
+   * @param baseCommit the short hash of the commit the runs started from
+   * @param threads    the runs' threads in run order, including closed ones
+   */
+  record BenchItem(
+    String id,
+    String title,
+    @Nullable String projectPath,
+    String baseCommit,
+    List<String> threads
+  ) {
+  }
+
+  /**
+   * The runs of a {@link PageOp.CreateBench} have threads, which the page sends the prompt to.
+   *
+   * @param threads in run order
+   */
+  record BenchCreated(
+    int request,
+    List<String> threads
+  ) implements WorkspaceMessage {
+  }
+
+  /** No runs started; the page gives the prompt back to the composer. */
+  record BenchFailed(
+    int request,
+    String text
+  ) implements WorkspaceMessage {
+  }
+
+  /**
+   * What each run changed against the commit the bench started from.
+   *
+   * @param runs in run order
+   */
+  record BenchComparison(
+    String bench,
+    List<RunChanges> runs
+  ) implements WorkspaceMessage {
+  }
+
+  /** @param error why the run's changes could not be read, such as a removed worktree */
+  record RunChanges(
+    int files,
+    int added,
+    int removed,
+    @Nullable String error
   ) {
   }
 

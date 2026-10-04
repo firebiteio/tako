@@ -9,6 +9,7 @@ import { $, el, icon, sendArrow, stopSquare } from '../ui/dom';
 import { t } from '../ui/i18n';
 import { imageThumb, mentionChip, showAlert } from '../ui/widgets';
 import { advanceQuestion, chooseOption, declineWithFeedback } from './approvals';
+import { isBench, startBench } from './runs';
 
 export const DEFAULT_PLACEHOLDER = t('composer.placeholder');
 /** The API's limits, which larger pasted images are scaled down to (io.firebite.tako.ide.context.Images). */
@@ -84,7 +85,11 @@ export function submit(): void {
     return;
   }
   hidePopup();
-  startPrompt(t, text, t.contexts, images, workspace.includeFile);
+  if (isBench(t)) {
+    if (!startBench(t, text)) return;
+  } else {
+    startPrompt(t, text, t.contexts, images, workspace.includeFile);
+  }
   t.contexts = [];
   t.images = [];
   renderAttachments();
@@ -98,7 +103,8 @@ export function submitFromIde(t: Thread, text: string): void {
   startPrompt(t, text, [], [], false);
 }
 
-function startPrompt(
+/** Shows the prompt as the thread's next turn and sends it. */
+export function startPrompt(
   t: Thread,
   text: string,
   contexts: ContextItem[],

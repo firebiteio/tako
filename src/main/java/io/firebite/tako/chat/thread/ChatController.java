@@ -65,6 +65,8 @@ public final class ChatController implements Disposable {
   private final AgentBackend backend;
   private final AgentConnection connection = new AgentConnection();
   private final TurnChanges changes;
+  /** Done once {@link #open} launched the agent, so a prompt sent meanwhile does not launch a second one. */
+  private final CompletableFuture<Void> opened = new CompletableFuture<>();
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
 
@@ -82,7 +84,7 @@ public final class ChatController implements Disposable {
     this.host = host;
     this.record = record;
     this.backend = backend;
-    this.isTitled = record.sessionId != null;
+    this.isTitled = record.sessionId != null || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
   }
 
@@ -98,27 +100,31 @@ public final class ChatController implements Disposable {
       this.isTitled = true;
     }
     Async.inBackground(() -> {
-      String resume = this.record.sessionId;
-      String projectPath = this.projectPath();
-      if (resume != null && projectPath != null) {
-        switch (this.backend.history(projectPath, resume)) {
-          case AgentHistory.Loaded loaded -> this.view.post(new PageMessage.Replay(loaded.events()));
-          case AgentHistory.Missing missing -> {
-            resume = null;
-            this.record.sessionId = null;
-          }
-          case AgentHistory.FromSession fromSession -> {
+      try {
+        String resume = this.record.sessionId;
+        String projectPath = this.projectPath();
+        if (resume != null && projectPath != null) {
+          switch (this.backend.history(projectPath, resume)) {
+            case AgentHistory.Loaded loaded -> this.view.post(new PageMessage.Replay(loaded.events()));
+            case AgentHistory.Missing missing -> {
+              resume = null;
+              this.record.sessionId = null;
+            }
+            case AgentHistory.FromSession fromSession -> {
+            }
           }
         }
-      }
-      if (resume != null && projectPath != null && this.record.costUsd == 0) {
-        SessionCost cost = this.backend.sessionCost(projectPath, resume);
-        if (cost != null) {
-          this.record.setUsage(cost);
-          this.recordChanged();
+        if (resume != null && projectPath != null && this.record.costUsd == 0) {
+          SessionCost cost = this.backend.sessionCost(projectPath, resume);
+          if (cost != null) {
+            this.record.setUsage(cost);
+            this.recordChanged();
+          }
         }
+        this.launch(resume);
+      } finally {
+        this.opened.complete(null);
       }
-      this.launch(resume);
       this.refreshGit();
     });
   }
@@ -200,6 +206,11 @@ public final class ChatController implements Disposable {
   /** The folder this thread works in: its worktree, its project folder or else the IDE project. */
   public @Nullable String projectPath() {
     return this.record.folder(this.project.getBasePath());
+  }
+
+  /** The project folder the thread belongs to, which its worktree is a copy of. */
+  private @Nullable String projectFolder() {
+    return this.record.projectPath != null ? this.record.projectPath : this.project.getBasePath();
   }
 
   public State state() {
@@ -287,14 +298,19 @@ public final class ChatController implements Disposable {
     String text = send.text();
     Async.onEdt(() -> {
       String activeFile = send.includeActiveFile() ? IdeContext.activeFile(this.project) : null;
-      String prompt = text.isBlank() && !images.isEmpty()
+      String composed = text.isBlank() && !images.isEmpty()
         ? ""
         : PromptComposer.compose(text, send.context(), activeFile);
+      String folder = this.projectFolder();
+      String prompt = this.record.workPath != null && folder != null
+        ? PromptComposer.rebase(composed, folder, this.record.workPath)
+        : composed;
       Async.inBackground(() -> this.sendPrompt(text, prompt, images));
     });
   }
 
   private void sendPrompt(String typed, String prompt, List<ImageAttachment> images) {
+    this.opened.join();
     AgentSession session = this.connection.live();
     if (session == null) {
       this.launch(this.record.sessionId);
@@ -317,7 +333,8 @@ public final class ChatController implements Disposable {
     }
   }
 
-  private static String titleOf(String prompt) {
+  /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
+  public static String titleOf(String prompt) {
     String line = prompt.replace('\n', ' ').trim();
     return line.length() <= TITLE_LENGTH ? line : line.substring(0, TITLE_LENGTH - 1) + "…";
   }
@@ -445,6 +462,10 @@ public final class ChatController implements Disposable {
     this.refreshContext();
     if (ended.cost() != null) {
       this.record.setUsage(ended.cost());
+      this.recordChanged();
+    }
+    if (this.record.firstTurnMillis == 0 && ended.durationMs() != null) {
+      this.record.firstTurnMillis = ended.durationMs();
       this.recordChanged();
     }
     this.lastPullRequestCheck = 0;

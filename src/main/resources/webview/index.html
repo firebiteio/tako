@@ -41,6 +41,7 @@
 
   <div id="alerts"></div>
   <section id="usage-view" hidden></section>
+  <section id="bench-view" hidden></section>
   <section id="task-panel" hidden></section>
 
   <main id="scroll">
@@ -65,6 +66,8 @@
         <textarea id="input" rows="1" spellcheck="false"></textarea>
         <div class="composer-footer">
           <div class="composer-controls">
+            <button id="runs-picker" class="control" hidden></button>
+            <span class="control-sep" id="runs-sep" hidden></span>
             <button id="agent-picker" class="control" hidden></button>
             <span class="control-sep" id="agent-sep" hidden></span>
             <button id="model-picker" class="control"></button>

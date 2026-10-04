@@ -36,6 +36,7 @@ import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
+import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.PageCodec;
 import io.firebite.tako.ui.bridge.PageMessage;
@@ -66,6 +67,7 @@ public final class ChatService implements Disposable {
   private final Project project;
   private final ThreadStore store;
   private final Map<String, ChatController> controllers = new ConcurrentHashMap<>();
+  private final Benches benches;
   /** Serves each thread's {@link ThreadTools}, keyed by thread id. Guarded by {@code this}. */
   private @Nullable McpServer toolServer;
   private @Nullable ChatPanel panel;
@@ -74,6 +76,7 @@ public final class ChatService implements Disposable {
   public ChatService(Project project) {
     this.project = project;
     this.store = ThreadStore.getInstance(project);
+    this.benches = new Benches(project, this, this.store);
   }
 
   public static ChatService getInstance(Project project) {
@@ -163,13 +166,30 @@ public final class ChatService implements Disposable {
         this.threadPath(resume.projectPath()), resume.agent()));
       case PageOp.SetAgent setAgent -> Async.onEdt(() -> this.setAgent(setAgent.thread(), setAgent.agent()));
       case PageOp.Copy copy -> CopyPasteManager.getInstance().setContents(new StringSelection(copy.text()));
+      case PageOp.CreateBench createBench -> Async.onEdt(() -> {
+        String projectPath = this.threadPath(createBench.projectPath());
+        this.benches.create(createBench, projectPath, this.folderOf(projectPath));
+      });
+      case PageOp.CompareBench compareBench -> Async.inBackground(() -> this.benches.compare(compareBench.bench()));
+      case PageOp.ShowRunDiff showRunDiff -> Async.inBackground(
+        () -> this.benches.showDiff(showRunDiff.bench(), showRunDiff.runIndex()));
+      case PageOp.PickWinner pickWinner -> Async.inBackground(
+        () -> this.benches.pickWinner(pickWinner.bench(), pickWinner.runIndex()));
+      case PageOp.DiscardBench discardBench -> Async.onEdt(() -> this.benches.discard(discardBench.bench()));
     }
+  }
+
+  /** Tells the page what the settings let it offer. */
+  public void postSettings() {
+    this.post(new PageMessage.Settings(ChatSettings.state().parallelRuns));
   }
 
   private void onReady() {
     this.post(new PageMessage.Project(this.project.getBasePath(), this.project.getName()));
+    this.postSettings();
     this.postAgents();
     this.postProjects();
+    this.benches.post();
     List<PageMessage.ThreadItem> items = new ArrayList<>();
     for (ThreadStore.Record record : this.store.all()) {
       items.add(record.toItem());
@@ -198,8 +218,13 @@ public final class ChatService implements Disposable {
   }
 
   private String folderOf(ThreadStore.Record record) {
+    return this.folderOf(record.projectPath);
+  }
+
+  /** @param projectPath a project folder, or null for the IDE project */
+  private String folderOf(@Nullable String projectPath) {
     String basePath = this.project.getBasePath();
-    return record.projectPath != null ? record.projectPath : basePath != null ? basePath : "";
+    return projectPath != null ? projectPath : basePath != null ? basePath : "";
   }
 
   /** Reads the folders' icons in the background. */
@@ -265,7 +290,7 @@ public final class ChatService implements Disposable {
     this.select(record.id);
   }
 
-  private void select(@Nullable String id) {
+  void select(@Nullable String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
       return;
@@ -281,6 +306,12 @@ public final class ChatService implements Disposable {
       Async.inBackground(existing::refreshGit);
       return;
     }
+    this.newController(record).open();
+  }
+
+  /** Shows a new thread in the list and starts its agent without selecting it. */
+  void openThread(ThreadStore.Record record) {
+    this.post(new PageMessage.ThreadAdded(record.toItem()));
     this.newController(record).open();
   }
 
@@ -344,16 +375,24 @@ public final class ChatService implements Disposable {
     }
   }
 
-  private void close(String id) {
-    ThreadStore.Record record = this.store.find(id);
-    if (record == null) {
-      return;
+  void close(String id) {
+    this.closeAll(List.of(id));
+  }
+
+  /** Selects another thread only once all are closed, so none of them starts its agent in between. */
+  void closeAll(List<String> ids) {
+    String activeId = this.store.activeId();
+    for (String id : ids) {
+      if (this.store.find(id) != null) {
+        this.disposeController(id);
+        this.withdrawTools(id);
+        this.store.remove(id);
+        this.post(new PageMessage.ThreadRemoved(id));
+      }
     }
-    this.disposeController(record.id);
-    this.withdrawTools(record.id);
-    this.store.remove(record.id);
-    this.post(new PageMessage.ThreadRemoved(record.id));
-    this.selectAnotherIfActive(record.id);
+    if (activeId != null && ids.contains(activeId)) {
+      this.selectAnotherIfActive(activeId);
+    }
   }
 
   private void setArchived(String id, boolean archived) {
@@ -498,7 +537,7 @@ public final class ChatService implements Disposable {
     this.post(new PageMessage.ThreadUpdated(record.toItem()));
   }
 
-  private void post(PageMessage.WorkspaceMessage message) {
+  void post(PageMessage.WorkspaceMessage message) {
     this.postJson(PageCodec.encode(message));
   }
 

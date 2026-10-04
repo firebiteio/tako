@@ -38,6 +38,33 @@ export interface ThreadItem {
   projectPath?: string;
   pullRequest?: PullRequest;
   agent: string;
+  /** How long the first turn took, 0 until it ended. */
+  firstTurnMillis: number;
+}
+
+export interface BenchItem {
+  id: string;
+  title: string;
+  projectPath?: string;
+  baseCommit: string;
+  /** The runs' threads in run order, including closed ones. */
+  threads: string[];
+}
+
+/** One run's changes; a comparison lists them in run order. */
+export interface RunChanges {
+  files: number;
+  added: number;
+  removed: number;
+  error?: string;
+}
+
+/** Blank values keep the agent's defaults. */
+export interface RunSpec {
+  agent: string;
+  model: string;
+  mode: string;
+  effort: string;
 }
 
 export interface ProjectItem {
@@ -124,6 +151,11 @@ export type WorkspaceMessage =
   | { kind: 'sessions'; items: SessionItem[] }
   | ({ kind: 'usage' } & Usage)
   | { kind: 'theme'; css: string }
+  | { kind: 'settings'; parallelRuns: boolean }
+  | { kind: 'benches'; items: BenchItem[] }
+  | { kind: 'benchCreated'; request: number; threads: string[] }
+  | { kind: 'benchFailed'; request: number; text: string }
+  | { kind: 'benchComparison'; bench: string; runs: RunChanges[] }
   | { kind: 'error'; text: string };
 
 export type ThreadMessage = { thread: string } & (
@@ -176,7 +208,19 @@ export type WorkspaceOp =
   | { op: 'openUrl'; url: string }
   | { op: 'resume'; sessionId: string; title?: string; projectPath?: string; agent?: string }
   | { op: 'setAgent'; thread: string; agent: string }
-  | { op: 'copy'; text: string };
+  | { op: 'copy'; text: string }
+  | {
+      op: 'createBench';
+      request: number;
+      prompt: string;
+      projectPath?: string | null;
+      source?: string;
+      runs: RunSpec[];
+    }
+  | { op: 'compareBench'; bench: string }
+  | { op: 'showRunDiff'; bench: string; runIndex: number }
+  | { op: 'pickWinner'; bench: string; runIndex: number }
+  | { op: 'discardBench'; bench: string };
 
 export type ThreadOp =
   | {

@@ -138,6 +138,29 @@ public final class ThreadStore {
     this.save();
   }
 
+  public synchronized void addBench(Bench bench) {
+    this.data.benches.add(bench);
+    this.save();
+  }
+
+  public synchronized @Nullable Bench findBench(@Nullable String id) {
+    for (Bench bench : this.data.benches) {
+      if (bench.id.equals(id)) {
+        return bench;
+      }
+    }
+    return null;
+  }
+
+  public synchronized void removeBench(String id) {
+    this.data.benches.removeIf(bench -> bench.id.equals(id));
+    this.save();
+  }
+
+  public synchronized List<Bench> benches() {
+    return new ArrayList<>(this.data.benches);
+  }
+
   public static boolean samePath(@Nullable String first, @Nullable String second) {
     if (first == null || second == null) {
       return false;
@@ -181,6 +204,9 @@ public final class ThreadStore {
       if (data.projects == null) {
         data.projects = new ArrayList<>();
       }
+      if (data.benches == null) {
+        data.benches = new ArrayList<>();
+      }
       return data;
     } catch (IOException | JsonParseException e) {
       LOG.warn("Could not read chat threads from " + file, e);
@@ -190,7 +216,9 @@ public final class ThreadStore {
 
   public static final class Record {
     public String id = "";
-    public String title = "New chat";
+    public static final String DEFAULT_TITLE = "New chat";
+
+    public String title = DEFAULT_TITLE;
     public @Nullable String sessionId;
     public boolean archived;
     public long updatedAt;
@@ -213,6 +241,8 @@ public final class ThreadStore {
     public @Nullable String workPath;
     /** The thread whose agent created this one. */
     public @Nullable String parentId;
+    /** How long the first turn took, 0 until it ended. */
+    public long firstTurnMillis;
 
     /** The folder the thread works in: its {@link #workPath}, its {@link #projectPath} or else {@code basePath}. */
     public @Nullable String folder(@Nullable String basePath) {
@@ -238,7 +268,7 @@ public final class ThreadStore {
     public PageMessage.ThreadItem toItem() {
       return new PageMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
-        this.worktree, this.projectPath, this.pullRequest, this.agent());
+        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis);
     }
   }
 
@@ -249,9 +279,40 @@ public final class ThreadStore {
     public boolean collapsed;
   }
 
+  /** One prompt run several times at once, each run in its own git worktree off the same commit. */
+  public static final class Bench {
+    private static final int SHORT_COMMIT = 7;
+
+    public String id = "";
+    public String title = "";
+    /** The project folder the runs belong to, or null for the IDE project. */
+    public @Nullable String projectPath;
+    /** The main checkout's top folder, which the worktrees belong to. */
+    public String repository = "";
+    public String baseCommit = "";
+    public List<Run> runs = new ArrayList<>();
+
+    public PageMessage.BenchItem toItem() {
+      List<String> threads = new ArrayList<>();
+      for (Run run : this.runs) {
+        threads.add(run.thread);
+      }
+      return new PageMessage.BenchItem(this.id, this.title, this.projectPath,
+        this.baseCommit.substring(0, Math.min(SHORT_COMMIT, this.baseCommit.length())), threads);
+    }
+  }
+
+  /** A run's worktree and branch, kept until the bench is discarded even when its thread is closed. */
+  public static final class Run {
+    public String thread = "";
+    public String worktree = "";
+    public String branch = "";
+  }
+
   static final class Data {
     List<Record> threads = new ArrayList<>();
     List<ProjectFolder> projects = new ArrayList<>();
+    List<Bench> benches = new ArrayList<>();
     @Nullable
     String activeId;
   }

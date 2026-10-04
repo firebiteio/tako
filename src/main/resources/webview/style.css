@@ -905,7 +905,7 @@ button:focus-visible { outline: 1px solid var(--primary); outline-offset: 1px; }
 .sidebar-footer-button:hover { background: var(--hover); color: var(--fg); }
 .sidebar-footer-button .value { margin-left: auto; font-variant-numeric: tabular-nums; }
 
-#usage-view {
+#usage-view, #bench-view {
   position: absolute;
   inset: 0;
   z-index: 45;
@@ -914,7 +914,9 @@ button:focus-visible { outline: 1px solid var(--primary); outline-offset: 1px; }
   padding: 0 var(--gutter) 24px;
 }
 
-#usage-view[hidden] { display: none; }
+#usage-view[hidden], #bench-view[hidden] { display: none; }
+.bench-actions { display: flex; gap: 6px; justify-content: flex-end; }
+.bench-footer { display: flex; justify-content: flex-end; margin-top: 12px; }
 .usage-lane { max-width: var(--lane); margin: 0 auto; }
 .usage-head { display: flex; align-items: center; gap: 8px; height: 44px; border-bottom: 1px solid var(--divider); margin-bottom: 16px; }
 .usage-head h2 { flex: 1; margin: 0; font-size: var(--text-sm); font-weight: 600; }
@@ -1095,6 +1097,10 @@ body.sidebar-open #git-chips .git-chip:not(.pr) { display: none; }
 .project-group.collapsed.has-active .project-head { color: var(--fg); }
 .project-threads { display: flex; flex-direction: column; gap: 1px; }
 .project-threads:empty { display: none; }
+
+.bench-head { height: 26px; padding-left: 10px; font-weight: 500; }
+.bench-threads { padding-left: 10px; }
+.control.on { color: var(--primary); }
 
 .project-icon-slot { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; }
 img.project-icon { width: 16px; height: 16px; object-fit: contain; border-radius: 3px; flex: none; display: block; }

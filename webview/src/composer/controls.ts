@@ -7,6 +7,7 @@ import { $, el, icon } from '../ui/dom';
 import { t } from '../ui/i18n';
 import type { IconName } from '../ui/icons';
 import { openMenu } from '../ui/menu';
+import { renderRunsPicker } from './runs';
 
 /** Icons of the modes the agents offer; other modes show a shield. */
 const MODE_ICONS: Record<string, IconName> = {
@@ -30,7 +31,15 @@ const EFFORTS: Record<string, { label: string; description: string }> = {
 };
 
 /** Controls whose label gives way to just the icon when the composer is too narrow, least needed first. */
-const SHRINKING = ['file-toggle', 'cache-timer', 'effort-picker', 'mode-picker', 'model-picker', 'agent-picker'];
+const SHRINKING = [
+  'file-toggle',
+  'cache-timer',
+  'effort-picker',
+  'mode-picker',
+  'model-picker',
+  'agent-picker',
+  'runs-picker'
+];
 
 function models(t: Thread): Model[] {
   return t.info ? t.info.models : [];
@@ -55,17 +64,22 @@ export function selectResolvedModel(t: Thread, resolved: string): void {
   }
 }
 
+/** The name of the agent with this id, when the IDE offers it. */
+export function agentNameOf(id: string): string | undefined {
+  return workspace.agents.find(agent => agent.id === id)?.name;
+}
+
 /** The agent's name. */
 export function agentName(t: Thread): string {
-  return workspace.agents.find(agent => agent.id === t.agent)?.name || t.info?.agentName || t.agent;
+  return agentNameOf(t.agent) || t.info?.agentName || t.agent;
 }
 
 /** The agent can only change before the thread has a session; the picker shows until then. */
-function canChangeAgent(t: Thread): boolean {
+export function canChangeAgent(t: Thread): boolean {
   return t.turnCount === 0 && !t.hasSession;
 }
 
-function fill(button: HTMLElement, iconName: IconName, label: string, withChevron: boolean): void {
+export function fill(button: HTMLElement, iconName: IconName, label: string, withChevron: boolean): void {
   button.textContent = '';
   button.appendChild(icon(iconName, 'small'));
   button.appendChild(el('span', 'control-label', label));
@@ -75,6 +89,7 @@ function fill(button: HTMLElement, iconName: IconName, label: string, withChevro
 export function renderControls(): void {
   const thread = state.active;
   if (!thread) return;
+  renderRunsPicker(thread);
   const agentPicker = $('agent-picker');
   const picksAgent = workspace.agents.length > 1 && canChangeAgent(thread);
   agentPicker.hidden = !picksAgent;
