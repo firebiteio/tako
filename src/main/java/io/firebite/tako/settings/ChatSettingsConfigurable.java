@@ -1,12 +1,16 @@
 package io.firebite.tako.settings;
 
 import com.intellij.openapi.options.Configurable;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.ui.ComboBox;
+import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.dsl.listCellRenderer.BuilderKt;
 import com.intellij.util.ui.FormBuilder;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentRegistry;
+import io.firebite.tako.chat.ChatService;
 import java.util.List;
 import javax.swing.DefaultComboBoxModel;
 import javax.swing.JComponent;
@@ -17,6 +21,7 @@ import org.jetbrains.annotations.Nullable;
 /** Settings | Tools | Tako, with what all agents share. Each agent has a page of its own below it. */
 public final class ChatSettingsConfigurable implements Configurable {
   private ComboBox<AgentRegistry.Choice> defaultAgentBox;
+  private JBCheckBox parallelRunsBox;
 
   @Override
   public @Nls String getDisplayName() {
@@ -27,9 +32,12 @@ public final class ChatSettingsConfigurable implements Configurable {
   public @Nullable JComponent createComponent() {
     this.defaultAgentBox = new ComboBox<>();
     this.defaultAgentBox.setRenderer(BuilderKt.textListCellRenderer(choice -> choice == null ? "" : choice.name()));
+    this.parallelRunsBox = new JBCheckBox(TakoBundle.message("settings.tako.parallel.runs"));
     JPanel panel = FormBuilder.createFormBuilder()
       .addLabeledComponent(TakoBundle.message("settings.tako.default.agent"), this.defaultAgentBox)
       .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.default.agent.hint")))
+      .addComponent(this.parallelRunsBox)
+      .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.parallel.runs.hint")))
       .addComponentFillVertically(new JPanel(), 0)
       .getPanel();
     this.reset();
@@ -38,12 +46,20 @@ public final class ChatSettingsConfigurable implements Configurable {
 
   @Override
   public boolean isModified() {
-    return !this.selectedId().equals(ChatSettings.state().defaultAgent);
+    ChatSettings.Data data = ChatSettings.state();
+    return !this.selectedId().equals(data.defaultAgent) || this.parallelRunsBox.isSelected() != data.parallelRuns;
   }
 
   @Override
   public void apply() {
-    ChatSettings.state().defaultAgent = this.selectedId();
+    ChatSettings.Data data = ChatSettings.state();
+    data.defaultAgent = this.selectedId();
+    if (data.parallelRuns != this.parallelRunsBox.isSelected()) {
+      data.parallelRuns = this.parallelRunsBox.isSelected();
+      for (Project project : ProjectManager.getInstance().getOpenProjects()) {
+        ChatService.getInstance(project).postSettings();
+      }
+    }
   }
 
   @Override
@@ -56,6 +72,7 @@ public final class ChatSettingsConfigurable implements Configurable {
         this.defaultAgentBox.setSelectedItem(choice);
       }
     }
+    this.parallelRunsBox.setSelected(data.parallelRuns);
   }
 
   private String selectedId() {

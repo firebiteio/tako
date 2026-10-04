@@ -11,6 +11,7 @@ import {
   openModeMenu,
   toggleIncludeFile
 } from './composer/controls';
+import { openRunsMenu } from './composer/runs';
 import { state } from './state/store';
 import { closeTaskPanel, tickTasks } from './thread/tasks';
 import { onScroll, scrollToEnd, tickBusy } from './thread/threads';
@@ -19,6 +20,7 @@ import { $, el, icon, on } from './ui/dom';
 import { t } from './ui/i18n';
 import { closeMenu, closeMenuOutside } from './ui/menu';
 import { closeLightbox } from './ui/widgets';
+import { closeBench } from './views/bench';
 import { requestScratchpad } from './views/header';
 import { NARROW, restoreSidebar, scheduleSidebar, setSidebarOpen, toggleArchived } from './views/sidebar';
 import { closeUsage, showUsage } from './views/usage';
@@ -52,6 +54,7 @@ function wireControls(): void {
   });
   on($('archived-toggle'), toggleArchived);
   on($('scroll-end'), scrollToEnd);
+  on($('runs-picker'), openRunsMenu);
   on($('agent-picker'), openAgentMenu);
   on($('model-picker'), openModelMenu);
   on($('effort-picker'), openEffortMenu);
@@ -75,6 +78,7 @@ function wireGlobalKeysAndClicks(): void {
     if (event.key === 'Escape') {
       closeMenu();
       closeUsage();
+      closeBench();
       closeTaskPanel();
       closeContextPanel();
       closeLightbox();

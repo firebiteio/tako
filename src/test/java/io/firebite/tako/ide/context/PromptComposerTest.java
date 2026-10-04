@@ -27,4 +27,17 @@ public class PromptComposerTest {
   public void slashCommandsGetNoContext() {
     assertEquals("/compact", PromptComposer.compose("/compact", List.of(), "src/B.java"));
   }
+
+  @Test
+  public void rebaseMovesPathsIntoTheWorktree() {
+    String prompt = "File open in the editor: D:/code/app/src/B.java\nRoot: D:/code/app";
+
+    assertEquals("File open in the editor: D:/code/app-tako/fix/1/src/B.java\nRoot: D:/code/app-tako/fix/1",
+      PromptComposer.rebase(prompt, "D:/code/app", "D:/code/app-tako/fix/1"));
+  }
+
+  @Test
+  public void rebaseLeavesFoldersThatOnlyShareThePrefix() {
+    assertEquals("see D:/code/app-old/x", PromptComposer.rebase("see D:/code/app-old/x", "D:/code/app", "D:/w"));
+  }
 }

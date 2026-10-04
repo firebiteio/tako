@@ -62,6 +62,10 @@ export function makeThread(item: ThreadItem): Thread {
     projectRoot: null,
     agent: item.agent,
     hasSession: !!item.hasSession,
+    bench: item.bench || null,
+    runIndex: item.runIndex || 0,
+    runMillis: item.runMillis || 0,
+    runs: [],
     info: null,
     contextWindow: null,
     scratchpad: null,
@@ -87,6 +91,9 @@ export function updateThread(t: Thread, item: ThreadItem): void {
   t.projectPath = item.projectPath || null;
   t.pullRequest = item.pullRequest || null;
   t.hasSession = !!item.hasSession;
+  t.bench = item.bench || null;
+  t.runIndex = item.runIndex || 0;
+  t.runMillis = item.runMillis || 0;
   if (item.agent && item.agent !== t.agent) {
     t.agent = item.agent;
     t.info = null;
@@ -229,6 +236,7 @@ export function onInit(t: Thread, info: AgentInfo, projectRoot: string | undefin
   t.info = info;
   const wanted = info.model || '';
   const models = info.models;
+  if (models.length) workspace.agentModels.set(t.agent, models);
   const match = models.find(model => model.value === wanted) || models.find(model => model.resolvedModel === wanted);
   if (!t.model || !models.some(model => model.value === t.model)) {
     t.model = match ? match.value : models[0]?.value || null;

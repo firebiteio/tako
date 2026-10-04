@@ -64,6 +64,36 @@ public class ThreadStoreTest {
   }
 
   @Test
+  public void benchesAndRunsSurviveAReload() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record record = store.create(null, "#1 · Fix login", null, "claude");
+    record.bench = "b1";
+    record.runIndex = 1;
+    record.workDirectory = "D:/code/app-tako/fix-login-b1/1";
+    ThreadStore.Bench bench = new ThreadStore.Bench();
+    bench.id = "b1";
+    bench.title = "Fix login";
+    bench.baseCommit = "0123456789abcdef";
+    ThreadStore.Run run = new ThreadStore.Run();
+    run.thread = record.id;
+    run.worktree = record.workDirectory;
+    run.branch = "tako/fix-login-b1-1";
+    bench.runs.add(run);
+    store.addBench(bench);
+
+    ThreadStore reloaded = new ThreadStore(file);
+
+    ThreadStore.Bench restored = reloaded.findBench("b1");
+    assertEquals("tako/fix-login-b1-1", restored.runs.getFirst().branch);
+    assertEquals("0123456", restored.toItem().baseCommit());
+    assertEquals("b1", reloaded.find(record.id).bench);
+    assertEquals("D:/code/app-tako/fix-login-b1/1", reloaded.find(record.id).workDirectory);
+    reloaded.removeBench("b1");
+    assertNull(new ThreadStore(file).findBench("b1"));
+  }
+
+  @Test
   public void corruptFileStartsEmpty() throws Exception {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     Files.writeString(file, "{not json");

@@ -1,7 +1,8 @@
 /** The page's state: threads, their turns and the tool calls in them. */
-import type { AgentInfo, Change, PermissionPrompt, ToolInput, ToolKind, WorkflowAgent } from '../bridge/agent';
+import type { AgentInfo, Change, Model, PermissionPrompt, ToolInput, ToolKind, WorkflowAgent } from '../bridge/agent';
 import type {
   AgentOption,
+  BenchItem,
   ContextItem,
   ContextUsage,
   ImageAttachment,
@@ -200,6 +201,12 @@ export interface Thread {
   /** The id of the agent the thread runs. */
   agent: string;
   hasSession: boolean;
+  /** The bench the thread is a run of. */
+  bench: string | null;
+  runIndex: number;
+  runMillis: number;
+  /** The runs the next prompt starts, each in its own worktree; fewer than two sends to this thread. */
+  runs: RunPlan[];
   /** What the agent offers, once it started. */
   info: AgentInfo | null;
   /** The model's context size, when the agent reports it. */
@@ -222,4 +229,15 @@ export interface Workspace {
   agents: AgentOption[];
   includeFile: boolean;
   limits: string;
+  /** Whether the settings allow parallel runs. */
+  parallelRuns: boolean;
+  benches: BenchItem[];
+  /** Each agent's models, as its threads reported them, for picking a run's model before it starts. */
+  agentModels: Map<string, Model[]>;
+}
+
+/** A run of a bench to start; absent fields follow the thread's own agent and model. */
+export interface RunPlan {
+  agent?: string;
+  model?: string;
 }

@@ -1,16 +1,18 @@
 /** The thread list: threads grouped by project folder, archived ones apart, each with its live status. */
-import { send, type ProjectItem, type SessionItem } from '../bridge/protocol';
+import { send, type BenchItem, type ProjectItem, type SessionItem } from '../bridge/protocol';
 import { agentName } from '../composer/controls';
+import { runName } from '../composer/runs';
 import type { Thread, ThreadRow } from '../state/model';
 import { projectList, projectOf } from '../state/projects';
 import { isActive, state, threads, workspace } from '../state/store';
 import { runningTasks } from '../thread/tasks';
 import { activate } from '../thread/threads';
 import { $, chevron, el, icon, iconButton, spinner } from '../ui/dom';
-import { ago, elapsed, money } from '../ui/format';
+import { ago, duration, elapsed, money, samePath } from '../ui/format';
 import { t } from '../ui/i18n';
 import { openMenu } from '../ui/menu';
 import { projectIcon, projectIconUrl } from '../ui/widgets';
+import { confirmDiscard, openBench } from './bench';
 
 /** Below this width the sidebar overlays the chat and closes after picking a thread. */
 export const NARROW = 640;
@@ -29,7 +31,18 @@ interface ProjectGroup {
   iconKey: string | null;
 }
 
+interface BenchGroup {
+  el: HTMLElement;
+  head: HTMLElement;
+  list: HTMLElement;
+  title: HTMLElement;
+  count: HTMLElement;
+}
+
 const groups = new Map<string, ProjectGroup>();
+const benchGroups = new Map<string, BenchGroup>();
+/** Benches the person folded; only this page remembers. */
+const collapsedBenches = new Set<string>();
 let showArchived = false;
 let isScheduled = false;
 
@@ -197,17 +210,20 @@ function updateRow(thread: Thread): ThreadRow {
     row.status.textContent = '';
     row.status.appendChild(statusIcon(status.kind, thread));
   }
-  if (row.title.textContent !== thread.title) {
-    row.title.textContent = thread.title;
-    row.title.title = thread.title;
+  const isRun = !!thread.bench && !thread.archived;
+  const title = isRun ? runName(thread) : thread.title;
+  if (row.title.textContent !== title) {
+    row.title.textContent = title;
+    row.title.title = title;
   }
   const time = ago(thread.updatedAt);
   if (row.time.textContent !== time) row.time.textContent = time;
   const otherAgent =
-    workspace.agents.length && thread.agent !== workspace.agents[0].id ? ' · ' + agentName(thread) : '';
+    !isRun && workspace.agents.length && thread.agent !== workspace.agents[0].id ? ' · ' + agentName(thread) : '';
   const sub =
     (thread.archived ? t('sidebar.archived') : status.label) +
     otherAgent +
+    (isRun && thread.runMillis ? ' · ' + duration(thread.runMillis) : '') +
     (thread.costUsd ? ' · ' + money(thread.costUsd) : '');
   if (row.sub.textContent !== sub) row.sub.textContent = sub;
   const pr = thread.pullRequest;
@@ -271,6 +287,40 @@ function projectGroup(project: ProjectItem): ProjectGroup {
   return group;
 }
 
+function benchGroup(bench: BenchItem): BenchGroup {
+  const existing = benchGroups.get(bench.id);
+  if (existing) return existing;
+  const group: BenchGroup = {
+    el: el('div', 'bench-group'),
+    head: el('div', 'bench-head'),
+    list: el('div', 'bench-threads'),
+    title: el('span', 'bench-title'),
+    count: el('span', 'project-count')
+  };
+  group.head.append(chevron(), icon('workflow', 'small'), group.title, group.count);
+  const actions = el('div', 'project-actions');
+  actions.appendChild(iconButton('chart-column', t('sidebar.bench.compare'), () => openBench(bench.id)));
+  actions.appendChild(iconButton('x', t('sidebar.bench.discard'), () => confirmDiscard(bench)));
+  group.head.appendChild(actions);
+  group.head.addEventListener('click', () => {
+    if (!collapsedBenches.delete(bench.id)) collapsedBenches.add(bench.id);
+    renderSidebar();
+  });
+  group.el.append(group.head, group.list);
+  benchGroups.set(bench.id, group);
+  return group;
+}
+
+/** Drops the groups of benches that are gone. */
+export function pruneBenchGroups(benches: BenchItem[]): void {
+  for (const [id, group] of [...benchGroups]) {
+    if (!benches.some(bench => bench.id === id)) {
+      group.el.remove();
+      benchGroups.delete(id);
+    }
+  }
+}
+
 /** Puts exactly these rows into the list, in order, moving only what moved. */
 function placeRows(list: HTMLElement, rows: HTMLElement[]): void {
   rows.forEach((row, index) => {
@@ -284,10 +334,40 @@ export function renderSidebar(): void {
   const projects = projectList();
   const rowsByProject = new Map<string, HTMLElement[]>(projects.map(project => [project.path, []]));
   const archivedRows: HTMLElement[] = [];
+  const benches = new Map(workspace.benches.map(bench => [bench.id, bench]));
+  const runRows = new Map<string, Thread[]>();
   for (const thread of sorted) {
     const row = updateRow(thread);
-    if (thread.archived) archivedRows.push(row.el);
-    else rowsByProject.get(projectOf(thread).path)?.push(row.el);
+    const bench = thread.bench ? benches.get(thread.bench) : undefined;
+    if (thread.archived) {
+      archivedRows.push(row.el);
+    } else if (bench) {
+      const runs = runRows.get(bench.id);
+      if (runs) {
+        runs.push(thread);
+      } else {
+        runRows.set(bench.id, [thread]);
+        rowsByProject.get(projectOf(thread).path)?.push(benchGroup(bench).el);
+      }
+    } else {
+      rowsByProject.get(projectOf(thread).path)?.push(row.el);
+    }
+  }
+  for (const bench of workspace.benches) {
+    const group = benchGroup(bench);
+    const runs = (runRows.get(bench.id) || []).sort((a, b) => a.runIndex - b.runIndex);
+    if (!runRows.has(bench.id)) {
+      const path = bench.projectPath || workspace.projectRoot;
+      const project = projects.find(candidate => samePath(candidate.path, path)) || projects[0];
+      rowsByProject.get(project.path)?.push(group.el);
+    }
+    group.title.textContent = bench.title;
+    group.head.title = t('sidebar.bench.title', bench.title, bench.baseCommit);
+    group.count.textContent = String(runs.length);
+    const isCollapsed = collapsedBenches.has(bench.id);
+    group.el.classList.toggle('collapsed', isCollapsed);
+    group.el.classList.toggle('has-active', runs.some(isActive));
+    placeRows(group.list, isCollapsed ? [] : runs.map(run => threadRow(run).el));
   }
   const groupEls: HTMLElement[] = [];
   for (const project of projects) {
@@ -303,7 +383,11 @@ export function renderSidebar(): void {
     }
     group.count.textContent = rows.length ? String(rows.length) : '';
     group.el.classList.toggle('collapsed', !!project.collapsed);
-    group.el.classList.toggle('has-active', !!state.active?.row && rows.includes(state.active.row.el));
+    group.el.classList.toggle(
+      'has-active',
+      (!!state.active?.row && rows.includes(state.active.row.el)) ||
+        rows.some(row => row.classList.contains('bench-group') && row.classList.contains('has-active'))
+    );
     placeRows(group.list, project.collapsed ? [] : rows);
     groupEls.push(group.el);
   }

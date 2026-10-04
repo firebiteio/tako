@@ -40,6 +40,8 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
   public static final class Data {
     /** The id of the agent new threads run. */
     public String defaultAgent = "claude";
+    /** Lets one prompt start several runs at once, each in its own git worktree. */
+    public boolean parallelRuns;
 
     @OptionTag("executablePath")
     public String claudePath = "";

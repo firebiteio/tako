@@ -3,6 +3,7 @@ import { addPermission } from '../composer/approvals';
 import { addContext, addImage, showMentions } from '../composer/composer';
 import { refreshContextPanel } from '../composer/contextMeter';
 import { renderControls } from '../composer/controls';
+import { onBenchCreated, onBenchFailed } from '../composer/runs';
 import type { Thread } from '../state/model';
 import { withRootOf } from '../state/projects';
 import { isActive, threads, workspace } from '../state/store';
@@ -20,8 +21,9 @@ import {
 import { follow } from '../thread/timeline';
 import { $ } from '../ui/dom';
 import { showAlert } from '../ui/widgets';
+import { pruneBenchView, showBenchComparison } from '../views/bench';
 import { renderProjectName, showScratchpad } from '../views/header';
-import { pruneProjectGroups, scheduleSidebar, showSessions } from '../views/sidebar';
+import { pruneBenchGroups, pruneProjectGroups, scheduleSidebar, showSessions } from '../views/sidebar';
 import { showUsage } from '../views/usage';
 import { isThreadMessage, type PageMessage, type ThreadMessage, type WorkspaceMessage } from './protocol';
 
@@ -124,6 +126,25 @@ function receiveForWorkspace(message: WorkspaceMessage): void {
       break;
     case 'usage':
       showUsage(message);
+      break;
+    case 'settings':
+      workspace.parallelRuns = message.parallelRuns;
+      renderControls();
+      break;
+    case 'benches':
+      workspace.benches = message.items || [];
+      pruneBenchGroups(workspace.benches);
+      pruneBenchView();
+      scheduleSidebar();
+      break;
+    case 'benchCreated':
+      onBenchCreated(message.request, message.threads || []);
+      break;
+    case 'benchFailed':
+      onBenchFailed(message.request, message.text);
+      break;
+    case 'benchComparison':
+      showBenchComparison(message.bench, message.runs || []);
       break;
     case 'error':
       showAlert(null, message.text);

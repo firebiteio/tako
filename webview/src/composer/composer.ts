@@ -9,6 +9,7 @@ import { $, el, icon, sendArrow, stopSquare } from '../ui/dom';
 import { t } from '../ui/i18n';
 import { imageThumb, mentionChip, showAlert } from '../ui/widgets';
 import { advanceQuestion, chooseOption, declineWithFeedback } from './approvals';
+import { isBench, startBench } from './runs';
 
 export const DEFAULT_PLACEHOLDER = t('composer.placeholder');
 /** The API's limits, which larger pasted images are scaled down to (io.firebite.tako.ide.context.Images). */
@@ -84,25 +85,33 @@ export function submit(): void {
     return;
   }
   hidePopup();
-  t.turnNo++;
-  t.finished = false;
-  t.failed = false;
-  startTurn(t, text, t.contexts, false, images);
-  sendThread(t, {
-    op: 'send',
-    text,
-    context: t.contexts,
-    images,
-    includeActiveFile: workspace.includeFile,
-    turn: t.turnNo
-  });
+  if (isBench(t)) {
+    if (!startBench(t, text)) return;
+  } else {
+    sendPrompt(t, text, t.contexts, images, workspace.includeFile);
+  }
   t.contexts = [];
   t.images = [];
   renderAttachments();
-  t.updatedAt = Date.now();
   renderChips();
   input.value = '';
   autosize();
+}
+
+/** Shows the prompt as the thread's next turn and sends it. */
+export function sendPrompt(
+  t: Thread,
+  text: string,
+  contexts: ContextItem[],
+  images: ImageAttachment[],
+  includeActiveFile: boolean
+): void {
+  t.turnNo++;
+  t.finished = false;
+  t.failed = false;
+  startTurn(t, text, contexts, false, images);
+  sendThread(t, { op: 'send', text, context: contexts, images, includeActiveFile, turn: t.turnNo });
+  t.updatedAt = Date.now();
   if (!t.busy) {
     t.startedAt = Date.now();
     setBusy(t, true);

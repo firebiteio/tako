@@ -34,6 +34,7 @@ import io.firebite.tako.chat.thread.ChatView;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.project.ProjectIcons;
+import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.PageCodec;
 import io.firebite.tako.ui.bridge.PageMessage;
@@ -64,12 +65,14 @@ public final class ChatService {
   private final Project project;
   private final ThreadStore store;
   private final Map<String, ChatController> controllers = new ConcurrentHashMap<>();
+  private final Benches benches;
   private @Nullable ChatPanel panel;
   private @Nullable ToolWindow toolWindow;
 
   public ChatService(Project project) {
     this.project = project;
     this.store = ThreadStore.getInstance(project);
+    this.benches = new Benches(project, this, this.store);
   }
 
   public static ChatService getInstance(Project project) {
@@ -159,13 +162,32 @@ public final class ChatService {
         this.threadPath(resume.projectPath()), resume.agent()));
       case PageOp.SetAgent setAgent -> Async.onEdt(() -> this.setAgent(setAgent.thread(), setAgent.agent()));
       case PageOp.Copy copy -> CopyPasteManager.getInstance().setContents(new StringSelection(copy.text()));
+      case PageOp.CreateBench createBench -> Async.onEdt(() -> {
+        String projectPath = this.threadPath(createBench.projectPath());
+        String basePath = this.project.getBasePath();
+        this.benches.create(createBench, projectPath,
+          projectPath != null ? projectPath : basePath != null ? basePath : "");
+      });
+      case PageOp.CompareBench compareBench -> Async.inBackground(() -> this.benches.compare(compareBench.bench()));
+      case PageOp.ShowRunDiff showRunDiff -> Async.inBackground(
+        () -> this.benches.showDiff(showRunDiff.bench(), showRunDiff.runIndex()));
+      case PageOp.PickWinner pickWinner -> Async.inBackground(
+        () -> this.benches.pickWinner(pickWinner.bench(), pickWinner.runIndex()));
+      case PageOp.DiscardBench discardBench -> Async.onEdt(() -> this.benches.discard(discardBench.bench()));
     }
+  }
+
+  /** Tells the page what the settings let it offer. */
+  public void postSettings() {
+    this.post(new PageMessage.Settings(ChatSettings.state().parallelRuns));
   }
 
   private void onReady() {
     this.post(new PageMessage.Project(this.project.getBasePath(), this.project.getName()));
+    this.postSettings();
     this.postAgents();
     this.postProjects();
+    this.benches.post();
     List<PageMessage.ThreadItem> items = new ArrayList<>();
     for (ThreadStore.Record record : this.store.all()) {
       items.add(record.toItem());
@@ -261,7 +283,7 @@ public final class ChatService {
     this.select(record.id);
   }
 
-  private void select(@Nullable String id) {
+  void select(@Nullable String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
       return;
@@ -277,21 +299,39 @@ public final class ChatService {
       Async.inBackground(existing::refreshGit);
       return;
     }
+    this.openController(record);
+  }
+
+  /** Shows a new thread in the list and starts its agent without selecting it. */
+  void openThread(ThreadStore.Record record) {
+    this.post(new PageMessage.ThreadAdded(record.toItem()));
+    this.openController(record);
+  }
+
+  private void openController(ThreadStore.Record record) {
     ChatController controller = new ChatController(this.project, new ThreadView(record.id), new Host(record), record,
       AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap()));
     this.controllers.put(record.id, controller);
     controller.open();
   }
 
-  private void close(String id) {
-    ThreadStore.Record record = this.store.find(id);
-    if (record == null) {
-      return;
+  void close(String id) {
+    this.closeAll(List.of(id));
+  }
+
+  /** Selects another thread only once all are closed, so none of them starts its agent in between. */
+  void closeAll(List<String> ids) {
+    String activeId = this.store.activeId();
+    for (String id : ids) {
+      if (this.store.find(id) != null) {
+        this.disposeController(id);
+        this.store.remove(id);
+        this.post(new PageMessage.ThreadRemoved(id));
+      }
     }
-    this.disposeController(record.id);
-    this.store.remove(record.id);
-    this.post(new PageMessage.ThreadRemoved(record.id));
-    this.selectAnotherIfActive(record.id);
+    if (activeId != null && ids.contains(activeId)) {
+      this.selectAnotherIfActive(activeId);
+    }
   }
 
   private void setArchived(String id, boolean archived) {
@@ -436,7 +476,7 @@ public final class ChatService {
     this.post(new PageMessage.ThreadUpdated(record.toItem()));
   }
 
-  private void post(PageMessage.WorkspaceMessage message) {
+  void post(PageMessage.WorkspaceMessage message) {
     this.postJson(PageCodec.encode(message));
   }
 
@@ -490,6 +530,9 @@ public final class ChatService {
 
     @Override
     public List<String> additionalDirectories() {
+      if (this.record.workDirectory != null) {
+        return List.of();
+      }
       String own = ChatService.this.folderOf(this.record);
       List<String> directories = new ArrayList<>();
       for (ThreadStore.ProjectFolder folder : ChatService.this.projects()) {

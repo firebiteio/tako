@@ -11,7 +11,10 @@ export const workspace: Workspace = {
   renderRoot: '',
   agents: [],
   includeFile: true,
-  limits: ''
+  limits: '',
+  parallelRuns: false,
+  benches: [],
+  agentModels: new Map()
 };
 
 export function isActive(t: Thread): boolean {

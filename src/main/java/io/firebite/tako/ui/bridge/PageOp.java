@@ -91,6 +91,57 @@ public sealed interface PageOp {
   ) implements WorkspaceOp {
   }
 
+  /**
+   * Starts a bench: a git worktree and a thread for each run, answered with {@link PageMessage.BenchCreated} or
+   * {@link PageMessage.BenchFailed}. The page then sends the prompt to each run's thread.
+   *
+   * @param request the page's number for matching the answer
+   * @param source  an unused thread the bench replaces, closed once the runs have threads
+   */
+  record CreateBench(
+    int request,
+    String title,
+    @Omittable @Nullable String projectPath,
+    @Omittable @Nullable String source,
+    List<RunSpec> runs
+  ) implements WorkspaceOp {
+  }
+
+  /** Blank values keep the agent's defaults. */
+  record RunSpec(
+    String agent,
+    String model,
+    String mode,
+    String effort
+  ) {
+  }
+
+  /** What each run changed, answered with {@link PageMessage.BenchComparison}. */
+  record CompareBench(
+    String bench
+  ) implements WorkspaceOp {
+  }
+
+  /** Shows a run's changes against the commit its bench started from. */
+  record ShowRunDiff(
+    String bench,
+    int runIndex
+  ) implements WorkspaceOp {
+  }
+
+  /** Applies a run's changes to the main checkout, then discards the bench. */
+  record PickWinner(
+    String bench,
+    int runIndex
+  ) implements WorkspaceOp {
+  }
+
+  /** Closes the bench's threads and removes its worktrees and branches. */
+  record DiscardBench(
+    String bench
+  ) implements WorkspaceOp {
+  }
+
   /** @param turn the page's number for this prompt's turn, which {@link TurnDiff} names later */
   record Send(
     String text,
