@@ -24,7 +24,7 @@ public class AcpSessionTest {
   private static AgentSession start(RecordingListener listener, String resume) throws Exception {
     Path agent = FakeExecutable.write("fake-acp", FakeAcpAgent.class);
     AgentLaunch launch = new AgentLaunch(Files.createTempDirectory("work"), resume, "", "", "", List.of(),
-      System.getenv());
+      System.getenv(), null);
     return new AcpBackend("Fake", List.of(agent.toString()), Map.of()).start(launch, listener);
   }
 

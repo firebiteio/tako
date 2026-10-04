@@ -84,25 +84,33 @@ export function submit(): void {
     return;
   }
   hidePopup();
-  t.turnNo++;
-  t.finished = false;
-  t.failed = false;
-  startTurn(t, text, t.contexts, false, images);
-  sendThread(t, {
-    op: 'send',
-    text,
-    context: t.contexts,
-    images,
-    includeActiveFile: workspace.includeFile,
-    turn: t.turnNo
-  });
+  startPrompt(t, text, t.contexts, images, workspace.includeFile);
   t.contexts = [];
   t.images = [];
   renderAttachments();
-  t.updatedAt = Date.now();
   renderChips();
   input.value = '';
   autosize();
+}
+
+/** Sends a prompt the IDE gave, e.g. the one an agent wrote for a thread it created. Leaves the composer alone. */
+export function submitFromIde(t: Thread, text: string): void {
+  startPrompt(t, text, [], [], false);
+}
+
+function startPrompt(
+  t: Thread,
+  text: string,
+  contexts: ContextItem[],
+  images: ImageAttachment[],
+  includeActiveFile: boolean
+): void {
+  t.turnNo++;
+  t.finished = false;
+  t.failed = false;
+  startTurn(t, text, contexts, false, images);
+  sendThread(t, { op: 'send', text, context: contexts, images, includeActiveFile, turn: t.turnNo });
+  t.updatedAt = Date.now();
   if (!t.busy) {
     t.startedAt = Date.now();
     setBusy(t, true);

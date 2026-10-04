@@ -137,6 +137,7 @@ export type ThreadMessage = { thread: string } & (
   | { kind: 'scratchpad'; path: string; files: string[] }
   | { kind: 'contextUsage'; data: ContextUsage }
   | { kind: 'exit'; code: number; stderr: string }
+  | { kind: 'submit'; text: string }
   | { kind: 'error'; text: string }
 );
 
@@ -153,6 +154,7 @@ const THREAD_KINDS: ReadonlySet<string> = new Set<ThreadMessage['kind']>([
   'scratchpad',
   'contextUsage',
   'exit',
+  'submit',
   'error'
 ]);
 

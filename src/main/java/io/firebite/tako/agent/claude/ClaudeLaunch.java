@@ -37,6 +37,7 @@ public record ClaudeLaunch(
     for (String directory : options.additionalDirectories()) {
       addFlag(command, "--add-dir", directory);
     }
+    addFlag(command, "--mcp-config", options.mcpConfig());
     addFlag(command, "--resume", options.resumeSessionId());
 
     Map<String, String> environment = new HashMap<>(baseEnvironment);
@@ -62,17 +63,19 @@ public record ClaudeLaunch(
    * What one thread asks of its process. Blank values keep the CLI's defaults.
    *
    * @param additionalDirectories folders besides the working directory Claude may read and edit
+   * @param mcpConfig             a file of MCP servers to load besides the configured ones
    */
   public record Options(
     @Nullable String model,
     @Nullable String permissionMode,
     @Nullable String effort,
     @Nullable String resumeSessionId,
-    List<String> additionalDirectories
+    List<String> additionalDirectories,
+    @Nullable String mcpConfig
   ) {
 
     public static Options defaults() {
-      return new Options(null, null, null, null, List.of());
+      return new Options(null, null, null, null, List.of(), null);
     }
   }
 }

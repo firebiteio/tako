@@ -14,7 +14,7 @@ public class ClaudeLaunchTest {
   @Test
   public void apiKeyModeSetsTheKeyAndStreamJsonFlags() {
     ClaudeLaunch launch = ClaudeLaunch.build("claude", AuthMode.API_KEY, "sk-test",
-      new ClaudeLaunch.Options("sonnet", "plan", "max", null, List.of()), Map.of("PATH", "/bin"));
+      new ClaudeLaunch.Options("sonnet", "plan", "max", null, List.of(), null), Map.of("PATH", "/bin"));
 
     assertEquals("sk-test", launch.environment().get("ANTHROPIC_API_KEY"));
     assertEquals("/bin", launch.environment().get("PATH"));
@@ -30,7 +30,7 @@ public class ClaudeLaunchTest {
   @Test
   public void cliLoginModeDropsAnInheritedKey() {
     ClaudeLaunch launch = ClaudeLaunch.build("claude", AuthMode.CLI_LOGIN, null,
-      new ClaudeLaunch.Options("", "", "", "abc", List.of()), Map.of("ANTHROPIC_API_KEY", "sk-inherited"));
+      new ClaudeLaunch.Options("", "", "", "abc", List.of(), null), Map.of("ANTHROPIC_API_KEY", "sk-inherited"));
 
     assertFalse(launch.environment().containsKey("ANTHROPIC_API_KEY"));
     String command = String.join(" ", launch.command());
@@ -43,10 +43,18 @@ public class ClaudeLaunchTest {
   @Test
   public void additionalDirectoriesBecomeAddDirFlags() {
     ClaudeLaunch launch = ClaudeLaunch.build("claude", AuthMode.CLI_LOGIN, null,
-      new ClaudeLaunch.Options(null, null, null, null, List.of("D:/shared-lib", "D:/api")), Map.of());
+      new ClaudeLaunch.Options(null, null, null, null, List.of("D:/shared-lib", "D:/api"), null), Map.of());
 
     String command = String.join(" ", launch.command());
     assertTrue(command.contains("--add-dir D:/shared-lib --add-dir D:/api"));
+  }
+
+  @Test
+  public void mcpConfigBecomesAFlag() {
+    ClaudeLaunch launch = ClaudeLaunch.build("claude", AuthMode.CLI_LOGIN, null,
+      new ClaudeLaunch.Options(null, null, null, null, List.of(), "C:/tmp/tako-mcp.json"), Map.of());
+
+    assertTrue(String.join(" ", launch.command()).contains("--mcp-config C:/tmp/tako-mcp.json"));
   }
 
   @Test(expected = IllegalStateException.class)

@@ -241,4 +241,10 @@ public sealed interface PageMessage {
     String stderr
   ) implements ThreadMessage {
   }
+
+  /** Sends a prompt as if the person typed it, e.g. the one an agent gave the thread it created. */
+  record Submit(
+    String text
+  ) implements ThreadMessage {
+  }
 }

@@ -13,6 +13,7 @@ import org.jetbrains.annotations.Nullable;
  * How one thread starts its agent. Blank values keep the agent's defaults.
  *
  * @param additionalDirectories folders besides the working directory the agent may read and edit
+ * @param toolsUrl              where the agent reaches Tako's own tools over MCP, null for none
  */
 public record AgentLaunch(
   Path workDirectory,
@@ -21,14 +22,17 @@ public record AgentLaunch(
   String mode,
   String effort,
   List<String> additionalDirectories,
-  Map<String, String> environment
+  Map<String, String> environment,
+  @Nullable String toolsUrl
 ) {
+  /** The name agents know {@link #toolsUrl} by, which prefixes the tools' names, e.g. {@code mcp__tako__}. */
+  public static final String TOOLS_SERVER_NAME = "tako";
 
   /** This launch with blank choices filled from those defaults. */
   public AgentLaunch withDefaults(AgentDefaults defaults) {
     return new AgentLaunch(this.workDirectory, this.resumeSessionId, orDefault(this.model, defaults.model()),
       orDefault(this.mode, defaults.mode()), orDefault(this.effort, defaults.effort()), this.additionalDirectories,
-      this.environment);
+      this.environment, this.toolsUrl);
   }
 
   /** The file's text, with relative paths resolved against the working directory. Null if it cannot be read. */

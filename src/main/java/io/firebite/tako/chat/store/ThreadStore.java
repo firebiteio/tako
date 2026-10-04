@@ -209,6 +209,18 @@ public final class ThreadStore {
     public @Nullable String projectPath;
     /** The {@link io.firebite.tako.agent.AgentBackend#id()} of the agent the thread runs. See {@link #agent()}. */
     public @Nullable String agent;
+    /** The folder the thread works in instead of its project folder, e.g. a git worktree made for it. */
+    public @Nullable String workPath;
+    /** The thread whose agent created this one. */
+    public @Nullable String parentId;
+
+    /** The folder the thread works in: its {@link #workPath}, its {@link #projectPath} or else {@code basePath}. */
+    public @Nullable String folder(@Nullable String basePath) {
+      if (this.workPath != null) {
+        return this.workPath;
+      }
+      return this.projectPath != null ? this.projectPath : basePath;
+    }
 
     public void setUsage(SessionCost cost) {
       this.inputTokens = cost.inputTokens();
