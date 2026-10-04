@@ -1,5 +1,6 @@
 package io.firebite.tako.chat.thread;
 
+import com.intellij.ide.actions.RevealFileAction;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
@@ -54,6 +55,7 @@ public final class ChatController implements Disposable {
   private static final int FILE_MATCHES = 30;
   private static final long PULL_REQUEST_INTERVAL_MILLIS = 120_000;
   private static final String PASTED_IMAGE_NAME = "pasted-image.png";
+  private static final int SCRATCHPAD_FILES = 50;
 
   private final Project project;
   private final ChatView view;
@@ -64,6 +66,7 @@ public final class ChatController implements Disposable {
   private final TurnChanges changes;
 
   private volatile @Nullable String workingDirectory;
+  private volatile @Nullable String scratchpadPath;
   private volatile long lastPullRequestCheck;
   private volatile boolean isTitled;
 
@@ -137,6 +140,13 @@ public final class ChatController implements Disposable {
       case PageOp.ContextUsage contextUsage -> this.refreshContext();
       case PageOp.Files files -> Async.inBackground(() -> this.findFiles(files));
       case PageOp.Restart restart -> Async.inBackground(() -> this.launch(this.record.sessionId));
+      case PageOp.Scratchpad scratchpad -> Async.inBackground(this::listScratchpad);
+      case PageOp.RevealScratchpad revealScratchpad -> {
+        String directory = this.scratchpadPath;
+        if (directory != null) {
+          RevealFileAction.openDirectory(Path.of(directory));
+        }
+      }
     }
   }
 
@@ -328,6 +338,13 @@ public final class ChatController implements Disposable {
       FileIndex.search(entries, request.query(), FILE_MATCHES)));
   }
 
+  private void listScratchpad() {
+    String directory = this.scratchpadPath;
+    if (directory != null) {
+      this.view.post(new PageMessage.Scratchpad(directory, IdeFiles.newestFiles(Path.of(directory), SCRATCHPAD_FILES)));
+    }
+  }
+
   private void refreshContext() {
     this.connection.ifLive(session -> {
       CompletableFuture<ContextUsage> usage = session.contextUsage();
@@ -354,6 +371,7 @@ public final class ChatController implements Disposable {
         if (started.workingDirectory() != null) {
           this.workingDirectory = started.workingDirectory();
         }
+        this.scratchpadPath = started.scratchpadPath();
       }
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);

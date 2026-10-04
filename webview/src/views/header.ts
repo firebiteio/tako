@@ -1,10 +1,12 @@
 /** The header: the project and thread names, the thread's cost, the rate-limit windows, and its worktree, branch and pull request. */
-import { send } from '../bridge/protocol';
+import { send, sendThread } from '../bridge/protocol';
+import type { Thread } from '../state/model';
 import { projectOf } from '../state/projects';
 import { state, workspace } from '../state/store';
 import { $, el, icon, on } from '../ui/dom';
 import { money, tokens } from '../ui/format';
 import { t } from '../ui/i18n';
+import { openMenu, type MenuItem } from '../ui/menu';
 import { projectIcon, projectIconUrl } from '../ui/widgets';
 
 /** How much of the agent's rate-limit windows is used, e.g. "5h 42% · 7d 10%". */
@@ -47,6 +49,34 @@ export function renderGit(): void {
     button.appendChild(el('span', null, pr.number));
     chips.appendChild(on(button, () => send({ op: 'openUrl', url: pr.url })));
   }
+}
+
+/** The scratchpad button, shown while the thread's agent has a scratchpad. */
+export function renderScratchpad(): void {
+  $('scratchpad').hidden = !state.active || !state.active.scratchpad;
+}
+
+export function requestScratchpad(): void {
+  if (state.active) sendThread(state.active, { op: 'scratchpad' });
+}
+
+/** Lists the scratchpad's files, newest first, each opening in the editor. */
+export function showScratchpad(thread: Thread, path: string, files: string[]): void {
+  const items: MenuItem[] = files.map(file => {
+    const slash = file.lastIndexOf('/');
+    return {
+      label: file.slice(slash + 1),
+      description: slash < 0 ? undefined : file.slice(0, slash),
+      icon: 'file-text',
+      run: () => sendThread(thread, { op: 'open', path: path + '/' + file, line: 1 })
+    };
+  });
+  items.push({
+    label: t('header.scratchpad.reveal'),
+    icon: 'folder-open',
+    run: () => sendThread(thread, { op: 'revealScratchpad' })
+  });
+  openMenu($('scratchpad'), items, 'below', t('header.scratchpad'));
 }
 
 /** The project crumb, and the empty thread's hero that names the project. */

@@ -31,12 +31,18 @@ public sealed interface AgentEvent {
     return todo;
   }
 
-  /** The session is ready. @param sessionId what resumes it later */
+  /**
+   * The session is ready.
+   *
+   * @param sessionId      what resumes it later
+   * @param scratchpadPath the folder the agent keeps its scratch files in, if it has one
+   */
   record SessionStarted(
     @Nullable String sessionId,
     @Nullable String workingDirectory,
     @Nullable String model,
-    @Nullable String mode
+    @Nullable String mode,
+    @Nullable String scratchpadPath
   ) implements AgentEvent {
   }
 

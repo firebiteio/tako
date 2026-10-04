@@ -134,6 +134,7 @@ export type ThreadMessage = { thread: string } & (
   | { kind: 'context'; item: ContextItem; prefill?: string }
   | { kind: 'image'; image: ImageAttachment }
   | { kind: 'files'; requestId: number; items: FileMatch[] }
+  | { kind: 'scratchpad'; path: string; files: string[] }
   | { kind: 'contextUsage'; data: ContextUsage }
   | { kind: 'exit'; code: number; stderr: string }
   | { kind: 'error'; text: string }
@@ -149,6 +150,7 @@ const THREAD_KINDS: ReadonlySet<string> = new Set<ThreadMessage['kind']>([
   'context',
   'image',
   'files',
+  'scratchpad',
   'contextUsage',
   'exit',
   'error'
@@ -204,7 +206,9 @@ export type ThreadOp =
   | { op: 'contextUsage' }
   | { op: 'files'; query: string; requestId: number }
   | { op: 'turnDiff'; turn: number; path?: string }
-  | { op: 'restart' };
+  | { op: 'restart' }
+  | { op: 'scratchpad' }
+  | { op: 'revealScratchpad' };
 
 declare global {
   interface Window {

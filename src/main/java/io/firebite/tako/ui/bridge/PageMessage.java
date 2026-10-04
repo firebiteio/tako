@@ -224,6 +224,13 @@ public sealed interface PageMessage {
   ) implements ThreadMessage {
   }
 
+  /** @param files paths relative to {@code path} with {@code /} separators, newest first */
+  record Scratchpad(
+    String path,
+    List<String> files
+  ) implements ThreadMessage {
+  }
+
   record ContextUsage(
     io.firebite.tako.agent.ContextUsage data
   ) implements ThreadMessage {

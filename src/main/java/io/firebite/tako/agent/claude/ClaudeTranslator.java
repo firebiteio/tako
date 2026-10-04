@@ -186,7 +186,8 @@ final class ClaudeTranslator {
     String subtype = String.valueOf(message.subtype());
     switch (subtype) {
       case CliMessage.SUBTYPE_INIT -> events.add(new AgentEvent.SessionStarted(message.sessionId(),
-        message.workingDirectory(), Json.string(json, "model"), Json.string(json, "permissionMode")));
+        message.workingDirectory(), Json.string(json, "model"), Json.string(json, "permissionMode"),
+        Json.string(json, "scratchpad_path")));
       case "status" -> {
         if ("requesting".equals(Json.string(json, "status"))) {
           events.add(new AgentEvent.Busy());

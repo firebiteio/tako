@@ -178,4 +178,12 @@ public sealed interface PageOp {
 
   record Restart() implements ThreadOp {
   }
+
+  /** The files in the agent's scratchpad, answered with {@link PageMessage.Scratchpad}. */
+  record Scratchpad() implements ThreadOp {
+  }
+
+  /** Opens the agent's scratchpad folder in the system file manager. */
+  record RevealScratchpad() implements ThreadOp {
+  }
 }

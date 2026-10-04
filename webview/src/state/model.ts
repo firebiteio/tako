@@ -204,6 +204,8 @@ export interface Thread {
   info: AgentInfo | null;
   /** The model's context size, when the agent reports it. */
   contextWindow: number | null;
+  /** The folder the agent keeps its scratch files in, if it has one. */
+  scratchpad: string | null;
   draft: string;
   stick: boolean;
   scrollTop: number;

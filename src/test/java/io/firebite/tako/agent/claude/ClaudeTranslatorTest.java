@@ -32,6 +32,14 @@ public class ClaudeTranslatorTest {
   }
 
   @Test
+  public void initCarriesTheScratchpad() {
+    assertEquals(List.of(new AgentEvent.SessionStarted("s", "/p", "opus", "default", "/tmp/s/scratchpad")), translate(
+      "{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s\",\"cwd\":\"/p\",\"model\":\"opus\","
+        + "\"permissionMode\":\"default\",\"scratchpad_path\":\"/tmp/s/scratchpad\"}",
+      false));
+  }
+
+  @Test
   public void toolCallsCarryTheirKindAndResultsTheirChange() {
     List<AgentEvent> started = translate("{\"type\":\"assistant\",\"message\":{\"id\":\"m\",\"content\":[{\"type\":"
       + "\"tool_use\",\"id\":\"t1\",\"name\":\"Bash\",\"input\":{\"command\":\"ls\"}}]}}", false);

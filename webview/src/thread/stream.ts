@@ -8,7 +8,7 @@ import { isActive } from '../state/store';
 import { t } from '../ui/i18n';
 import { markdown } from '../ui/markdown';
 import { showAlert } from '../ui/widgets';
-import { onRateLimits, renderMeta } from '../views/header';
+import { onRateLimits, renderMeta, renderScratchpad } from '../views/header';
 import { scheduleSidebar } from '../views/sidebar';
 import { onTaskEvent } from './tasks';
 import { setBusy } from './threads';
@@ -36,6 +36,8 @@ export function handleEvent(thread: Thread, event: AgentEvent): void {
         if (isActive(thread)) renderControls();
       }
       if (event.model) selectResolvedModel(thread, event.model);
+      thread.scratchpad = event.scratchpadPath || null;
+      if (isActive(thread)) renderScratchpad();
       break;
     case 'modeChanged':
       thread.mode = event.mode;

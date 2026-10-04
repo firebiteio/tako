@@ -272,7 +272,8 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
     if (this.effort.isBlank() && startedEffort != null) {
       this.effort = startedEffort;
     }
-    this.emit(new AgentEvent.SessionStarted(this.threadId, Json.string(started, "cwd"), resolvedModel, this.mode));
+    this.emit(new AgentEvent.SessionStarted(this.threadId, Json.string(started, "cwd"), resolvedModel, this.mode,
+      null));
     List<AgentInfo.Model> models = new ArrayList<>();
     JsonObject list = modelList.isJsonObject() ? modelList.getAsJsonObject() : new JsonObject();
     for (JsonObject model : Json.objects(list, "data")) {

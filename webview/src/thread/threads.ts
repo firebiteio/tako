@@ -12,7 +12,7 @@ import { $, el } from '../ui/dom';
 import { t } from '../ui/i18n';
 import { closeMenu } from '../ui/menu';
 import { showAlert } from '../ui/widgets';
-import { renderGit, renderMeta, renderProjectName } from '../views/header';
+import { renderGit, renderMeta, renderProjectName, renderScratchpad } from '../views/header';
 import { NARROW, scheduleSidebar, setSidebarOpen } from '../views/sidebar';
 import { handleEvent } from './stream';
 import { closeTaskPanel, renderTasksTray, stopAllTasks } from './tasks';
@@ -64,6 +64,7 @@ export function makeThread(item: ThreadItem): Thread {
     hasSession: !!item.hasSession,
     info: null,
     contextWindow: null,
+    scratchpad: null,
     draft: '',
     stick: true,
     scrollTop: 0,
@@ -140,6 +141,7 @@ export function activate(t: Thread | undefined): void {
   renderControls();
   renderMeta();
   renderGit();
+  renderScratchpad();
   renderContextControls();
   renderTasksTray();
   setDraft(t.turnCount === 0);

@@ -19,6 +19,7 @@ import { $, el, icon, on } from './ui/dom';
 import { t } from './ui/i18n';
 import { closeMenu, closeMenuOutside } from './ui/menu';
 import { closeLightbox } from './ui/widgets';
+import { requestScratchpad } from './views/header';
 import { NARROW, restoreSidebar, scheduleSidebar, setSidebarOpen, toggleArchived } from './views/sidebar';
 import { closeUsage, showUsage } from './views/usage';
 
@@ -38,6 +39,7 @@ function wireControls(): void {
     if (state.active) sendThread(state.active, { op: 'pickImage' });
   });
   on($('new-chat'), newThreadHere);
+  on($('scratchpad'), requestScratchpad);
   on($('sidebar-new'), newThreadHere);
   on($('sidebar-add-project'), () => send({ op: 'addProject' }));
   on($('sidebar-history'), () => send({ op: 'history' }));
@@ -90,6 +92,7 @@ function addStaticIcons(): void {
   $('sidebar-add-project').appendChild(icon('folder-plus'));
   $('sidebar-new').appendChild(icon('plus'));
   $('new-chat').appendChild(icon('plus'));
+  $('scratchpad').appendChild(icon('notebook-pen'));
   $('scroll-end').append(icon('arrow-down', 'small'), el('span', null, t('timeline.scroll.to.end')));
 }
 

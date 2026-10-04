@@ -20,10 +20,14 @@ import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.EditPreview;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
 import org.jetbrains.annotations.Nullable;
@@ -52,6 +56,36 @@ public final class IdeFiles {
     } catch (IOException e) {
       return null;
     }
+  }
+
+  /** The regular files under the folder, newest first, relative with {@code /} separators. Reads the disk. */
+  public static List<String> newestFiles(Path directory, int limit) {
+    List<DatedFile> files = new ArrayList<>();
+    try {
+      Files.walkFileTree(directory, new SimpleFileVisitor<>() {
+        @Override
+        public FileVisitResult visitFile(Path file, BasicFileAttributes attributes) {
+          if (attributes.isRegularFile()) {
+            files.add(new DatedFile(directory.relativize(file).toString().replace('\\', '/'),
+              attributes.lastModifiedTime().toMillis()));
+          }
+          return FileVisitResult.CONTINUE;
+        }
+
+        @Override
+        public FileVisitResult visitFileFailed(Path file, IOException exception) {
+          return FileVisitResult.CONTINUE;
+        }
+      });
+    } catch (IOException e) {
+      return List.of();
+    }
+    files.sort(Comparator.comparingLong(DatedFile::modified).reversed());
+    List<String> newest = new ArrayList<>();
+    for (int i = 0; i < Math.min(limit, files.size()); i++) {
+      newest.add(files.get(i).path());
+    }
+    return newest;
   }
 
   /** Must run on the EDT. */
@@ -132,5 +166,11 @@ public final class IdeFiles {
       }
       editor.getCaretModel().moveToOffset(offset + text.length());
     });
+  }
+
+  private record DatedFile(
+    String path,
+    long modified
+  ) {
   }
 }

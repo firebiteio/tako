@@ -20,7 +20,7 @@ import {
 import { follow } from '../thread/timeline';
 import { $ } from '../ui/dom';
 import { showAlert } from '../ui/widgets';
-import { renderProjectName } from '../views/header';
+import { renderProjectName, showScratchpad } from '../views/header';
 import { pruneProjectGroups, scheduleSidebar, showSessions } from '../views/sidebar';
 import { showUsage } from '../views/usage';
 import { isThreadMessage, type PageMessage, type ThreadMessage, type WorkspaceMessage } from './protocol';
@@ -60,6 +60,9 @@ function receiveForThread(t: Thread, message: ThreadMessage): void {
       break;
     case 'files':
       showMentions(t, message.requestId, message.items || []);
+      break;
+    case 'scratchpad':
+      if (isActive(t)) showScratchpad(t, message.path, message.files || []);
       break;
     case 'contextUsage':
       t.contextUsage = message.data;

@@ -16,6 +16,7 @@ import io.firebite.tako.agent.claude.protocol.TaskEvent;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.json.Json;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
@@ -27,6 +28,7 @@ import org.jetbrains.annotations.Nullable;
 /** One {@code claude} process serving one thread. */
 final class ClaudeSession implements AgentSession, ClaudeProcessListener {
   private static final long SETTINGS_TIMEOUT_SECONDS = 5;
+  private static final List<String> TEMP_VARIABLES = List.of("CLAUDE_CODE_TMPDIR", "TMPDIR", "TEMP", "TMP");
 
   private final ClaudeProcess process;
   private final AgentLaunch launch;
@@ -135,8 +137,38 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
       this.subagents.onToolResults(message.toolResults());
     }
     for (AgentEvent event : ClaudeTranslator.translate(message, change, false)) {
-      this.listener.onEvent(event);
+      this.listener.onEvent(event instanceof AgentEvent.SessionStarted started ? this.withScratchpad(started) : event);
     }
+  }
+
+  /**
+   * The CLI names its scratchpad only while the feature is on, but a session it once had one for, such as a resumed
+   * one, keeps the folder. Reads the disk.
+   */
+  private AgentEvent.SessionStarted withScratchpad(AgentEvent.SessionStarted started) {
+    if (started.scratchpadPath() != null || started.sessionId() == null) {
+      return started;
+    }
+    Path directory = scratchpadDirectory(this.environment, this.launch.workDirectory().toString(),
+      started.sessionId());
+    if (!Files.isDirectory(directory)) {
+      return started;
+    }
+    return new AgentEvent.SessionStarted(started.sessionId(), started.workingDirectory(), started.model(),
+      started.mode(), directory.toString());
+  }
+
+  /** Where the CLI keeps a session's scratchpad: {@code <temp>/claude/<encoded cwd>/<session-id>/scratchpad}. */
+  static Path scratchpadDirectory(Map<String, String> environment, String workDirectory, String sessionId) {
+    String temp = System.getProperty("java.io.tmpdir");
+    for (String variable : TEMP_VARIABLES) {
+      String value = environment.get(variable);
+      if (value != null && !value.isEmpty()) {
+        temp = value;
+        break;
+      }
+    }
+    return Path.of(temp, "claude", SessionStore.encode(workDirectory), sessionId, "scratchpad");
   }
 
   @Override

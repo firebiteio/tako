@@ -164,7 +164,14 @@ export interface TaskUpdated {
 }
 
 export type AgentEvent =
-  | { type: 'sessionStarted'; sessionId?: string; workingDirectory?: string; model?: string; mode?: string }
+  | {
+      type: 'sessionStarted';
+      sessionId?: string;
+      workingDirectory?: string;
+      model?: string;
+      mode?: string;
+      scratchpadPath?: string;
+    }
   | { type: 'modeChanged'; mode: string }
   | { type: 'commandsChanged'; commands: Command[] }
   | { type: 'busy' }
