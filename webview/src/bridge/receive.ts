@@ -1,6 +1,6 @@
 /** Dispatches what the IDE posts to the page. */
 import { addPermission } from '../composer/approvals';
-import { addContext, addImage, showMentions } from '../composer/composer';
+import { addContext, addImage, showMentions, submitFromIde } from '../composer/composer';
 import { refreshContextPanel } from '../composer/contextMeter';
 import { renderControls } from '../composer/controls';
 import { onBenchCreated, onBenchFailed } from '../composer/runs';
@@ -72,6 +72,9 @@ function receiveForThread(t: Thread, message: ThreadMessage): void {
       break;
     case 'exit':
       onExit(t, message.code, message.stderr);
+      break;
+    case 'submit':
+      submitFromIde(t, message.text);
       break;
     case 'error':
       onThreadError(t, message.text);

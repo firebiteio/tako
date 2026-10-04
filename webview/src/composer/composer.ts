@@ -88,7 +88,7 @@ export function submit(): void {
   if (isBench(t)) {
     if (!startBench(t, text)) return;
   } else {
-    sendPrompt(t, text, t.contexts, images, workspace.includeFile);
+    startPrompt(t, text, t.contexts, images, workspace.includeFile);
   }
   t.contexts = [];
   t.images = [];
@@ -98,8 +98,13 @@ export function submit(): void {
   autosize();
 }
 
+/** Sends a prompt the IDE gave, e.g. the one an agent wrote for a thread it created. Leaves the composer alone. */
+export function submitFromIde(t: Thread, text: string): void {
+  startPrompt(t, text, [], [], false);
+}
+
 /** Shows the prompt as the thread's next turn and sends it. */
-export function sendPrompt(
+export function startPrompt(
   t: Thread,
   text: string,
   contexts: ContextItem[],

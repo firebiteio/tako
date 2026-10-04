@@ -261,6 +261,10 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
     CodexModes.Mode mode = CodexModes.find(this.mode);
     params.addProperty("approvalPolicy", mode.approvalPolicy());
     params.addProperty("sandbox", mode.sandbox());
+    String toolsUrl = this.launch.toolsUrl();
+    if (toolsUrl != null) {
+      params.add("config", Json.of("mcp_servers." + AgentLaunch.TOOLS_SERVER_NAME + ".url", toolsUrl));
+    }
     return params;
   }
 

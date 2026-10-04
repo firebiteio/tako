@@ -45,6 +45,7 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicReference;
 import org.jetbrains.annotations.Nullable;
 
 /** One chat thread. It owns its agent session and answers what the page asks for it. */
@@ -66,7 +67,11 @@ public final class ChatController implements Disposable {
   private final TurnChanges changes;
   /** Done once {@link #open} launched the agent, so a prompt sent meanwhile does not launch a second one. */
   private final CompletableFuture<Void> opened = new CompletableFuture<>();
+  private final AtomicReference<String> firstPrompt = new AtomicReference<>();
+  private final StringBuilder answer = new StringBuilder();
 
+  private volatile State state = State.STARTING;
+  private volatile @Nullable String error;
   private volatile @Nullable String workingDirectory;
   private volatile @Nullable String scratchpadPath;
   private volatile long lastPullRequestCheck;
@@ -85,6 +90,15 @@ public final class ChatController implements Disposable {
 
   /** Replays the thread's past, if it has one, and starts its agent. */
   public void open() {
+    this.open(null);
+  }
+
+  /** Like {@link #open()}, then sends {@code prompt} as if typed, once the agent is ready. Keeps the thread's title. */
+  public void open(@Nullable String prompt) {
+    this.firstPrompt.set(prompt);
+    if (prompt != null) {
+      this.isTitled = true;
+    }
     Async.inBackground(() -> {
       try {
         String resume = this.record.sessionId;
@@ -119,9 +133,12 @@ public final class ChatController implements Disposable {
     switch (op) {
       case PageOp.Send send -> this.onSend(send);
       case PageOp.Interrupt interrupt -> this.connection.ifLive(AgentSession::interrupt);
-      case PageOp.Permission permission -> this.connection.ifLive(session -> session.answer(permission.requestId(),
-        new PermissionAnswer(permission.allow(), permission.message(), permission.interrupt(),
-          permission.answers() != null ? permission.answers() : Map.of(), permission.suggestion())));
+      case PageOp.Permission permission -> {
+        this.state = State.WORKING;
+        this.connection.ifLive(session -> session.answer(permission.requestId(),
+          new PermissionAnswer(permission.allow(), permission.message(), permission.interrupt(),
+            permission.answers() != null ? permission.answers() : Map.of(), permission.suggestion())));
+      }
       case PageOp.Diff diff -> Async.inBackground(() -> this.showProposedEdit(diff.requestId()));
       case PageOp.TurnDiff turnDiff -> Async.inBackground(() -> this.showTurnDiff(turnDiff.turn(), turnDiff.path()));
       case PageOp.Open open -> Async.onEdt(() -> IdeFiles.open(this.project, open.path(), open.line()));
@@ -186,14 +203,30 @@ public final class ChatController implements Disposable {
     this.recordChanged();
   }
 
-  /** The folder this thread works in: a run's worktree, else its project folder, else the IDE project. */
+  /** The folder this thread works in: its worktree, its project folder or else the IDE project. */
   public @Nullable String projectPath() {
-    return this.record.workDirectory != null ? this.record.workDirectory : this.folder();
+    return this.record.folder(this.project.getBasePath());
   }
 
-  /** The project folder the thread belongs to, which a run's worktree is a copy of. */
-  private @Nullable String folder() {
+  /** The project folder the thread belongs to, which its worktree is a copy of. */
+  private @Nullable String projectFolder() {
     return this.record.projectPath != null ? this.record.projectPath : this.project.getBasePath();
+  }
+
+  public State state() {
+    return this.state;
+  }
+
+  /** The text the agent wrote since the last prompt. */
+  public String lastAnswer() {
+    synchronized (this.answer) {
+      return this.answer.toString();
+    }
+  }
+
+  /** Why the agent did not start or the last turn failed, if it did. */
+  public @Nullable String error() {
+    return this.error;
   }
 
   public void addContext(ContextItem item, @Nullable String prefill) {
@@ -225,22 +258,32 @@ public final class ChatController implements Disposable {
     String basePath = this.projectPath();
     Path workDirectory = Path.of(basePath != null ? basePath : System.getProperty("user.home"));
     AgentLaunch launch = new AgentLaunch(workDirectory, resumeSessionId, this.record.model, this.record.mode,
-      this.record.effort, this.host.additionalDirectories(), EnvironmentUtil.getEnvironmentMap());
+      this.record.effort, this.host.additionalDirectories(), EnvironmentUtil.getEnvironmentMap(),
+      this.host.toolsUrl());
+    this.state = State.STARTING;
     AgentSession session;
     try {
       session = this.connection.replace(this.backend, launch, new Listener());
     } catch (AgentException e) {
+      this.stopped(e.getMessage());
       this.postError(e.getMessage());
       return;
     }
     session.initialize().whenComplete((info, error) -> {
       if (error != null) {
-        this.postError(TakoBundle.message("error.agent.not.started", this.backend.displayName(),
-          AgentException.messageOf(error)));
+        String message = TakoBundle.message("error.agent.not.started", this.backend.displayName(),
+          AgentException.messageOf(error));
+        this.stopped(message);
+        this.postError(message);
         return;
       }
+      this.state = State.IDLE;
       this.view.post(new PageMessage.Init(info, this.projectPath()));
       this.refreshContext();
+      String prompt = this.firstPrompt.getAndSet(null);
+      if (prompt != null) {
+        this.view.post(new PageMessage.Submit(prompt));
+      }
     });
   }
 
@@ -258,9 +301,9 @@ public final class ChatController implements Disposable {
       String composed = text.isBlank() && !images.isEmpty()
         ? ""
         : PromptComposer.compose(text, send.context(), activeFile);
-      String folder = this.folder();
-      String prompt = this.record.workDirectory != null && folder != null
-        ? PromptComposer.rebase(composed, folder, this.record.workDirectory)
+      String folder = this.projectFolder();
+      String prompt = this.record.workPath != null && folder != null
+        ? PromptComposer.rebase(composed, folder, this.record.workPath)
         : composed;
       Async.inBackground(() -> this.sendPrompt(text, prompt, images));
     });
@@ -276,6 +319,11 @@ public final class ChatController implements Disposable {
         return;
       }
     }
+    synchronized (this.answer) {
+      this.answer.setLength(0);
+    }
+    this.state = State.WORKING;
+    this.error = null;
     session.prompt(prompt, images);
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
@@ -390,6 +438,15 @@ public final class ChatController implements Disposable {
         }
         this.scratchpadPath = started.scratchpadPath();
       }
+      case AgentEvent.Busy busy -> this.state = State.WORKING;
+      case AgentEvent.PermissionCancelled cancelled -> this.state = State.WORKING;
+      case AgentEvent.Text text -> {
+        if (text.parentId() == null && !text.text().isBlank()) {
+          synchronized (this.answer) {
+            this.answer.append(this.answer.isEmpty() ? "" : "\n\n").append(text.text());
+          }
+        }
+      }
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
       case AgentEvent.TurnEnded ended -> this.onTurnEnded(ended);
@@ -400,6 +457,8 @@ public final class ChatController implements Disposable {
   }
 
   private void onTurnEnded(AgentEvent.TurnEnded ended) {
+    this.state = State.IDLE;
+    this.error = ended.error();
     this.refreshContext();
     if (ended.cost() != null) {
       this.record.setUsage(ended.cost());
@@ -414,6 +473,7 @@ public final class ChatController implements Disposable {
   }
 
   private void onPermission(String requestId, PermissionPrompt prompt) {
+    this.state = State.WAITING;
     this.view.post(new PageMessage.Permission(requestId, prompt));
     String agent = this.backend.displayName();
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
@@ -422,12 +482,28 @@ public final class ChatController implements Disposable {
     Async.onEdt(() -> this.host.requestAttention(reason));
   }
 
+  private void stopped(@Nullable String error) {
+    this.state = State.STOPPED;
+    this.error = error;
+  }
+
   private void recordChanged() {
     Async.onEdt(this.host::recordChanged);
   }
 
   private void postError(String text) {
     this.view.post(new PageMessage.Error(text));
+  }
+
+  /** What the thread's agent is doing. */
+  public enum State {
+    STARTING,
+    WORKING,
+    /** Waits for the person to answer a permission prompt or question. */
+    WAITING,
+    IDLE,
+    /** The agent did not start or its process ended. The next prompt starts it again. */
+    STOPPED
   }
 
   private final class Listener implements AgentListener {
@@ -453,6 +529,7 @@ public final class ChatController implements Disposable {
 
     @Override
     public void onExit(int exitCode, String stderrTail) {
+      ChatController.this.stopped(exitCode == 0 ? null : stderrTail);
       ChatController.this.view.post(new PageMessage.Exit(exitCode, stderrTail));
     }
   }

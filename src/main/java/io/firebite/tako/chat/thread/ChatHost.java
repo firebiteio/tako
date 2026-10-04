@@ -1,6 +1,7 @@
 package io.firebite.tako.chat.thread;
 
 import java.util.List;
+import org.jetbrains.annotations.Nullable;
 
 /** What a thread tells the service it lives in. Called on the EDT. */
 public interface ChatHost {
@@ -17,4 +18,8 @@ public interface ChatHost {
 
   /** The workspace's other project folders, which the thread may use too ({@code --add-dir}). */
   List<String> additionalDirectories();
+
+  /** Where the thread's agent reaches Tako's tools over MCP, or null without them. */
+  @Nullable
+  String toolsUrl();
 }

@@ -26,6 +26,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   private static final long TIMEOUT_MILLIS = 20000;
 
   private final BlockingQueue<PageMessage.ThreadMessage> posted = new LinkedBlockingQueue<>();
+  private final ThreadStore.Record record = new ThreadStore.Record();
   private ChatSettings.Data savedSettings;
   private ChatController controller;
   private String title;
@@ -61,7 +62,12 @@ public class ChatControllerTest extends BasePlatformTestCase {
       public List<String> additionalDirectories() {
         return List.of();
       }
-    }, new ThreadStore.Record(), new ClaudeBackend(Map.of()));
+
+      @Override
+      public String toolsUrl() {
+        return null;
+      }
+    }, this.record, new ClaudeBackend(Map.of()));
   }
 
   @Override
@@ -132,5 +138,25 @@ public class ChatControllerTest extends BasePlatformTestCase {
         break;
       }
     }
+  }
+
+  public void testFirstPromptIsSubmittedOnceTheAgentIsReadyAndStateFollowsTheTurn() throws Exception {
+    this.record.projectPath = Files.createTempDirectory("tako-work").toString();
+    this.controller.open("write a.txt");
+    this.awaitPost(PageMessage.Init.class);
+    PageMessage.Submit submit = this.awaitPost(PageMessage.Submit.class);
+    assertEquals("write a.txt", submit.text());
+    assertEquals(ChatController.State.IDLE, this.controller.state());
+
+    this.controller.handle(new PageOp.Send(submit.text(), List.of(), List.of(), false, 1));
+    PageMessage.Permission permission = this.awaitPost(PageMessage.Permission.class);
+    assertEquals(ChatController.State.WAITING, this.controller.state());
+    assertNull("a given title stays", this.title);
+
+    this.controller.handle(new PageOp.Permission(permission.requestId(), false, "no", false, null, null));
+    while (!(this.awaitPost(PageMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+    }
+    assertEquals(ChatController.State.IDLE, this.controller.state());
+    assertEquals("denied", this.controller.lastAnswer());
   }
 }

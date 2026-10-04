@@ -189,11 +189,25 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
     this.listener.onExit(exitCode, stderrTail);
   }
 
+  /** Tako's tools, for agents that take MCP servers over HTTP. */
+  private JsonArray mcpServers(@Nullable JsonObject capabilities) {
+    JsonArray servers = new JsonArray();
+    String toolsUrl = this.launch.toolsUrl();
+    if (toolsUrl != null && Json.bool(Json.object(capabilities, "mcpCapabilities"), "http")) {
+      JsonObject server = Json.of("type", "http");
+      server.addProperty("name", AgentLaunch.TOOLS_SERVER_NAME);
+      server.addProperty("url", toolsUrl);
+      server.add("headers", new JsonArray());
+      servers.add(server);
+    }
+    return servers;
+  }
+
   private CompletableFuture<JsonObject> openSession(JsonObject agent) {
     JsonObject capabilities = Json.object(agent, "agentCapabilities");
     String resume = this.launch.resumeSessionId();
     JsonObject params = Json.of("cwd", this.launch.workDirectory().toString());
-    params.add(MCP_SERVERS, new JsonArray());
+    params.add(MCP_SERVERS, this.mcpServers(capabilities));
     if (Json.object(Json.object(capabilities, "sessionCapabilities"), "additionalDirectories") != null) {
       JsonArray directories = new JsonArray();
       this.launch.additionalDirectories().forEach(directories::add);

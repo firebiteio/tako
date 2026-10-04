@@ -6,6 +6,7 @@ import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationAction;
 import com.intellij.notification.NotificationGroupManager;
 import com.intellij.notification.NotificationType;
+import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
@@ -34,6 +35,7 @@ import io.firebite.tako.chat.thread.ChatView;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.project.ProjectIcons;
+import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.PageCodec;
@@ -56,7 +58,7 @@ import org.jetbrains.annotations.Nullable;
 
 /** The project's chat threads. They share one page in the Tako tool window, with one controller per opened thread. */
 @Service(Service.Level.PROJECT)
-public final class ChatService {
+public final class ChatService implements Disposable {
   public static final String TOOL_WINDOW_ID = "Tako";
   private static final Logger LOG = Logger.getInstance(ChatService.class);
   private static final int SESSION_LIST_LIMIT = 50;
@@ -66,6 +68,8 @@ public final class ChatService {
   private final ThreadStore store;
   private final Map<String, ChatController> controllers = new ConcurrentHashMap<>();
   private final Benches benches;
+  /** Serves each thread's {@link ThreadTools}, keyed by thread id. Guarded by {@code this}. */
+  private @Nullable McpServer toolServer;
   private @Nullable ChatPanel panel;
   private @Nullable ToolWindow toolWindow;
 
@@ -302,20 +306,73 @@ public final class ChatService {
       Async.inBackground(existing::refreshGit);
       return;
     }
-    this.openController(record);
+    this.newController(record).open();
   }
 
   /** Shows a new thread in the list and starts its agent without selecting it. */
   void openThread(ThreadStore.Record record) {
     this.post(new PageMessage.ThreadAdded(record.toItem()));
-    this.openController(record);
+    this.newController(record).open();
   }
 
-  private void openController(ThreadStore.Record record) {
+  private ChatController newController(ThreadStore.Record record) {
     ChatController controller = new ChatController(this.project, new ThreadView(record.id), new Host(record), record,
       AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap()));
     this.controllers.put(record.id, controller);
-    controller.open();
+    return controller;
+  }
+
+  /** A thread another thread's agent asked for, started on its prompt without selecting it. Must run on the EDT. */
+  ThreadStore.Record spawn(ThreadStore.Record parent, ThreadTools.NewThread spec) {
+    ThreadStore.Record record = this.store.create(null, spec.title(), parent.projectPath, spec.agent());
+    record.parentId = parent.id;
+    record.model = spec.model();
+    record.mode = spec.mode();
+    record.effort = spec.effort();
+    record.workPath = spec.workPath();
+    this.store.save();
+    this.post(new PageMessage.ThreadAdded(record.toItem()));
+    this.newController(record).open(spec.prompt());
+    return record;
+  }
+
+  /** The open thread's controller, null for a thread not open in Tako. */
+  @Nullable
+  ChatController controller(String id) {
+    return this.controllers.get(id);
+  }
+
+  /** The folder the thread works in. */
+  String workFolder(ThreadStore.Record record) {
+    String folder = record.folder(this.project.getBasePath());
+    return folder != null ? folder : "";
+  }
+
+  /** Where the thread's agent reaches its {@link ThreadTools}. Starts the server once. Null if it cannot start. */
+  private synchronized @Nullable String toolsUrl(String id) {
+    if (this.toolServer == null) {
+      try {
+        this.toolServer = McpServer.start();
+      } catch (IOException e) {
+        LOG.warn("Could not start the MCP server for Tako's tools", e);
+        return null;
+      }
+    }
+    return this.toolServer.publish(id, new ThreadTools(this, this.store, id));
+  }
+
+  private synchronized void withdrawTools(String id) {
+    if (this.toolServer != null) {
+      this.toolServer.withdraw(id);
+    }
+  }
+
+  @Override
+  public synchronized void dispose() {
+    if (this.toolServer != null) {
+      this.toolServer.close();
+      this.toolServer = null;
+    }
   }
 
   void close(String id) {
@@ -328,6 +385,7 @@ public final class ChatService {
     for (String id : ids) {
       if (this.store.find(id) != null) {
         this.disposeController(id);
+        this.withdrawTools(id);
         this.store.remove(id);
         this.post(new PageMessage.ThreadRemoved(id));
       }
@@ -541,6 +599,11 @@ public final class ChatService {
         }
       }
       return directories;
+    }
+
+    @Override
+    public @Nullable String toolsUrl() {
+      return ChatService.this.toolsUrl(this.record.id);
     }
 
     @Override

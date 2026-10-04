@@ -9,7 +9,7 @@ import { $ } from '../ui/dom';
 import { t } from '../ui/i18n';
 import { openMenu, type MenuItem } from '../ui/menu';
 import { showAlert } from '../ui/widgets';
-import { autosize, input, renderAttachments, renderChips, sendPrompt } from './composer';
+import { autosize, input, renderAttachments, renderChips, startPrompt } from './composer';
 import { agentName, agentNameOf, canChangeAgent, fill, renderControls } from './controls';
 
 const RUN_COUNTS = [2, 3, 4, 5, 6, 8];
@@ -172,7 +172,7 @@ export function onBenchCreated(request: number, threadIds: string[]): void {
   if (threads.has(prompt.source.id)) setBusy(prompt.source, false);
   for (const id of threadIds) {
     const run = threads.get(id);
-    if (run) withRootOf(run, () => sendPrompt(run, prompt.text, prompt.contexts, prompt.images, prompt.includeFile));
+    if (run) withRootOf(run, () => startPrompt(run, prompt.text, prompt.contexts, prompt.images, prompt.includeFile));
   }
 }
 

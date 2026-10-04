@@ -24,6 +24,8 @@ import io.firebite.tako.settings.ApiKeyStore;
 import io.firebite.tako.settings.AuthMode;
 import io.firebite.tako.settings.ChatSettings;
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -85,10 +87,12 @@ public final class ClaudeBackend implements AgentBackend {
     try {
       command = ClaudeLaunch.build(executable, settings.authMode, apiKey,
         new ClaudeLaunch.Options(launch.model(), launch.mode(), launch.effort(), launch.resumeSessionId(),
-          launch.additionalDirectories()),
+          launch.additionalDirectories(), toolsConfig(launch.toolsUrl())),
         launch.environment());
     } catch (IllegalStateException e) {
       throw new AgentException(e.getMessage(), e);
+    } catch (IOException e) {
+      throw new AgentException(TakoBundle.message("error.agent.start", executable, e.getMessage()), e);
     }
     String authDescription = settings.authMode == AuthMode.API_KEY
       ? TakoBundle.message("auth.claude.api.key")
@@ -137,6 +141,29 @@ public final class ClaudeBackend implements AgentBackend {
       LOG.debug("No usage for session " + sessionId, e);
       return null;
     }
+  }
+
+  /**
+   * Writes Tako's tools to an MCP config file, one per URL, so relaunches reuse it. Inline JSON would not survive a
+   * Windows command line.
+   */
+  private static @Nullable String toolsConfig(@Nullable String toolsUrl) throws IOException {
+    if (toolsUrl == null) {
+      return null;
+    }
+    JsonObject server = Json.of("type", "http");
+    server.addProperty("url", toolsUrl);
+    JsonObject servers = new JsonObject();
+    servers.add(AgentLaunch.TOOLS_SERVER_NAME, server);
+    JsonObject config = new JsonObject();
+    config.add("mcpServers", servers);
+    Path file = Path.of(System.getProperty("java.io.tmpdir"),
+      "tako-mcp-" + Integer.toHexString(toolsUrl.hashCode()) + ".json");
+    if (!Files.exists(file)) {
+      file.toFile().deleteOnExit();
+    }
+    Files.writeString(file, config.toString(), StandardCharsets.UTF_8);
+    return file.toString();
   }
 
   /** What the CLI's {@code initialize} answer offers. */

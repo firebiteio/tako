@@ -87,6 +87,12 @@ public record GitInfo(
   }
 
   private static @Nullable String run(Path directory, Map<String, String> environment, List<String> command) {
+    return run(directory, environment, command, TIMEOUT_SECONDS);
+  }
+
+  /** The command's output, or null when it fails or takes longer than {@code timeoutSeconds}. */
+  static @Nullable String run(Path directory, Map<String, String> environment, List<String> command,
+    long timeoutSeconds) {
     ProcessBuilder builder = new ProcessBuilder(command);
     builder.directory(directory.toFile());
     builder.environment().clear();
@@ -100,7 +106,7 @@ public record GitInfo(
       builder.redirectOutput(output.toFile());
       Process process = builder.start();
       process.getOutputStream().close();
-      if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
+      if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
         process.destroyForcibly();
         return null;
       }

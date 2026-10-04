@@ -26,7 +26,7 @@ public class CodexSessionTest {
     Path codex = FakeExecutable.write("codex", FakeCodex.class);
     RecordingListener listener = new RecordingListener();
     AgentLaunch launch = new AgentLaunch(Files.createTempDirectory("work"), null, "", "", "", List.of(),
-      System.getenv());
+      System.getenv(), null);
     AgentSession session = new CodexBackend(codex.toString(), AgentDefaults.NONE, Map.of()).start(launch, listener);
     try {
       AgentInfo info = session.initialize().get(20, TimeUnit.SECONDS);

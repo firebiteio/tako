@@ -69,14 +69,14 @@ public class ThreadStoreTest {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     ThreadStore store = new ThreadStore(file);
     ThreadStore.Record record = store.create(null, "Fix login", null, "claude");
-    record.workDirectory = "D:/code/app-tako/fix-login-b1/1";
+    record.workPath = "D:/code/app-tako/fix-login-b1/1";
     ThreadStore.Bench bench = new ThreadStore.Bench();
     bench.id = "b1";
     bench.title = "Fix login";
     bench.baseCommit = "0123456789abcdef";
     ThreadStore.Run run = new ThreadStore.Run();
     run.thread = record.id;
-    run.worktree = record.workDirectory;
+    run.worktree = record.workPath;
     run.branch = "tako/fix-login-b1-1";
     bench.runs.add(run);
     store.addBench(bench);
@@ -87,7 +87,7 @@ public class ThreadStoreTest {
     assertEquals("tako/fix-login-b1-1", restored.runs.getFirst().branch);
     assertEquals("0123456", restored.toItem().baseCommit());
     assertEquals(List.of(record.id), restored.toItem().threads());
-    assertEquals("D:/code/app-tako/fix-login-b1/1", reloaded.find(record.id).workDirectory);
+    assertEquals("D:/code/app-tako/fix-login-b1/1", reloaded.find(record.id).workPath);
     reloaded.removeBench("b1");
     assertNull(new ThreadStore(file).findBench("b1"));
   }

@@ -217,7 +217,7 @@ final class Benches {
       record.model = spec.model();
       record.mode = spec.mode();
       record.effort = spec.effort();
-      record.workDirectory = workDirectories.get(i);
+      record.workPath = workDirectories.get(i);
       bench.runs.get(i).thread = record.id;
       records.add(record);
       threads.add(record.id);
