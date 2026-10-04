@@ -347,6 +347,8 @@ function renderPopup(): void {
     });
   }
   popup.hidden = false;
+  // Sits 6px above the composer; keeps 8px to the window top and scrolls beyond that.
+  popup.style.maxHeight = Math.max(80, $('composer').getBoundingClientRect().top - 6 - 8) + 'px';
   popup.children[popupIndex]?.scrollIntoView({ block: 'nearest' });
 }
 

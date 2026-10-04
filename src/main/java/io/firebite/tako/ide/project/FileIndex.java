@@ -87,7 +87,7 @@ public final class FileIndex {
     if (trimmed.contains(needle)) {
       return 40;
     }
-    return isSubsequence(needle, trimmed) ? 10 : 0;
+    return isSubsequence(needle, name) ? 10 : 0;
   }
 
   private static boolean isSubsequence(String needle, String haystack) {

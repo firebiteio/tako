@@ -40,6 +40,16 @@ public class FileIndexTest {
   }
 
   @Test
+  public void subsequenceIgnoresFolders() {
+    List<String> entries = FileIndex.withFolders(List.of("subprojects/ui/renderer/build.gradle.kts",
+      "subprojects/ui/api/src/main/java/io/firebite/Main.java", "subprojects/gpu/sample/src/Cube.java"));
+
+    List<FileIndex.Match> matches = FileIndex.search(entries, "Cube", 10);
+
+    assertEquals(List.of(new FileIndex.Match("subprojects/gpu/sample/src/Cube.java", false)), matches);
+  }
+
+  @Test
   public void walkSkipsBuildOutput() throws Exception {
     Path root = Files.createTempDirectory("project");
     Files.createDirectories(root.resolve("src"));
