@@ -164,9 +164,7 @@ public final class ChatService {
       case PageOp.Copy copy -> CopyPasteManager.getInstance().setContents(new StringSelection(copy.text()));
       case PageOp.CreateBench createBench -> Async.onEdt(() -> {
         String projectPath = this.threadPath(createBench.projectPath());
-        String basePath = this.project.getBasePath();
-        this.benches.create(createBench, projectPath,
-          projectPath != null ? projectPath : basePath != null ? basePath : "");
+        this.benches.create(createBench, projectPath, this.folderOf(projectPath));
       });
       case PageOp.CompareBench compareBench -> Async.inBackground(() -> this.benches.compare(compareBench.bench()));
       case PageOp.ShowRunDiff showRunDiff -> Async.inBackground(
@@ -216,8 +214,13 @@ public final class ChatService {
   }
 
   private String folderOf(ThreadStore.Record record) {
+    return this.folderOf(record.projectPath);
+  }
+
+  /** @param projectPath a project folder, or null for the IDE project */
+  private String folderOf(@Nullable String projectPath) {
     String basePath = this.project.getBasePath();
-    return record.projectPath != null ? record.projectPath : basePath != null ? basePath : "";
+    return projectPath != null ? projectPath : basePath != null ? basePath : "";
   }
 
   /** Reads the folders' icons in the background. */
@@ -530,9 +533,6 @@ public final class ChatService {
 
     @Override
     public List<String> additionalDirectories() {
-      if (this.record.workDirectory != null) {
-        return List.of();
-      }
       String own = ChatService.this.folderOf(this.record);
       List<String> directories = new ArrayList<>();
       for (ThreadStore.ProjectFolder folder : ChatService.this.projects()) {

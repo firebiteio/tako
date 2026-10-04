@@ -5,10 +5,12 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.ui.Messages;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.util.EnvironmentUtil;
+import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.EditPreview;
 import io.firebite.tako.chat.store.ThreadStore;
+import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Worktrees;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import org.jetbrains.annotations.Nullable;
 
@@ -86,17 +89,26 @@ final class Benches {
       return;
     }
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+    List<CompletableFuture<PageMessage.RunChanges>> lookups = new ArrayList<>();
+    for (ThreadStore.Run run : bench.runs) {
+      lookups.add(CompletableFuture.supplyAsync(() -> changesOf(run, bench.baseCommit, environment),
+        AppExecutorUtil.getAppExecutorService()));
+    }
     List<PageMessage.RunChanges> runs = new ArrayList<>();
-    for (int i = 0; i < bench.runs.size(); i++) {
-      ThreadStore.Run run = bench.runs.get(i);
-      try {
-        Worktrees.DiffStat stat = Worktrees.diffStat(Path.of(run.worktree), bench.baseCommit, environment);
-        runs.add(new PageMessage.RunChanges(run.thread, i + 1, stat.files(), stat.added(), stat.removed(), null));
-      } catch (Worktrees.GitException e) {
-        runs.add(new PageMessage.RunChanges(run.thread, i + 1, 0, 0, 0, e.getMessage()));
-      }
+    for (CompletableFuture<PageMessage.RunChanges> lookup : lookups) {
+      runs.add(lookup.join());
     }
     this.service.post(new PageMessage.BenchComparison(bench.id, runs));
+  }
+
+  private static PageMessage.RunChanges changesOf(ThreadStore.Run run, String commit,
+    Map<String, String> environment) {
+    try {
+      Worktrees.DiffStat stat = Worktrees.diffStat(Path.of(run.worktree), commit, environment);
+      return new PageMessage.RunChanges(stat.files(), stat.added(), stat.removed(), null);
+    } catch (Worktrees.GitException e) {
+      return new PageMessage.RunChanges(0, 0, 0, e.getMessage());
+    }
   }
 
   /** Reads git, so call off the EDT. */
@@ -154,19 +166,19 @@ final class Benches {
     this.service.closeAll(threads);
     this.store.removeBench(bench.id);
     this.post();
-    Async.inBackground(() -> this.removeWorktrees(bench, bench.runs));
+    Async.inBackground(() -> this.removeWorktrees(bench));
   }
 
   private void addWorktrees(PageOp.CreateBench request, @Nullable String projectPath, String folder, Path repository,
     String commit, Map<String, String> environment) {
     ThreadStore.Bench bench = new ThreadStore.Bench();
     bench.id = UUID.randomUUID().toString();
-    bench.title = request.title();
+    String title = ChatController.titleOf(request.prompt());
+    bench.title = title.isEmpty() ? TakoBundle.message("bench.untitled") : title;
     bench.projectPath = projectPath;
     bench.repository = slashes(repository);
     bench.baseCommit = commit;
-    bench.createdAt = System.currentTimeMillis();
-    String slug = Worktrees.slug(request.title()) + "-" + bench.id.substring(0, ID_LENGTH);
+    String slug = Worktrees.slug(bench.title) + "-" + bench.id.substring(0, ID_LENGTH);
     Path benchFolder = Worktrees.benchFolder(repository, slug);
     Path subfolder = Path.of(folder).startsWith(repository) ? repository.relativize(Path.of(folder)) : Path.of("");
     List<String> workDirectories = new ArrayList<>();
@@ -178,14 +190,14 @@ final class Benches {
       try {
         Worktrees.add(repository, location, run.branch, commit, environment);
       } catch (Worktrees.GitException e) {
-        this.removeWorktrees(bench, bench.runs);
+        this.removeWorktrees(bench);
         this.fail(request, TakoBundle.message("error.bench.worktree", e.getMessage()));
         return;
       }
       bench.runs.add(run);
       Path workDirectory = location.resolve(subfolder);
       if (!Files.isDirectory(workDirectory)) {
-        this.removeWorktrees(bench, bench.runs);
+        this.removeWorktrees(bench);
         this.fail(request, TakoBundle.message("error.bench.folder.missing", subfolder));
         return;
       }
@@ -197,31 +209,29 @@ final class Benches {
   private void startRuns(PageOp.CreateBench request, ThreadStore.Bench bench, List<String> workDirectories) {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     List<ThreadStore.Record> records = new ArrayList<>();
+    List<String> threads = new ArrayList<>();
     for (int i = 0; i < bench.runs.size(); i++) {
       PageOp.RunSpec spec = request.runs().get(i);
-      ThreadStore.Record record = this.store.create(null, "#" + (i + 1) + " · " + bench.title, bench.projectPath,
+      ThreadStore.Record record = this.store.create(null, bench.title, bench.projectPath,
         AgentRegistry.find(spec.agent(), environment).id());
       record.model = spec.model();
       record.mode = spec.mode();
       record.effort = spec.effort();
       record.workDirectory = workDirectories.get(i);
-      record.bench = bench.id;
-      record.runIndex = i + 1;
       bench.runs.get(i).thread = record.id;
       records.add(record);
+      threads.add(record.id);
     }
     this.store.addBench(bench);
     this.post();
-    List<String> threads = new ArrayList<>();
     for (ThreadStore.Record record : records) {
       this.service.openThread(record);
-      threads.add(record.id);
     }
     this.service.select(threads.getFirst());
     if (request.source() != null) {
       this.service.close(request.source());
     }
-    this.service.post(new PageMessage.BenchCreated(request.request(), bench.id, threads));
+    this.service.post(new PageMessage.BenchCreated(request.request(), threads));
   }
 
   private boolean confirmDirty() {
@@ -235,10 +245,13 @@ final class Benches {
   }
 
   /** Removes the worktrees, then the bench's folder and the folder of all benches once they are empty. */
-  private void removeWorktrees(ThreadStore.Bench bench, List<ThreadStore.Run> runs) {
+  private void removeWorktrees(ThreadStore.Bench bench) {
+    if (bench.runs.isEmpty()) {
+      return;
+    }
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     Path repository = Path.of(bench.repository);
-    for (ThreadStore.Run run : runs) {
+    for (ThreadStore.Run run : bench.runs) {
       try {
         Worktrees.remove(repository, Path.of(run.worktree), run.branch, environment);
       } catch (Worktrees.GitException e) {
@@ -247,10 +260,8 @@ final class Benches {
           e.getMessage())));
       }
     }
-    if (runs.isEmpty()) {
-      return;
-    }
-    Path benchFolder = Path.of(runs.getFirst().worktree).getParent();
+    Worktrees.prune(repository, environment);
+    Path benchFolder = Path.of(bench.runs.getFirst().worktree).getParent();
     deleteIfEmpty(benchFolder);
     deleteIfEmpty(benchFolder.getParent());
   }

@@ -1098,28 +1098,8 @@ body.sidebar-open #git-chips .git-chip:not(.pr) { display: none; }
 .project-threads { display: flex; flex-direction: column; gap: 1px; }
 .project-threads:empty { display: none; }
 
-.bench-group { display: flex; flex-direction: column; gap: 1px; }
-.bench-head {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  height: 26px;
-  padding: 0 6px 0 10px;
-  border-radius: 8px;
-  color: var(--muted);
-  font-size: var(--text-xs);
-  cursor: pointer;
-  user-select: none;
-}
-.bench-head:hover { background: color-mix(in srgb, var(--hover) 60%, transparent); color: var(--fg); }
-.bench-head .row-chevron { color: inherit; transform: rotate(90deg); }
-.bench-group.collapsed .bench-head .row-chevron { transform: none; }
-.bench-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.bench-head:hover .project-actions { display: flex; }
-.bench-head:hover .project-count { display: none; }
-.bench-group.collapsed.has-active .bench-head { color: var(--fg); }
-.bench-threads { display: flex; flex-direction: column; gap: 1px; padding-left: 10px; }
-.bench-threads:empty { display: none; }
+.bench-head { height: 26px; padding-left: 10px; font-weight: 500; }
+.bench-threads { padding-left: 10px; }
 .control.on { color: var(--primary); }
 
 .project-icon-slot { display: flex; align-items: center; justify-content: center; width: 16px; height: 16px; flex: none; }

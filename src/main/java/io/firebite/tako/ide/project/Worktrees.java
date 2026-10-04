@@ -87,9 +87,16 @@ public final class Worktrees {
         sleep(REMOVE_RETRY_MILLIS);
       }
     }
-    git(repository, environment, "worktree", "prune");
     try {
       git(repository, environment, "branch", "-D", branch);
+    } catch (GitException ignored) {
+    }
+  }
+
+  /** Forgets worktrees whose folder is gone, which {@link #remove} leaves when the folder was deleted by hand. */
+  public static void prune(Path repository, Map<String, String> environment) {
+    try {
+      git(repository, environment, "worktree", "prune");
     } catch (GitException ignored) {
     }
   }
@@ -97,23 +104,18 @@ public final class Worktrees {
   /** Counts what the worktree changed against {@code commit}, including new files and commits made in it. */
   public static DiffStat diffStat(Path worktree, String commit, Map<String, String> environment)
     throws GitException {
-    Path index = createTemp(".index");
-    try {
-      Map<String, String> marked = markedIndex(worktree, environment, index);
-      return parseNumstat(git(worktree, marked, "diff", "--numstat", "--no-renames", commit));
-    } finally {
-      deleteQuietly(index);
+    try (MarkedIndex index = MarkedIndex.of(worktree, environment)) {
+      return parseNumstat(git(worktree, index.environment(), "diff", "--numstat", "--no-renames", commit));
     }
   }
 
   /** Each file the worktree changed against {@code commit}, named by its path in the repository. */
   public static List<EditPreview> changes(Path worktree, String commit, Map<String, String> environment)
     throws GitException {
-    Path index = createTemp(".index");
-    try {
-      Map<String, String> marked = markedIndex(worktree, environment, index);
+    try (MarkedIndex index = MarkedIndex.of(worktree, environment)) {
       List<EditPreview> previews = new ArrayList<>();
-      for (String line : git(worktree, marked, "diff", "--name-status", "--no-renames", commit).split("\\R")) {
+      String names = git(worktree, index.environment(), "diff", "--name-status", "--no-renames", commit);
+      for (String line : names.split("\\R")) {
         int tab = line.indexOf('\t');
         if (tab < 0) {
           continue;
@@ -125,8 +127,6 @@ public final class Worktrees {
         previews.add(new EditPreview(path, before, after));
       }
       return previews;
-    } finally {
-      deleteQuietly(index);
     }
   }
 
@@ -137,11 +137,9 @@ public final class Worktrees {
    */
   public static void applyTo(Path repository, Path worktree, String commit, Map<String, String> environment)
     throws GitException {
-    Path index = createTemp(".index");
     Path patch = createTemp(".patch");
-    try {
-      Map<String, String> marked = markedIndex(worktree, environment, index);
-      run(worktree, marked, patch, "diff", "--binary", "--no-renames", commit);
+    try (MarkedIndex index = MarkedIndex.of(worktree, environment)) {
+      run(worktree, index.environment(), patch, "diff", "--binary", "--no-renames", commit);
       if (Files.size(patch) == 0) {
         throw new GitException("The run changed nothing.");
       }
@@ -153,7 +151,6 @@ public final class Worktrees {
     } catch (IOException e) {
       throw new GitException(e.getMessage());
     } finally {
-      deleteQuietly(index);
       deleteQuietly(patch);
     }
   }
@@ -181,26 +178,6 @@ public final class Worktrees {
     } catch (NumberFormatException e) {
       return 0;
     }
-  }
-
-  /**
-   * Copies the worktree's index to {@code copy} and marks new files in the copy, so diffs against a commit see them.
-   * The agent may still work in the worktree, so its own index stays untouched.
-   *
-   * @return the environment that makes git use the copy
-   */
-  private static Map<String, String> markedIndex(Path worktree, Map<String, String> environment, Path copy)
-    throws GitException {
-    Path index = worktree.resolve(git(worktree, environment, "rev-parse", "--git-path", "index").trim());
-    try {
-      Files.copy(index, copy, StandardCopyOption.REPLACE_EXISTING);
-    } catch (IOException e) {
-      throw new GitException(e.getMessage());
-    }
-    Map<String, String> marked = new HashMap<>(environment);
-    marked.put("GIT_INDEX_FILE", copy.toString());
-    git(worktree, marked, "add", "--all", "--intent-to-add");
-    return marked;
   }
 
   /** Bytes that are not UTF-8 read as replacement characters instead of failing. */
@@ -284,6 +261,38 @@ public final class Worktrees {
     try {
       Files.deleteIfExists(file);
     } catch (IOException ignored) {
+    }
+  }
+
+  /**
+   * A copy of the worktree's index with new files marked, so diffs against a commit see them. The agent may still work
+   * in the worktree, so its own index stays untouched. Closing deletes the copy.
+   *
+   * @param environment the environment that makes git use the copy
+   */
+  private record MarkedIndex(
+    Path file,
+    Map<String, String> environment
+  ) implements AutoCloseable {
+    static MarkedIndex of(Path worktree, Map<String, String> environment) throws GitException {
+      Path index = worktree.resolve(git(worktree, environment, "rev-parse", "--git-path", "index").trim());
+      Path copy = createTemp(".index");
+      Map<String, String> marked = new HashMap<>(environment);
+      marked.put("GIT_INDEX_FILE", copy.toString());
+      MarkedIndex markedIndex = new MarkedIndex(copy, marked);
+      try {
+        Files.copy(index, copy, StandardCopyOption.REPLACE_EXISTING);
+        git(worktree, marked, "add", "--all", "--intent-to-add");
+        return markedIndex;
+      } catch (IOException | GitException e) {
+        markedIndex.close();
+        throw e instanceof GitException gitException ? gitException : new GitException(e.getMessage());
+      }
+    }
+
+    @Override
+    public void close() {
+      deleteQuietly(this.file);
     }
   }
 

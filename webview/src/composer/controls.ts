@@ -64,9 +64,14 @@ export function selectResolvedModel(t: Thread, resolved: string): void {
   }
 }
 
+/** The name of the agent with this id, when the IDE offers it. */
+export function agentNameOf(id: string): string | undefined {
+  return workspace.agents.find(agent => agent.id === id)?.name;
+}
+
 /** The agent's name. */
 export function agentName(t: Thread): string {
-  return workspace.agents.find(agent => agent.id === t.agent)?.name || t.info?.agentName || t.agent;
+  return agentNameOf(t.agent) || t.info?.agentName || t.agent;
 }
 
 /** The agent can only change before the thread has a session; the picker shows until then. */

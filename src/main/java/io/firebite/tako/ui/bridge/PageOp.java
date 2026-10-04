@@ -96,11 +96,12 @@ public sealed interface PageOp {
    * {@link PageMessage.BenchFailed}. The page then sends the prompt to each run's thread.
    *
    * @param request the page's number for matching the answer
+   * @param prompt  the typed prompt, which names the bench
    * @param source  an unused thread the bench replaces, closed once the runs have threads
    */
   record CreateBench(
     int request,
-    String title,
+    String prompt,
     @Omittable @Nullable String projectPath,
     @Omittable @Nullable String source,
     List<RunSpec> runs

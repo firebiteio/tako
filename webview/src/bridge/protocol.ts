@@ -38,24 +38,21 @@ export interface ThreadItem {
   projectPath?: string;
   pullRequest?: PullRequest;
   agent: string;
-  /** The bench the thread is a run of. */
-  bench?: string;
-  runIndex: number;
-  /** How long the run's first turn took, 0 until it ended. */
-  runMillis: number;
+  /** How long the first turn took, 0 until it ended. */
+  firstTurnMillis: number;
 }
 
 export interface BenchItem {
   id: string;
   title: string;
   projectPath?: string;
-  createdAt: number;
   baseCommit: string;
+  /** The runs' threads in run order, including closed ones. */
+  threads: string[];
 }
 
+/** One run's changes; a comparison lists them in run order. */
 export interface RunChanges {
-  thread: string;
-  runIndex: number;
   files: number;
   added: number;
   removed: number;
@@ -156,7 +153,7 @@ export type WorkspaceMessage =
   | { kind: 'theme'; css: string }
   | { kind: 'settings'; parallelRuns: boolean }
   | { kind: 'benches'; items: BenchItem[] }
-  | { kind: 'benchCreated'; request: number; bench: string; threads: string[] }
+  | { kind: 'benchCreated'; request: number; threads: string[] }
   | { kind: 'benchFailed'; request: number; text: string }
   | { kind: 'benchComparison'; bench: string; runs: RunChanges[] }
   | { kind: 'error'; text: string };
@@ -213,7 +210,7 @@ export type WorkspaceOp =
   | {
       op: 'createBench';
       request: number;
-      title: string;
+      prompt: string;
       projectPath?: string | null;
       source?: string;
       runs: RunSpec[];

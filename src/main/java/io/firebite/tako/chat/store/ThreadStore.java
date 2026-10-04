@@ -216,7 +216,9 @@ public final class ThreadStore {
 
   public static final class Record {
     public String id = "";
-    public String title = "New chat";
+    public static final String DEFAULT_TITLE = "New chat";
+
+    public String title = DEFAULT_TITLE;
     public @Nullable String sessionId;
     public boolean archived;
     public long updatedAt;
@@ -237,12 +239,8 @@ public final class ThreadStore {
     public @Nullable String agent;
     /** The folder the agent works in when it is not the project folder, such as a run's worktree. */
     public @Nullable String workDirectory;
-    /** The id of the {@link Bench} the thread is a run of. */
-    public @Nullable String bench;
-    /** The run's number in its bench, from 1. */
-    public int runIndex;
-    /** How long the run's first turn took, 0 until it ended. */
-    public long runMillis;
+    /** How long the first turn took, 0 until it ended. */
+    public long firstTurnMillis;
 
     public void setUsage(SessionCost cost) {
       this.inputTokens = cost.inputTokens();
@@ -260,7 +258,7 @@ public final class ThreadStore {
     public PageMessage.ThreadItem toItem() {
       return new PageMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
-        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.bench, this.runIndex, this.runMillis);
+        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis);
     }
   }
 
@@ -282,12 +280,15 @@ public final class ThreadStore {
     /** The main checkout's top folder, which the worktrees belong to. */
     public String repository = "";
     public String baseCommit = "";
-    public long createdAt;
     public List<Run> runs = new ArrayList<>();
 
     public PageMessage.BenchItem toItem() {
-      return new PageMessage.BenchItem(this.id, this.title, this.projectPath, this.createdAt,
-        this.baseCommit.substring(0, Math.min(SHORT_COMMIT, this.baseCommit.length())));
+      List<String> threads = new ArrayList<>();
+      for (Run run : this.runs) {
+        threads.add(run.thread);
+      }
+      return new PageMessage.BenchItem(this.id, this.title, this.projectPath,
+        this.baseCommit.substring(0, Math.min(SHORT_COMMIT, this.baseCommit.length())), threads);
     }
   }
 

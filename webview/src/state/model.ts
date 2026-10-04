@@ -201,10 +201,8 @@ export interface Thread {
   /** The id of the agent the thread runs. */
   agent: string;
   hasSession: boolean;
-  /** The bench the thread is a run of. */
-  bench: string | null;
-  runIndex: number;
-  runMillis: number;
+  /** How long the first turn took, 0 until it ended. */
+  firstTurnMillis: number;
   /** The runs the next prompt starts, each in its own worktree; fewer than two sends to this thread. */
   runs: RunPlan[];
   /** What the agent offers, once it started. */

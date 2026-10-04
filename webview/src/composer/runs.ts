@@ -1,6 +1,6 @@
 /** Parallel runs: one prompt sent to several threads at once, each working in its own git worktree. */
 import type { Model } from '../bridge/agent';
-import { send, type ContextItem, type ImageAttachment, type RunSpec } from '../bridge/protocol';
+import { send, type BenchItem, type ContextItem, type RunSpec } from '../bridge/protocol';
 import type { PendingImage, RunPlan, Thread } from '../state/model';
 import { withRootOf } from '../state/projects';
 import { isActive, state, threads, workspace } from '../state/store';
@@ -10,10 +10,9 @@ import { t } from '../ui/i18n';
 import { openMenu, type MenuItem } from '../ui/menu';
 import { showAlert } from '../ui/widgets';
 import { autosize, input, renderAttachments, renderChips, sendPrompt } from './composer';
-import { agentName, canChangeAgent, fill, renderControls } from './controls';
+import { agentName, agentNameOf, canChangeAgent, fill, renderControls } from './controls';
 
 const RUN_COUNTS = [2, 3, 4, 5, 6, 8];
-const TITLE_LENGTH = 40;
 
 /** A prompt waiting for its bench's threads. */
 interface PendingBench {
@@ -41,10 +40,6 @@ function modelsOf(agent: string, thread: Thread): Model[] {
   return workspace.agentModels.get(agent) || [];
 }
 
-function agentLabel(agent: string): string {
-  return workspace.agents.find(option => option.id === agent)?.name || agent;
-}
-
 function modelLabel(agent: string, model: string, thread: Thread): string {
   if (!model) return t('runs.default.model');
   const match = modelsOf(agent, thread).find(candidate => candidate.value === model);
@@ -65,7 +60,7 @@ function specOf(plan: RunPlan, thread: Thread): RunSpec {
 
 function runLabel(plan: RunPlan, thread: Thread): string {
   const spec = specOf(plan, thread);
-  return agentLabel(spec.agent) + ' · ' + modelLabel(spec.agent, spec.model, thread);
+  return (agentNameOf(spec.agent) || spec.agent) + ' · ' + modelLabel(spec.agent, spec.model, thread);
 }
 
 export function renderRunsPicker(thread: Thread): void {
@@ -140,11 +135,6 @@ function openRunMenu(thread: Thread, index: number): void {
   openMenu($('runs-picker'), items, 'above', t('runs.run.menu', index + 1));
 }
 
-function titleOf(text: string): string {
-  const line = text.replace(/\n/g, ' ').trim();
-  return line.length <= TITLE_LENGTH ? line : line.slice(0, TITLE_LENGTH - 1) + '…';
-}
-
 /**
  * Asks the IDE for a worktree and thread per run; the prompt goes out once they exist.
  *
@@ -165,7 +155,7 @@ export function startBench(thread: Thread, text: string): boolean {
   send({
     op: 'createBench',
     request,
-    title: titleOf(text) || t('runs.untitled'),
+    prompt: text,
     projectPath: thread.projectPath,
     source: thread.id,
     runs: thread.runs.map(plan => specOf(plan, thread))
@@ -180,14 +170,9 @@ export function onBenchCreated(request: number, threadIds: string[]): void {
   pending.delete(request);
   if (!prompt) return;
   if (threads.has(prompt.source.id)) setBusy(prompt.source, false);
-  const images: ImageAttachment[] = prompt.images.map(image => ({
-    mediaType: image.mediaType,
-    data: image.data,
-    name: image.name
-  }));
   for (const id of threadIds) {
     const run = threads.get(id);
-    if (run) withRootOf(run, () => sendPrompt(run, prompt.text, prompt.contexts, images, prompt.includeFile));
+    if (run) withRootOf(run, () => sendPrompt(run, prompt.text, prompt.contexts, prompt.images, prompt.includeFile));
   }
 }
 
@@ -211,8 +196,17 @@ export function onBenchFailed(request: number, text: string): void {
   if (text) showAlert(source, text);
 }
 
-/** A run's name in the list: its number, agent and model. */
-export function runName(thread: Thread): string {
+/** The bench the thread is a run of, with the run's number from 1. */
+export function runOf(thread: Thread): { bench: BenchItem; index: number } | null {
+  for (const bench of workspace.benches) {
+    const index = bench.threads.indexOf(thread.id);
+    if (index >= 0) return { bench, index: index + 1 };
+  }
+  return null;
+}
+
+/** A run's name: its number, agent and model. */
+export function runName(thread: Thread, index: number): string {
   const model = thread.model ? modelLabel(thread.agent, thread.model, thread) : '';
-  return '#' + thread.runIndex + ' · ' + agentName(thread) + (model ? ' · ' + model : '');
+  return '#' + index + ' · ' + agentName(thread) + (model ? ' · ' + model : '');
 }

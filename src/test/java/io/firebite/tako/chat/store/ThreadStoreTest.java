@@ -7,6 +7,7 @@ import static org.junit.Assert.assertTrue;
 import io.firebite.tako.ide.project.GitInfo;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.Test;
 
 public class ThreadStoreTest {
@@ -67,9 +68,7 @@ public class ThreadStoreTest {
   public void benchesAndRunsSurviveAReload() throws Exception {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     ThreadStore store = new ThreadStore(file);
-    ThreadStore.Record record = store.create(null, "#1 · Fix login", null, "claude");
-    record.bench = "b1";
-    record.runIndex = 1;
+    ThreadStore.Record record = store.create(null, "Fix login", null, "claude");
     record.workDirectory = "D:/code/app-tako/fix-login-b1/1";
     ThreadStore.Bench bench = new ThreadStore.Bench();
     bench.id = "b1";
@@ -87,7 +86,7 @@ public class ThreadStoreTest {
     ThreadStore.Bench restored = reloaded.findBench("b1");
     assertEquals("tako/fix-login-b1-1", restored.runs.getFirst().branch);
     assertEquals("0123456", restored.toItem().baseCommit());
-    assertEquals("b1", reloaded.find(record.id).bench);
+    assertEquals(List.of(record.id), restored.toItem().threads());
     assertEquals("D:/code/app-tako/fix-login-b1/1", reloaded.find(record.id).workDirectory);
     reloaded.removeBench("b1");
     assertNull(new ThreadStore(file).findBench("b1"));

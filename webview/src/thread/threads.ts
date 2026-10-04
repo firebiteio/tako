@@ -1,6 +1,6 @@
 /** Threads: creating them from the IDE's records, switching between them and their lifecycle. */
 import type { AgentEvent, AgentInfo } from '../bridge/agent';
-import { sendThread, type ThreadItem } from '../bridge/protocol';
+import { send, sendThread, type ThreadItem } from '../bridge/protocol';
 import { cancelAllApprovals, renderDrawer } from '../composer/approvals';
 import { autosize, hidePopup, input, renderAttachments, renderChips, renderSend } from '../composer/composer';
 import { renderContextControls } from '../composer/contextMeter';
@@ -62,9 +62,7 @@ export function makeThread(item: ThreadItem): Thread {
     projectRoot: null,
     agent: item.agent,
     hasSession: !!item.hasSession,
-    bench: item.bench || null,
-    runIndex: item.runIndex || 0,
-    runMillis: item.runMillis || 0,
+    firstTurnMillis: item.firstTurnMillis || 0,
     runs: [],
     info: null,
     contextWindow: null,
@@ -91,9 +89,7 @@ export function updateThread(t: Thread, item: ThreadItem): void {
   t.projectPath = item.projectPath || null;
   t.pullRequest = item.pullRequest || null;
   t.hasSession = !!item.hasSession;
-  t.bench = item.bench || null;
-  t.runIndex = item.runIndex || 0;
-  t.runMillis = item.runMillis || 0;
+  t.firstTurnMillis = item.firstTurnMillis || 0;
   if (item.agent && item.agent !== t.agent) {
     t.agent = item.agent;
     t.info = null;
@@ -156,6 +152,12 @@ export function activate(t: Thread | undefined): void {
   if (window.innerWidth <= NARROW) setSidebarOpen(false);
   scheduleSidebar();
   input.focus();
+}
+
+/** Shows the thread and tells the IDE, which starts its agent if needed. */
+export function openThread(t: Thread): void {
+  activate(t);
+  send({ op: 'select', thread: t.id });
 }
 
 export function setBusy(t: Thread, busy: boolean): void {

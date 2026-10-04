@@ -79,7 +79,7 @@ public final class ChatController implements Disposable {
     this.host = host;
     this.record = record;
     this.backend = backend;
-    this.isTitled = record.sessionId != null || record.bench != null;
+    this.isTitled = record.sessionId != null || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
   }
 
@@ -285,7 +285,8 @@ public final class ChatController implements Disposable {
     }
   }
 
-  private static String titleOf(String prompt) {
+  /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
+  public static String titleOf(String prompt) {
     String line = prompt.replace('\n', ' ').trim();
     return line.length() <= TITLE_LENGTH ? line : line.substring(0, TITLE_LENGTH - 1) + "…";
   }
@@ -404,8 +405,8 @@ public final class ChatController implements Disposable {
       this.record.setUsage(ended.cost());
       this.recordChanged();
     }
-    if (this.record.bench != null && this.record.runMillis == 0 && ended.durationMs() != null) {
-      this.record.runMillis = ended.durationMs();
+    if (this.record.firstTurnMillis == 0 && ended.durationMs() != null) {
+      this.record.firstTurnMillis = ended.durationMs();
       this.recordChanged();
     }
     this.lastPullRequestCheck = 0;

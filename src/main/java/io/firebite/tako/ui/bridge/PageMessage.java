@@ -90,9 +90,7 @@ public sealed interface PageMessage {
     @Nullable String projectPath,
     @Nullable GitInfo.PullRequest pullRequest,
     String agent,
-    @Nullable String bench,
-    int runIndex,
-    long runMillis
+    long firstTurnMillis
   ) {
   }
 
@@ -107,13 +105,16 @@ public sealed interface PageMessage {
   ) implements WorkspaceMessage {
   }
 
-  /** @param baseCommit the short hash of the commit the runs started from */
+  /**
+   * @param baseCommit the short hash of the commit the runs started from
+   * @param threads    the runs' threads in run order, including closed ones
+   */
   record BenchItem(
     String id,
     String title,
     @Nullable String projectPath,
-    long createdAt,
-    String baseCommit
+    String baseCommit,
+    List<String> threads
   ) {
   }
 
@@ -124,7 +125,6 @@ public sealed interface PageMessage {
    */
   record BenchCreated(
     int request,
-    String bench,
     List<String> threads
   ) implements WorkspaceMessage {
   }
@@ -136,7 +136,11 @@ public sealed interface PageMessage {
   ) implements WorkspaceMessage {
   }
 
-  /** What each run changed against the commit the bench started from. */
+  /**
+   * What each run changed against the commit the bench started from.
+   *
+   * @param runs in run order
+   */
   record BenchComparison(
     String bench,
     List<RunChanges> runs
@@ -145,8 +149,6 @@ public sealed interface PageMessage {
 
   /** @param error why the run's changes could not be read, such as a removed worktree */
   record RunChanges(
-    String thread,
-    int runIndex,
     int files,
     int added,
     int removed,
