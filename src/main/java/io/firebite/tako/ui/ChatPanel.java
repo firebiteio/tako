@@ -1,6 +1,7 @@
 package io.firebite.tako.ui;
 
 import com.google.gson.JsonObject;
+import com.intellij.ide.BrowserUtil;
 import com.intellij.ide.ui.LafManagerListener;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
@@ -22,6 +23,11 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
 import javax.swing.JComponent;
+import org.cef.browser.CefBrowser;
+import org.cef.browser.CefFrame;
+import org.cef.handler.CefLifeSpanHandlerAdapter;
+import org.cef.handler.CefRequestHandlerAdapter;
+import org.cef.network.CefRequest;
 
 /**
  * The chat page in JCEF. The page talks to the IDE through a JS query, the IDE to the page through
@@ -49,6 +55,20 @@ public final class ChatPanel implements Disposable {
       this.onPageMessage(payload);
       return null;
     });
+    this.browser.getJBCefClient().addRequestHandler(new CefRequestHandlerAdapter() {
+      @Override
+      public boolean onBeforeBrowse(CefBrowser cefBrowser, CefFrame frame, CefRequest request, boolean isUserGesture,
+                                    boolean isRedirect) {
+        return frame.isMain() && openExternally(request.getURL());
+      }
+    }, this.browser.getCefBrowser());
+    this.browser.getJBCefClient().addLifeSpanHandler(new CefLifeSpanHandlerAdapter() {
+      @Override
+      public boolean onBeforePopup(CefBrowser cefBrowser, CefFrame frame, String targetUrl, String targetFrameName) {
+        openExternally(targetUrl);
+        return true;
+      }
+    }, this.browser.getCefBrowser());
     this.browser.loadHTML(this.buildPage());
 
     MessageBusConnection connection = ApplicationManager.getApplication().getMessageBus().connect(this);
@@ -106,6 +126,15 @@ public final class ChatPanel implements Disposable {
   private void execute(String json) {
     this.browser.getCefBrowser().executeJavaScript("window.tako.receive(" + json + ");",
       this.browser.getCefBrowser().getURL(), 0);
+  }
+
+  /** Opens web pages in the system browser. Shown in the panel they would replace the chat with no way back. */
+  private static boolean openExternally(String url) {
+    if (!url.startsWith("https://") && !url.startsWith("http://")) {
+      return false;
+    }
+    BrowserUtil.browse(url);
+    return true;
   }
 
   private void postTheme() {
