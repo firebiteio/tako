@@ -160,6 +160,13 @@ public final class ChatController implements Disposable {
       }
       case PageOp.PasteImage pasteImage -> Async.onEdt(this::pasteImage);
       case PageOp.PickImage pickImage -> Async.onEdt(this::pickImages);
+      case PageOp.AttachFiles attachFiles -> {
+        List<Path> files = new ArrayList<>();
+        for (String path : attachFiles.paths()) {
+          files.add(Path.of(path));
+        }
+        Async.inBackground(() -> this.attachFiles(files));
+      }
       case PageOp.ContextUsage contextUsage -> this.refreshContext();
       case PageOp.Files files -> Async.inBackground(() -> this.findFiles(files));
       case PageOp.Restart restart -> Async.inBackground(() -> this.launch(this.record.sessionId));

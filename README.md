@@ -24,7 +24,7 @@ It works with:
 
 ## Requirements
 
-- An IntelliJ-based IDE, 2026.2 or newer, with JCEF
+- An IntelliJ-based IDE, 2026.2 or newer
 - At least one agent CLI, either on your `PATH` or with its path set in the settings
 
 ## Usage
@@ -49,14 +49,14 @@ Claude Code is different. Tako passes it an Anthropic API key, which it keeps in
 
 ## Building
 
-Gradle needs JDK 17 or newer to start. It downloads JDK 25 and Node for the build on its own.
+Gradle needs JDK 17 or newer to start. It downloads JDK 25 for the build on its own.
 
 ```sh
 ./gradlew buildPlugin   # plugin zip in build/distributions
 ./gradlew runIde        # sandbox IDE with the plugin
 ./gradlew check         # tests, Checkstyle, formatting
 ./gradlew verifyPlugin  # JetBrains Plugin Verifier
-./gradlew spotlessApply # format Java and TypeScript
+./gradlew spotlessApply # format Java and Kotlin
 ```
 
 The build downloads the IntelliJ IDEA version in `gradle.properties` (`platformVersion`). To build against an IDE you already have, set `tako.platformLocalPath` in `~/.gradle/gradle.properties` to its folder.

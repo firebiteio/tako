@@ -6,9 +6,8 @@ import java.util.List;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * What an agent did, in terms every agent shares. Each backend translates its own protocol into these, and the page
- * renders them. {@code webview/src/bridge/protocol.ts} mirrors them. The wire name is the record name in lower camel
- * case, sent as {@code type}, without null fields.
+ * What an agent did, in terms every agent shares. Each backend translates its own protocol into these, and the chat
+ * renders them.
  */
 public sealed interface AgentEvent {
 

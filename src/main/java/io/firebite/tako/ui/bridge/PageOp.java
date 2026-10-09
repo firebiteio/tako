@@ -7,8 +7,7 @@ import java.util.Map;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * What the chat page asks of the IDE ({@code webview/src/bridge/protocol.ts} mirrors these). The wire name is the record
- * name in lower camel case, sent as {@code op}. Thread ops also carry the thread id as {@code thread}.
+ * What the chat asks of the IDE. Thread ops go with the thread's id in a {@link PageRequest}.
  */
 public sealed interface PageOp {
 
@@ -25,8 +24,8 @@ public sealed interface PageOp {
 
   /** @param agent the agent to run, or the default one when absent */
   record NewThread(
-    @Omittable @Nullable String projectPath,
-    @Omittable @Nullable String agent
+    @Nullable String projectPath,
+    @Nullable String agent
   ) implements WorkspaceOp {
   }
 
@@ -66,16 +65,11 @@ public sealed interface PageOp {
   record Usage() implements WorkspaceOp {
   }
 
-  record OpenUrl(
-    String url
-  ) implements WorkspaceOp {
-  }
-
   record Resume(
     String sessionId,
-    @Omittable @Nullable String title,
-    @Omittable @Nullable String projectPath,
-    @Omittable @Nullable String agent
+    @Nullable String title,
+    @Nullable String projectPath,
+    @Nullable String agent
   ) implements WorkspaceOp {
   }
 
@@ -83,11 +77,6 @@ public sealed interface PageOp {
   record SetAgent(
     String thread,
     String agent
-  ) implements WorkspaceOp {
-  }
-
-  record Copy(
-    String text
   ) implements WorkspaceOp {
   }
 
@@ -102,8 +91,8 @@ public sealed interface PageOp {
   record CreateBench(
     int request,
     String prompt,
-    @Omittable @Nullable String projectPath,
-    @Omittable @Nullable String source,
+    @Nullable String projectPath,
+    @Nullable String source,
     List<RunSpec> runs
   ) implements WorkspaceOp {
   }
@@ -165,10 +154,10 @@ public sealed interface PageOp {
   record Permission(
     String requestId,
     boolean allow,
-    @Omittable @Nullable String message,
+    @Nullable String message,
     boolean interrupt,
-    @Omittable @Nullable Map<String, String> answers,
-    @Omittable @Nullable Integer suggestion
+    @Nullable Map<String, String> answers,
+    @Nullable Integer suggestion
   ) implements ThreadOp {
   }
 
@@ -211,6 +200,12 @@ public sealed interface PageOp {
   record PickImage() implements ThreadOp {
   }
 
+  /** Image files dropped on the composer. */
+  record AttachFiles(
+    List<String> paths
+  ) implements ThreadOp {
+  }
+
   record ContextUsage() implements ThreadOp {
   }
 
@@ -224,7 +219,7 @@ public sealed interface PageOp {
   /** @param path one file of the turn, or all of them when absent */
   record TurnDiff(
     int turn,
-    @Omittable @Nullable String path
+    @Nullable String path
   ) implements ThreadOp {
   }
 

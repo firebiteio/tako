@@ -1,7 +1,5 @@
 package io.firebite.tako.chat;
 
-import com.google.gson.JsonObject;
-import com.intellij.ide.BrowserUtil;
 import com.intellij.notification.Notification;
 import com.intellij.notification.NotificationAction;
 import com.intellij.notification.NotificationGroupManager;
@@ -13,7 +11,6 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
-import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vfs.VirtualFile;
@@ -38,11 +35,9 @@ import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
-import io.firebite.tako.ui.bridge.PageCodec;
 import io.firebite.tako.ui.bridge.PageMessage;
 import io.firebite.tako.ui.bridge.PageOp;
 import io.firebite.tako.ui.bridge.PageRequest;
-import java.awt.datatransfer.StringSelection;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -88,7 +83,7 @@ public final class ChatService implements Disposable {
     this.toolWindow = window;
     Content content = ContentFactory.getInstance().createContent(null, "", false);
     content.setCloseable(false);
-    ChatPanel chatPanel = new ChatPanel(content);
+    ChatPanel chatPanel = new ChatPanel(content, this.project);
     chatPanel.setHandler(this::handle);
     content.setComponent(chatPanel.getComponent());
     content.setPreferredFocusableComponent(chatPanel.getComponent());
@@ -161,11 +156,9 @@ public final class ChatService implements Disposable {
       case PageOp.History history -> Async.inBackground(this::postHistory);
       case PageOp.Usage usage -> Async.inBackground(
         () -> this.post(UsageReport.build(this.projects(), this.store, EnvironmentUtil.getEnvironmentMap())));
-      case PageOp.OpenUrl openUrl -> openUrl(openUrl.url());
       case PageOp.Resume resume -> Async.onEdt(() -> this.resume(resume.sessionId(), resume.title(),
         this.threadPath(resume.projectPath()), resume.agent()));
       case PageOp.SetAgent setAgent -> Async.onEdt(() -> this.setAgent(setAgent.thread(), setAgent.agent()));
-      case PageOp.Copy copy -> CopyPasteManager.getInstance().setContents(new StringSelection(copy.text()));
       case PageOp.CreateBench createBench -> Async.onEdt(() -> {
         String projectPath = this.threadPath(createBench.projectPath());
         this.benches.create(createBench, projectPath, this.folderOf(projectPath));
@@ -514,12 +507,6 @@ public final class ChatService implements Disposable {
     }
   }
 
-  private static void openUrl(String url) {
-    if (url.startsWith("https://") || url.startsWith("http://")) {
-      BrowserUtil.browse(url);
-    }
-  }
-
   private @Nullable ChatController activeController() {
     String activeId = this.store.activeId();
     return activeId == null ? null : this.controllers.get(activeId);
@@ -538,13 +525,9 @@ public final class ChatService implements Disposable {
   }
 
   void post(PageMessage.WorkspaceMessage message) {
-    this.postJson(PageCodec.encode(message));
-  }
-
-  private void postJson(JsonObject json) {
     ChatPanel chatPanel = this.panel;
     if (chatPanel != null) {
-      chatPanel.post(json);
+      chatPanel.post(message);
     }
   }
 
@@ -561,7 +544,10 @@ public final class ChatService implements Disposable {
 
     @Override
     public void post(PageMessage.ThreadMessage message) {
-      ChatService.this.postJson(PageCodec.encode(message, this.threadId));
+      ChatPanel chatPanel = ChatService.this.panel;
+      if (chatPanel != null) {
+        chatPanel.post(message, this.threadId);
+      }
     }
   }
 

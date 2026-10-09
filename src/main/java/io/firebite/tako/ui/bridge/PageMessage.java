@@ -11,8 +11,7 @@ import java.util.List;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * What the IDE tells the chat page ({@code webview/src/bridge/protocol.ts} mirrors these). The wire name is the record
- * name in lower camel case, sent as {@code kind}, without null fields.
+ * What the IDE tells the chat.
  */
 public sealed interface PageMessage {
 
@@ -232,11 +231,6 @@ public sealed interface PageMessage {
     boolean archived,
     boolean estimated
   ) {
-  }
-
-  record Theme(
-    String css
-  ) implements WorkspaceMessage {
   }
 
   record Error(

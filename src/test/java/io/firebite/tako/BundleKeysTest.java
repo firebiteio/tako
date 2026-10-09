@@ -25,9 +25,8 @@ public class BundleKeysTest {
   private static final Pattern XML_ACTION = Pattern.compile("<action id=\"([^\"]+)\"");
   private static final Pattern XML_GROUP = Pattern.compile("<group id=\"([^\"]+)\"");
   private static final Pattern XML_TOOL_WINDOW = Pattern.compile("<toolWindow id=\"([^\"]+)\"");
-  private static final Pattern HTML_KEY = Pattern.compile("\\{\\{([\\w.]+)}}");
-  private static final Pattern TS_KEY = Pattern.compile("\\bt\\(\\s*'([^']+)'");
-  private static final Pattern TS_CALL = Pattern.compile("\\bt\\(\\s*");
+  private static final Pattern KOTLIN_KEY = Pattern.compile("\\bt\\(\\s*\"([^\"]+)\"");
+  private static final Pattern KOTLIN_CALL = Pattern.compile("\\bt\\(\\s*");
   private static final Pattern ARGUMENT = Pattern.compile("\\{(\\d+)");
   private static final Pattern LONE_APOSTROPHE = Pattern.compile("(?<!')'(?!')");
 
@@ -58,17 +57,16 @@ public class BundleKeysTest {
   @Test
   public void pageTextsMatchTheBundle() throws IOException {
     Set<String> used = new TreeSet<>();
-    collect(HTML_KEY, Files.readString(Path.of("src/main/resources/webview/index.html")), used);
     List<String> dynamic = new ArrayList<>();
-    for (Path file : files(Path.of("webview/src"), ".ts")) {
-      if (file.endsWith("ui/i18n.ts")) {
+    for (Path file : files(Path.of("src/main/kotlin"), ".kt")) {
+      if (file.endsWith("ui/Texts.kt")) {
         continue;
       }
       String source = Files.readString(file);
-      collect(TS_KEY, source, used);
-      Matcher calls = TS_CALL.matcher(source);
+      collect(KOTLIN_KEY, source, used);
+      Matcher calls = KOTLIN_CALL.matcher(source);
       while (calls.find()) {
-        if (!source.startsWith("'", calls.end())) {
+        if (!source.startsWith("\"", calls.end())) {
           dynamic.add(file.getFileName() + ": " + source.substring(calls.start(), Math.min(source.length(),
             calls.end() + 30)));
         }

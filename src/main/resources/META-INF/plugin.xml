@@ -12,7 +12,10 @@
   <resource-bundle>messages.TakoBundle</resource-bundle>
 
   <depends>com.intellij.modules.platform</depends>
-  <depends>com.intellij.modules.jcef</depends>
+  <depends>com.intellij.modules.compose</depends>
+  <dependencies>
+    <module name="intellij.platform.compose.markdown"/>
+  </dependencies>
 
   <extensions defaultExtensionNs="com.intellij">
     <toolWindow id="Tako" anchor="right" secondary="false" icon="/icons/tako.svg"
