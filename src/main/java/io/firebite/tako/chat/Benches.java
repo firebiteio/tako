@@ -186,7 +186,7 @@ final class Benches {
       ThreadStore.Run run = new ThreadStore.Run();
       Path location = benchFolder.resolve(String.valueOf(i));
       run.worktree = slashes(location);
-      run.branch = "tako/" + slug + "-" + i;
+      run.branch = slug + "-" + i;
       try {
         Worktrees.add(repository, location, run.branch, commit, environment);
       } catch (Worktrees.GitException e) {

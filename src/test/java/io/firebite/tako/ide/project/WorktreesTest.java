@@ -48,7 +48,7 @@ public class WorktreesTest {
     String commit = Worktrees.head(repository, ENVIRONMENT);
     Path worktree = Worktrees.benchFolder(repository, "test").resolve("1");
 
-    Worktrees.add(repository, worktree, "tako/test-1", commit, ENVIRONMENT);
+    Worktrees.add(repository, worktree, "test-1", commit, ENVIRONMENT);
     Files.writeString(worktree.resolve("a.txt"), "one\ntwo\n", StandardCharsets.UTF_8);
     Files.writeString(worktree.resolve("b.txt"), "new\n", StandardCharsets.UTF_8);
 
@@ -63,9 +63,9 @@ public class WorktreesTest {
     assertEquals("one\ntwo\n", Files.readString(repository.resolve("a.txt"), StandardCharsets.UTF_8));
     assertEquals("new\n", Files.readString(repository.resolve("b.txt"), StandardCharsets.UTF_8));
 
-    Worktrees.remove(repository, worktree, "tako/test-1", ENVIRONMENT);
+    Worktrees.remove(repository, worktree, "test-1", ENVIRONMENT);
     assertFalse(Files.exists(worktree));
-    assertTrue(git(repository, "branch", "--list", "tako/test-1").isBlank());
+    assertTrue(git(repository, "branch", "--list", "test-1").isBlank());
   }
 
   private static String git(Path directory, String... arguments) throws Exception {

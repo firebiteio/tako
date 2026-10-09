@@ -36,9 +36,9 @@ public class GitWorktreeTest {
 
     assertNotNull(first);
     assertEquals(root.resolve("game.worktrees").resolve("physics").toRealPath(), first.folder().toRealPath());
-    assertEquals("tako/physics", first.branch());
+    assertEquals("physics", first.branch());
     assertNotNull(second);
-    assertEquals("tako/physics-2", second.branch());
+    assertEquals("physics-2", second.branch());
     assertTrue(Files.isDirectory(second.folder()));
   }
 

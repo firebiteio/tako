@@ -77,14 +77,14 @@ public class ThreadStoreTest {
     ThreadStore.Run run = new ThreadStore.Run();
     run.thread = record.id;
     run.worktree = record.workPath;
-    run.branch = "tako/fix-login-b1-1";
+    run.branch = "fix-login-b1-1";
     bench.runs.add(run);
     store.addBench(bench);
 
     ThreadStore reloaded = new ThreadStore(file);
 
     ThreadStore.Bench restored = reloaded.findBench("b1");
-    assertEquals("tako/fix-login-b1-1", restored.runs.getFirst().branch);
+    assertEquals("fix-login-b1-1", restored.runs.getFirst().branch);
     assertEquals("0123456", restored.toItem().baseCommit());
     assertEquals(List.of(record.id), restored.toItem().threads());
     assertEquals("D:/code/app-tako/fix-login-b1/1", reloaded.find(record.id).workPath);
