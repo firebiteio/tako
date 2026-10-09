@@ -1,5 +1,7 @@
 package io.firebite.tako.ui.state
 
+import androidx.compose.foundation.text.input.TextFieldState
+import androidx.compose.foundation.text.input.clearText
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableLongStateOf
@@ -51,6 +53,11 @@ class Workspace(val service: ChatService, val project: Project) {
 
   var sidebarOpen by mutableStateOf(PropertiesComponent.getInstance().getBoolean(SIDEBAR_KEY, true))
   var showArchived by mutableStateOf(false)
+  /** Whether the thread list shows the search field. */
+  var searching by mutableStateOf(false)
+  val searchInput = TextFieldState()
+  /** The threads whose sessions the IDE found mention a query, with that query. */
+  var searchHits by mutableStateOf<Pair<String, Set<String>>>("" to emptySet())
   /** The sessions to resume, while their menu is open. */
   var sessions by mutableStateOf<List<ChatMessage.SessionItem>?>(null)
   var usageOpen by mutableStateOf(false)
@@ -118,6 +125,18 @@ class Workspace(val service: ChatService, val project: Project) {
     this.scope.launch {
       this@Workspace.sessions = withContext(Dispatchers.IO) { this@Workspace.service.history() }
     }
+  }
+
+  fun closeSearch() {
+    this.searching = false
+    this.searchInput.clearText()
+    this.searchHits = "" to emptySet()
+  }
+
+  /** Asks the IDE which threads' sessions mention the query. */
+  suspend fun searchSessions(query: String) {
+    val hits = withContext(Dispatchers.IO) { this@Workspace.service.search(query) }
+    this.searchHits = query to hits
   }
 
   /** Opens the usage view and reads the transcripts again. */

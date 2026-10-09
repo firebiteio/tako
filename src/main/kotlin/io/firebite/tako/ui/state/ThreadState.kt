@@ -149,6 +149,12 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val currentModel: AgentInfo.Model?
     get() = this.models.firstOrNull { it.value == this.model }
 
+  /** Whether a prompt or answer the chat holds contains the query, ignoring case. */
+  fun mentions(query: String): Boolean = this.turns.any { turn ->
+    turn.prompt?.text?.contains(query, true) == true ||
+      turn.items.any { it is TurnItem.Text && it.text.text.contains(query, true) }
+  }
+
   fun showAlert(text: String, actionLabel: String? = null, action: (() -> Unit)? = null) {
     this.alerts.add(Alert(text, actionLabel, action))
   }

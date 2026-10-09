@@ -26,10 +26,12 @@ public record AgentInfo(
   /**
    * @param images  prompts may carry images
    * @param compact {@code /compact} shrinks the context
+   * @param fork    {@link AgentBackend#fork} copies the session
    */
   public record Capabilities(
     boolean images,
-    boolean compact
+    boolean compact,
+    boolean fork
   ) {
   }
 

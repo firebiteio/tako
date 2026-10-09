@@ -74,8 +74,11 @@ private const val PLAN_COLLAPSE_LINES = 24
 private sealed class TimelineRow(val key: String) {
   class PromptRow(val turn: Turn, val prompt: Prompt) : TimelineRow("p" + System.identityHashCode(turn))
 
-  /** @param foldEnd the last item of an open fold, which keeps some space under it */
-  class Item(val turn: Turn, val item: TurnItem, val foldEnd: Boolean = false) :
+  /**
+   * @param foldEnd     the last item of an open fold, which keeps some space under it
+   * @param forkPrompts how many prompts a fork after this item keeps, null where no fork goes
+   */
+  class Item(val turn: Turn, val item: TurnItem, val foldEnd: Boolean = false, val forkPrompts: Int? = null) :
     TimelineRow("i" + System.identityHashCode(item))
 
   class FoldHead(val turn: Turn, val fold: Fold) : TimelineRow("f" + System.identityHashCode(fold))
@@ -90,8 +93,14 @@ private sealed class TimelineRow(val key: String) {
 /** The turns as rows: prompts, what the agent did (some folded away) and what each turn changed. */
 private fun timelineRows(thread: ThreadState): List<TimelineRow> {
   val rows = ArrayList<TimelineRow>()
+  val canFork = thread.info?.capabilities?.fork == true
+  var prompts = 0
   for (turn in thread.turns) {
-    turn.prompt?.let { rows.add(TimelineRow.PromptRow(turn, it)) }
+    turn.prompt?.let {
+      prompts++
+      rows.add(TimelineRow.PromptRow(turn, it))
+    }
+    val forkAfter = if (canFork && turn.done && prompts > 0) turn.items.lastOrNull { it is TurnItem.Text } else null
     val fold = turn.fold
     var foldPlaced = false
     for (item in turn.items) {
@@ -101,11 +110,11 @@ private fun timelineRows(thread: ThreadState): List<TimelineRow> {
           foldPlaced = true
         }
         if (fold.open) {
-          rows.add(TimelineRow.Item(turn, item, item === fold.items.last()))
+          rows.add(TimelineRow.Item(turn, item, item === fold.items.last(), prompts.takeIf { item === forkAfter }))
         }
         continue
       }
-      rows.add(TimelineRow.Item(turn, item))
+      rows.add(TimelineRow.Item(turn, item, forkPrompts = prompts.takeIf { item === forkAfter }))
     }
     if (!turn.replayed && !turn.done && thread.busy) {
       rows.add(TimelineRow.Working(turn))
@@ -210,7 +219,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
   when (row) {
     is TimelineRow.PromptRow -> UserRow(thread, row.prompt)
     is TimelineRow.Item -> Box(if (row.foldEnd) Modifier.padding(bottom = 8.dp) else Modifier) {
-      TurnItemView(thread, row.item, markdown, actions)
+      TurnItemView(thread, row.item, row.forkPrompts, markdown, actions)
     }
     is TimelineRow.FoldHead -> FoldHeadView(row.fold)
     is TimelineRow.Working -> WorkingRow(thread)
@@ -220,9 +229,11 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
 }
 
 @Composable
-private fun TurnItemView(thread: ThreadState, item: TurnItem, markdown: ChatMarkdown, actions: CodeActions) {
+private fun TurnItemView(thread: ThreadState, item: TurnItem, forkPrompts: Int?, markdown: ChatMarkdown,
+  actions: CodeActions) {
   when (item) {
-    is TurnItem.Text -> AssistantRow(item.text, markdown, actions)
+    is TurnItem.Text -> AssistantRow(item.text, markdown, actions,
+      forkPrompts?.let { prompts -> { thread.workspace.service.fork(thread.id, prompts) } })
     is TurnItem.Thinking -> Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).padding(2.dp),
       verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
       RowIcon { Ico(Icons.effort, tint = colors.muted) }
@@ -313,8 +324,9 @@ private fun HoverMeta(hovered: Boolean, content: @Composable () -> Unit) {
   }
 }
 
+/** @param onFork forks the thread after this text, null where no fork goes */
 @Composable
-private fun AssistantRow(text: AssistantText, markdown: ChatMarkdown, actions: CodeActions) {
+private fun AssistantRow(text: AssistantText, markdown: ChatMarkdown, actions: CodeActions, onFork: (() -> Unit)?) {
   val (interaction, hovered) = rememberHover()
   val fade = remember { Animatable(if (text.done) 1f else 0f) }
   LaunchedEffect(Unit) {
@@ -324,6 +336,9 @@ private fun AssistantRow(text: AssistantText, markdown: ChatMarkdown, actions: C
     MarkdownText(markdown, text.text, text.done, actions, Modifier.graphicsLayer { this.alpha = fade.value })
     HoverMeta(hovered) {
       IconBtn(Icons.copy, t("common.copy"), iconSize = 14.dp) { actions.copy(text.text) }
+      if (onFork != null) {
+        IconBtn(Icons.fork, t("timeline.fork"), iconSize = 14.dp, onClick = onFork)
+      }
     }
   }
 }

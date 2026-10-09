@@ -121,6 +121,7 @@ private fun closeOverlay(workspace: Workspace): Boolean {
     workspace.taskPanel != null -> workspace.taskPanel = null
     workspace.shownBench != null -> workspace.shownBench = null
     workspace.usageOpen -> workspace.usageOpen = false
+    workspace.searching -> workspace.closeSearch()
     else -> return false
   }
   return true

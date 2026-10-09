@@ -22,9 +22,11 @@ import com.intellij.util.EnvironmentUtil;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentBackend;
+import io.firebite.tako.agent.AgentException;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
+import io.firebite.tako.agent.claude.transcript.SessionUsage;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.chat.thread.ChatHost;
@@ -38,12 +40,17 @@ import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
+import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Consumer;
@@ -61,6 +68,7 @@ public final class ChatService implements Disposable {
   private final ThreadStore store;
   private final Map<String, ChatController> controllers = new ConcurrentHashMap<>();
   private final Benches benches;
+  private final List<Runnable> activityListeners = new CopyOnWriteArrayList<>();
   /** Serves each thread's {@link ThreadTools}, keyed by thread id. Guarded by {@code this}. */
   private @Nullable McpServer toolServer;
   private @Nullable ChatPanel panel;
@@ -271,10 +279,7 @@ public final class ChatService implements Disposable {
     if (record == null) {
       return;
     }
-    if (record.archived) {
-      record.archived = false;
-      this.postUpdate(record);
-    }
+    this.unarchive(record);
     this.store.setActiveId(record.id);
     this.post(new ChatMessage.Select(record.id));
     ChatController existing = this.controllers.get(record.id);
@@ -310,6 +315,125 @@ public final class ChatService implements Disposable {
     this.post(new ChatMessage.ThreadAdded(record.toItem()));
     this.newController(record).open(spec.prompt());
     return record;
+  }
+
+  /** Sends a prompt as if typed into the thread, opening it if it is not. Must run on the EDT. */
+  void prompt(ThreadStore.Record record, String prompt) {
+    ChatController controller = this.controllers.get(record.id);
+    if (controller != null) {
+      controller.submit(prompt);
+      return;
+    }
+    this.unarchive(record);
+    this.newController(record).open(prompt);
+  }
+
+  private void unarchive(ThreadStore.Record record) {
+    if (record.archived) {
+      record.archived = false;
+      this.postUpdate(record);
+    }
+  }
+
+  /** Copies the thread's first {@code prompts} turns into a new thread, which it selects. */
+  public void fork(String id, int prompts) {
+    ThreadStore.Record source = this.store.find(id);
+    if (source == null || source.sessionId == null) {
+      return;
+    }
+    String sessionId = source.sessionId;
+    String folder = this.workFolder(source);
+    AgentBackend backend = AgentRegistry.find(source.agent(), EnvironmentUtil.getEnvironmentMap());
+    Async.inBackground(() -> {
+      String forkId;
+      try {
+        forkId = backend.fork(folder, sessionId, prompts);
+      } catch (AgentException e) {
+        this.post(new ChatMessage.Error(e.getMessage()));
+        return;
+      }
+      Async.onEdt(() -> {
+        ThreadStore.Record record = this.store.create(forkId, TakoBundle.message("thread.fork.title", source.title),
+          source.projectPath, source.agent());
+        record.model = source.model;
+        record.mode = source.mode;
+        record.effort = source.effort;
+        record.workPath = source.workPath;
+        this.store.save();
+        this.post(new ChatMessage.ThreadAdded(record.toItem()));
+        this.select(record.id);
+      });
+    });
+  }
+
+  /** The threads whose sessions mention {@code query}, as far as their agents can tell. Reads files, so call off the EDT. */
+  public Set<String> search(String query) {
+    Map<String, AgentBackend> backends = new HashMap<>();
+    for (AgentBackend backend : AgentRegistry.backends(EnvironmentUtil.getEnvironmentMap())) {
+      backends.put(backend.id(), backend);
+    }
+    Set<String> found = new HashSet<>();
+    for (ThreadStore.Record record : this.store.all()) {
+      AgentBackend backend = backends.get(record.agent());
+      String sessionId = record.sessionId;
+      if (backend != null && sessionId != null && backend.sessionMentions(this.workFolder(record), sessionId, query)) {
+        found.add(record.id);
+      }
+    }
+    return found;
+  }
+
+  /** What the agents of the open threads do, in the thread list's order. */
+  public List<ThreadActivity> activity() {
+    List<ThreadActivity> activity = new ArrayList<>();
+    for (ThreadStore.Record record : this.store.all()) {
+      ChatController controller = this.controllers.get(record.id);
+      if (controller != null) {
+        activity.add(new ThreadActivity(record.id, record.title, controller.state()));
+      }
+    }
+    return activity;
+  }
+
+  /** Calls {@code listener} on the EDT whenever an open thread's agent changes what it does, or a thread closes. */
+  public void addActivityListener(Runnable listener) {
+    this.activityListeners.add(listener);
+  }
+
+  public void removeActivityListener(Runnable listener) {
+    this.activityListeners.remove(listener);
+  }
+
+  private void fireActivity() {
+    for (Runnable listener : this.activityListeners) {
+      listener.run();
+    }
+  }
+
+  /** Selects the thread, if given, and brings up the tool window. Must run on the EDT. */
+  public void show(@Nullable String id) {
+    this.select(id);
+    ToolWindow window = this.toolWindow();
+    if (window != null) {
+      window.activate(null);
+    }
+  }
+
+  /** What the project folders' sessions cost today. Reads the transcripts, so call off the EDT. */
+  public double todayCost() {
+    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+    LocalDate today = LocalDate.now();
+    double cost = 0;
+    for (ThreadStore.ProjectFolder folder : this.projects()) {
+      try {
+        for (SessionUsage usage : SessionStore.forProject(environment, folder.path).allUsage()) {
+          cost += usage.costByDay().getOrDefault(today, 0.0);
+        }
+      } catch (IOException e) {
+        LOG.debug("Could not read the session usage of " + folder.path, e);
+      }
+    }
+    return cost;
   }
 
   /** The open thread's controller, null for a thread not open in Tako. */
@@ -541,6 +665,7 @@ public final class ChatService implements Disposable {
     ChatController controller = this.controllers.remove(id);
     if (controller != null) {
       Disposer.dispose(controller);
+      this.fireActivity();
     }
   }
 
@@ -565,6 +690,14 @@ public final class ChatService implements Disposable {
 
   private @Nullable ToolWindow toolWindow() {
     return ToolWindowManager.getInstance(this.project).getToolWindow(TOOL_WINDOW_ID);
+  }
+
+  /** An open thread and what its agent does. */
+  public record ThreadActivity(
+    String id,
+    String title,
+    ChatController.State state
+  ) {
   }
 
   private final class ThreadView implements ChatView {
@@ -605,6 +738,11 @@ public final class ChatService implements Disposable {
     }
 
     @Override
+    public void stateChanged() {
+      ChatService.this.fireActivity();
+    }
+
+    @Override
     public List<String> additionalDirectories() {
       String own = ChatService.this.folderOf(this.record);
       List<String> directories = new ArrayList<>();
@@ -632,12 +770,8 @@ public final class ChatService implements Disposable {
       Notification notification = NotificationGroupManager.getInstance()
         .getNotificationGroup(TOOL_WINDOW_ID)
         .createNotification(reason, this.record.title, NotificationType.INFORMATION);
-      notification.addAction(NotificationAction.createSimpleExpiring(TakoBundle.message("notification.show"), () -> {
-        ChatService.this.select(this.record.id);
-        if (window != null) {
-          window.activate(null);
-        }
-      }));
+      notification.addAction(NotificationAction.createSimpleExpiring(TakoBundle.message("notification.show"),
+        () -> ChatService.this.show(this.record.id)));
       notification.notify(ChatService.this.project);
     }
   }

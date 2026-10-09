@@ -68,7 +68,11 @@ public final class ChatController implements Disposable {
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
 
+  /** Guards waking {@link #awaitSettled} waiters on each change of {@link #state}. */
+  private final Object stateLock = new Object();
+
   private volatile State state = State.STARTING;
+  private volatile boolean isDisposed;
   private volatile @Nullable String error;
   private volatile @Nullable String workingDirectory;
   private volatile @Nullable String scratchpadPath;
@@ -127,6 +131,13 @@ public final class ChatController implements Disposable {
     });
   }
 
+  /** Sends {@code prompt} as if typed. The thread counts as working from now on, so a waiter never sees it idle first. */
+  public void submit(String prompt) {
+    this.setState(State.WORKING);
+    this.error = null;
+    this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of(), false));
+  }
+
   public void interrupt() {
     this.connection.ifLive(AgentSession::interrupt);
   }
@@ -139,7 +150,7 @@ public final class ChatController implements Disposable {
    */
   public void answer(String requestId, boolean allow, @Nullable String message, boolean interrupt,
     @Nullable Map<String, String> answers, @Nullable Integer suggestion) {
-    this.state = State.WORKING;
+    this.setState(State.WORKING);
     this.connection.ifLive(session -> session.answer(requestId,
       new PermissionAnswer(allow, message, interrupt, answers != null ? answers : Map.of(), suggestion)));
   }
@@ -247,9 +258,38 @@ public final class ChatController implements Disposable {
     }
   }
 
+  /**
+   * Waits until the agent is no longer {@link State#isBusy busy}, the timeout passed or the thread closed.
+   *
+   * @return the state then
+   */
+  public State awaitSettled(long timeoutMillis) throws InterruptedException {
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+    synchronized (this.stateLock) {
+      long left = deadline - System.nanoTime();
+      while (this.state.isBusy() && !this.isDisposed && left > 0) {
+        TimeUnit.NANOSECONDS.timedWait(this.stateLock, left);
+        left = deadline - System.nanoTime();
+      }
+      return this.state;
+    }
+  }
+
   @Override
   public void dispose() {
+    synchronized (this.stateLock) {
+      this.isDisposed = true;
+      this.stateLock.notifyAll();
+    }
     this.connection.stop();
+  }
+
+  private void setState(State state) {
+    synchronized (this.stateLock) {
+      this.state = state;
+      this.stateLock.notifyAll();
+    }
+    Async.onEdt(this.host::stateChanged);
   }
 
   private void launch(@Nullable String resumeSessionId) {
@@ -258,7 +298,7 @@ public final class ChatController implements Disposable {
     AgentLaunch launch = new AgentLaunch(workDirectory, resumeSessionId, this.record.model, this.record.mode,
       this.record.effort, this.host.additionalDirectories(), EnvironmentUtil.getEnvironmentMap(),
       this.host.toolsUrl());
-    this.state = State.STARTING;
+    this.setState(State.STARTING);
     AgentSession session;
     try {
       session = this.connection.replace(this.backend, launch, new Listener());
@@ -275,12 +315,13 @@ public final class ChatController implements Disposable {
         this.postError(message);
         return;
       }
-      this.state = State.IDLE;
+      String prompt = this.firstPrompt.getAndSet(null);
       this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
-      String prompt = this.firstPrompt.getAndSet(null);
       if (prompt != null) {
-        this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of(), false));
+        this.submit(prompt);
+      } else {
+        this.setState(State.IDLE);
       }
     });
   }
@@ -325,7 +366,7 @@ public final class ChatController implements Disposable {
     synchronized (this.answer) {
       this.answer.setLength(0);
     }
-    this.state = State.WORKING;
+    this.setState(State.WORKING);
     this.error = null;
     session.prompt(prompt, images);
     Async.onEdt(this.host::activity);
@@ -459,8 +500,8 @@ public final class ChatController implements Disposable {
         }
         this.scratchpadPath = started.scratchpadPath();
       }
-      case AgentEvent.Busy busy -> this.state = State.WORKING;
-      case AgentEvent.PermissionCancelled cancelled -> this.state = State.WORKING;
+      case AgentEvent.Busy busy -> this.setState(State.WORKING);
+      case AgentEvent.PermissionCancelled cancelled -> this.setState(State.WORKING);
       case AgentEvent.Text text -> {
         if (text.parentId() == null && !text.text().isBlank()) {
           synchronized (this.answer) {
@@ -478,7 +519,7 @@ public final class ChatController implements Disposable {
   }
 
   private void onTurnEnded(AgentEvent.TurnEnded ended) {
-    this.state = State.IDLE;
+    this.setState(State.IDLE);
     this.error = ended.error();
     this.refreshContext();
     if (ended.cost() != null) {
@@ -494,7 +535,7 @@ public final class ChatController implements Disposable {
   }
 
   private void onPermission(String requestId, PermissionPrompt prompt) {
-    this.state = State.WAITING;
+    this.setState(State.WAITING);
     this.view.post(new ChatMessage.Permission(requestId, prompt));
     String agent = this.backend.displayName();
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
@@ -504,7 +545,7 @@ public final class ChatController implements Disposable {
   }
 
   private void stopped(@Nullable String error) {
-    this.state = State.STOPPED;
+    this.setState(State.STOPPED);
     this.error = error;
   }
 
@@ -524,7 +565,12 @@ public final class ChatController implements Disposable {
     WAITING,
     IDLE,
     /** The agent did not start or its process ended. The next prompt starts it again. */
-    STOPPED
+    STOPPED;
+
+    /** Starting or working, so a prompt or a wait for its answer is premature. */
+    public boolean isBusy() {
+      return this == STARTING || this == WORKING;
+    }
   }
 
   private final class Listener implements AgentListener {

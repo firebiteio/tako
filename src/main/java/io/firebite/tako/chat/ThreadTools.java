@@ -18,14 +18,20 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jetbrains.annotations.Nullable;
 
-/** What Tako offers one thread's agent over MCP: starting threads of its own and following any thread. */
+/** What Tako offers one thread's agent over MCP: starting threads of its own, and following and steering any thread. */
 final class ThreadTools implements McpTools {
   static final String CREATE = "create_thread";
   static final String LIST = "list_threads";
   static final String GET = "get_thread";
+  static final String SEND = "send_to_thread";
+  static final String WAIT = "wait_for_thread";
+  static final String STOP = "stop_thread";
+  private static final long DEFAULT_WAIT_SECONDS = 300;
+  private static final long MAX_WAIT_SECONDS = 3600;
   private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
   private static final String THREAD_ID = "threadId";
   private static final String STATES = "starting, working, waiting (for the person to answer a permission prompt or "
@@ -69,6 +75,14 @@ final class ThreadTools implements McpTools {
     JsonObject threadIdProperties = new JsonObject();
     threadIdProperties.add(THREAD_ID, property("string", "The id create_thread or list_threads gave."));
 
+    JsonObject sendProperties = threadIdProperties.deepCopy();
+    sendProperties.add("prompt", property("string", "The prompt, e.g. a follow-up or a correction. The thread's agent "
+      + "knows its own conversation, but nothing of yours."));
+
+    JsonObject waitProperties = threadIdProperties.deepCopy();
+    waitProperties.add("timeoutSeconds", property("integer", "How long to wait at most, from 1 to " + MAX_WAIT_SECONDS
+      + ". Defaults to " + DEFAULT_WAIT_SECONDS + "."));
+
     return List.of(
       new Tool(CREATE, "Starts a new Tako chat thread that works on a task alongside you. Its agent starts on the "
         + "prompt at once. The person sees the thread in Tako and answers its permission prompts. Threads in the same "
@@ -77,7 +91,15 @@ final class ThreadTools implements McpTools {
       new Tool(LIST, "Lists the project's chat threads in Tako with their state: " + STATES + ".",
         schema(new JsonObject())),
       new Tool(GET, "Tells what a thread is doing: its state (" + STATES + "), its folder and branch, and the text "
-        + "its agent wrote since its last prompt.", schema(threadIdProperties, THREAD_ID)));
+        + "its agent wrote since its last prompt.", schema(threadIdProperties, THREAD_ID)),
+      new Tool(SEND, "Sends a prompt to another thread as if the person typed it, and opens the thread if it is "
+        + "closed. Fails while the thread is starting, working or waiting, so wait_for_thread first. Returns at once; "
+        + "wait_for_thread then gives the answer.", schema(sendProperties, THREAD_ID, "prompt")),
+      new Tool(WAIT, "Waits until another thread is done working: idle, waiting for the person, stopped or closed. "
+        + "Returns what get_thread does, with timedOut set when the thread still works after the timeout. Call it "
+        + "again to keep waiting.", schema(waitProperties, THREAD_ID)),
+      new Tool(STOP, "Interrupts another thread's running turn. The thread stays open and takes new prompts.",
+        schema(threadIdProperties, THREAD_ID)));
   }
 
   @Override
@@ -86,6 +108,9 @@ final class ThreadTools implements McpTools {
       case CREATE -> this.create(arguments);
       case LIST -> this.list();
       case GET -> this.get(arguments);
+      case SEND -> this.send(arguments);
+      case WAIT -> this.await(arguments);
+      case STOP -> this.stop(arguments);
       default -> throw new McpToolException("Unknown tool " + name);
     };
   }
@@ -139,12 +164,72 @@ final class ThreadTools implements McpTools {
   }
 
   private String get(JsonObject arguments) throws McpToolException {
+    ThreadStore.Record record = this.find(arguments);
+    return GSON.toJson(this.details(record, this.service.controller(record.id)));
+  }
+
+  private String send(JsonObject arguments) throws McpToolException {
+    ThreadStore.Record record = this.other(arguments);
+    String prompt = required(arguments, "prompt");
+    ChatController controller = this.service.controller(record.id);
+    if (controller != null && (controller.state().isBusy() || controller.state() == ChatController.State.WAITING)) {
+      throw new McpToolException("The thread is " + controller.state().name().toLowerCase(Locale.ROOT)
+        + ". Call wait_for_thread first.");
+    }
+    ApplicationManager.getApplication().invokeAndWait(() -> this.service.prompt(record, prompt));
+    return GSON.toJson(this.describe(record, this.service.controller(record.id)));
+  }
+
+  private String await(JsonObject arguments) throws McpToolException {
+    ThreadStore.Record record = this.other(arguments);
+    long seconds = Json.isNumber(arguments, "timeoutSeconds")
+      ? Math.clamp(Json.number(arguments, "timeoutSeconds"), 1, MAX_WAIT_SECONDS)
+      : DEFAULT_WAIT_SECONDS;
+    ChatController controller = this.service.controller(record.id);
+    if (controller != null) {
+      try {
+        controller.awaitSettled(TimeUnit.SECONDS.toMillis(seconds));
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+        throw new McpToolException("Stopped waiting for the thread");
+      }
+      controller = this.service.controller(record.id);
+    }
+    JsonObject thread = this.details(record, controller);
+    if (controller != null && controller.state().isBusy()) {
+      thread.addProperty("timedOut", true);
+    }
+    return GSON.toJson(thread);
+  }
+
+  private String stop(JsonObject arguments) throws McpToolException {
+    ThreadStore.Record record = this.other(arguments);
+    ChatController controller = this.service.controller(record.id);
+    if (controller != null) {
+      controller.interrupt();
+    }
+    return GSON.toJson(this.describe(record, controller));
+  }
+
+  private ThreadStore.Record find(JsonObject arguments) throws McpToolException {
     String id = required(arguments, THREAD_ID);
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
       throw new McpToolException("No thread " + id);
     }
-    ChatController controller = this.service.controller(record.id);
+    return record;
+  }
+
+  /** The thread the arguments name, which must not be the caller's own. */
+  private ThreadStore.Record other(JsonObject arguments) throws McpToolException {
+    ThreadStore.Record record = this.find(arguments);
+    if (record.id.equals(this.threadId)) {
+      throw new McpToolException("That is your own thread.");
+    }
+    return record;
+  }
+
+  private JsonObject details(ThreadStore.Record record, @Nullable ChatController controller) {
     JsonObject thread = this.describe(record, controller);
     if (controller != null) {
       String error = controller.error();
@@ -153,7 +238,7 @@ final class ThreadTools implements McpTools {
       }
       thread.addProperty("answer", controller.lastAnswer());
     }
-    return GSON.toJson(thread);
+    return thread;
   }
 
   private JsonObject describe(ThreadStore.Record record, @Nullable ChatController controller) {

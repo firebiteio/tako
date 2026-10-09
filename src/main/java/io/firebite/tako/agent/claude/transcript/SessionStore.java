@@ -17,7 +17,10 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.UUID;
+import java.util.function.Predicate;
 import java.util.regex.Pattern;
 import org.jetbrains.annotations.Nullable;
 
@@ -28,6 +31,8 @@ public final class SessionStore {
   private static final Pattern SESSION_ID = Pattern.compile("[0-9a-fA-F-]{36}");
   private static final Pattern AGENT_ID = Pattern.compile("[A-Za-z0-9_-]+");
   private static final int DEFAULT_RETENTION_DAYS = 30;
+  private static final String COST_STATE = "cost-state";
+  private static final String LAST_PROMPT = "last-prompt";
 
   private final Path directory;
 
@@ -69,25 +74,61 @@ public final class SessionStore {
 
   /** The main thread's user and assistant messages. */
   public List<TranscriptMessage> load(String sessionId) throws IOException {
+    return this.load(sessionId, null);
+  }
+
+  /**
+   * Like {@link #load(String)}, but only the messages whose transcript line contains {@code needle}, which is
+   * lowercase. Parses no other line.
+   */
+  public List<TranscriptMessage> loadMentioning(String sessionId, String needle) throws IOException {
+    return this.load(sessionId, needle);
+  }
+
+  private List<TranscriptMessage> load(String sessionId, @Nullable String needle) throws IOException {
     List<TranscriptMessage> messages = new ArrayList<>();
     try (BufferedReader reader = Files.newBufferedReader(this.transcript(sessionId), StandardCharsets.UTF_8)) {
       String line;
       while ((line = reader.readLine()) != null) {
-        JsonObject entry = Json.parseObject(line);
-        CliMessage.Type type = entry == null ? CliMessage.Type.OTHER : new CliMessage(entry).type();
-        JsonObject body = Json.object(entry, "message");
-        if ((type != CliMessage.Type.USER && type != CliMessage.Type.ASSISTANT) || isAside(entry) || body == null) {
+        if (needle != null && !line.toLowerCase(Locale.ROOT).contains(needle)) {
           continue;
         }
-        CliMessage message = CliMessage.of(type, body);
-        String timestamp = Json.string(entry, "timestamp");
-        if (timestamp != null) {
-          message.json().addProperty("timestamp", timestamp);
+        TranscriptMessage message = mainMessage(Json.parseObject(line));
+        if (message != null) {
+          messages.add(message);
         }
-        messages.add(new TranscriptMessage(message, FileChange.fromToolResult(Json.object(entry, "toolUseResult"))));
       }
     }
     return messages;
+  }
+
+  /**
+   * Copies the transcript into a new session, up to the first main-thread message {@code isCut} accepts. Leaves out
+   * the cumulative cost, which is the original's, and the CLI's resume pointer, which may point past the cut.
+   *
+   * @return the new session's id
+   */
+  public String fork(String sessionId, Predicate<TranscriptMessage> isCut) throws IOException {
+    String forkId = UUID.randomUUID().toString();
+    String ownId = "\"sessionId\":\"" + sessionId + "\"";
+    List<String> lines = new ArrayList<>();
+    try (BufferedReader reader = Files.newBufferedReader(this.transcript(sessionId), StandardCharsets.UTF_8)) {
+      String line;
+      while ((line = reader.readLine()) != null) {
+        JsonObject entry = Json.parseObject(line);
+        String type = Json.string(entry, "type");
+        if (COST_STATE.equals(type) || LAST_PROMPT.equals(type)) {
+          continue;
+        }
+        TranscriptMessage message = mainMessage(entry);
+        if (message != null && isCut.test(message)) {
+          break;
+        }
+        lines.add(line.replace(ownId, "\"sessionId\":\"" + forkId + "\""));
+      }
+    }
+    Files.write(this.transcript(forkId), lines, StandardCharsets.UTF_8);
+    return forkId;
   }
 
   /** The session's cumulative usage from its last {@code cost-state} line, or null before its first one. */
@@ -151,6 +192,21 @@ public final class SessionStore {
     return this.directory.resolve(sessionId + TRANSCRIPT_EXTENSION);
   }
 
+  /** The line as a main-thread message, null for other lines. */
+  private static @Nullable TranscriptMessage mainMessage(@Nullable JsonObject entry) {
+    CliMessage.Type type = entry == null ? CliMessage.Type.OTHER : new CliMessage(entry).type();
+    JsonObject body = Json.object(entry, "message");
+    if ((type != CliMessage.Type.USER && type != CliMessage.Type.ASSISTANT) || isAside(entry) || body == null) {
+      return null;
+    }
+    CliMessage message = CliMessage.of(type, body);
+    String timestamp = Json.string(entry, "timestamp");
+    if (timestamp != null) {
+      message.json().addProperty("timestamp", timestamp);
+    }
+    return new TranscriptMessage(message, FileChange.fromToolResult(Json.object(entry, "toolUseResult")));
+  }
+
   /** Subagent and CLI-internal lines, which the main conversation does not show. */
   private static boolean isAside(@Nullable JsonObject entry) {
     return Json.bool(entry, "isSidechain") || Json.bool(entry, "isMeta");
@@ -161,7 +217,7 @@ public final class SessionStore {
     try (BufferedReader reader = Files.newBufferedReader(file, StandardCharsets.UTF_8)) {
       String line;
       while ((line = reader.readLine()) != null) {
-        if (line.contains("\"type\":\"cost-state\"")) {
+        if (line.contains("\"type\":\"" + COST_STATE + "\"")) {
           last = line;
         }
       }

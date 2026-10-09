@@ -29,7 +29,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.function.Predicate;
 import org.jetbrains.annotations.Nullable;
 
 /** Runs Claude Code, the {@code claude} CLI, in stream-json mode. */
@@ -37,7 +39,7 @@ public final class ClaudeBackend implements AgentBackend {
   public static final String ID = "claude";
   public static final String NAME = "Claude Code";
   private static final Logger LOG = Logger.getInstance(ClaudeBackend.class);
-  private static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, true);
+  private static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, true, true);
 
   private final Map<String, String> environment;
 
@@ -143,6 +145,40 @@ public final class ClaudeBackend implements AgentBackend {
     }
   }
 
+  /** Copies the transcript up to the prompt after the first {@code prompts}, counted as {@link #history} shows them. */
+  @Override
+  public String fork(String projectPath, String sessionId, int prompts) throws AgentException {
+    try {
+      return SessionStore.forProject(this.environment, projectPath).fork(sessionId, new PromptCut(prompts));
+    } catch (IOException e) {
+      throw new AgentException(TakoBundle.message("error.fork", e.getMessage()), e);
+    }
+  }
+
+  /** Parses only the transcript lines that contain the query, then checks their prompt or answer text. */
+  @Override
+  public boolean sessionMentions(String projectPath, String sessionId, String query) {
+    String needle = query.toLowerCase(Locale.ROOT);
+    try {
+      for (SessionStore.TranscriptMessage message : SessionStore.forProject(this.environment, projectPath)
+        .loadMentioning(sessionId, needle)) {
+        for (AgentEvent event : ClaudeTranslator.translate(message.message(), message.change(), true)) {
+          String text = switch (event) {
+            case AgentEvent.Prompt prompt -> prompt.text();
+            case AgentEvent.Text answer -> answer.parentId() == null ? answer.text() : null;
+            default -> null;
+          };
+          if (text != null && text.toLowerCase(Locale.ROOT).contains(needle)) {
+            return true;
+          }
+        }
+      }
+    } catch (IOException e) {
+      LOG.debug("Could not search session " + sessionId, e);
+    }
+    return false;
+  }
+
   /**
    * Writes Tako's tools to an MCP config file, one per URL, so relaunches reuse it. Inline JSON would not survive a
    * Windows command line.
@@ -194,5 +230,25 @@ public final class ClaudeBackend implements AgentBackend {
 
   private static String orEmpty(@Nullable String value) {
     return value == null ? "" : value;
+  }
+
+  /** Accepts the first message past the first {@code prompts} prompts, counted as {@link #history} shows them. */
+  private static final class PromptCut implements Predicate<SessionStore.TranscriptMessage> {
+    private final int prompts;
+    private int seen;
+
+    private PromptCut(int prompts) {
+      this.prompts = prompts;
+    }
+
+    @Override
+    public boolean test(SessionStore.TranscriptMessage message) {
+      for (AgentEvent event : ClaudeTranslator.translate(message.message(), message.change(), true)) {
+        if (event instanceof AgentEvent.Prompt && ++this.seen > this.prompts) {
+          return true;
+        }
+      }
+      return false;
+    }
   }
 }

@@ -58,6 +58,10 @@ public class ChatControllerTest extends BasePlatformTestCase {
       }
 
       @Override
+      public void stateChanged() {
+      }
+
+      @Override
       public List<String> additionalDirectories() {
         return List.of();
       }
@@ -145,7 +149,8 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.awaitPost(ChatMessage.Init.class);
     ChatMessage.Submit submit = this.awaitPost(ChatMessage.Submit.class);
     assertEquals("write a.txt", submit.text());
-    assertEquals(ChatController.State.IDLE, this.controller.state());
+    assertEquals("a waiter never sees it idle before the prompt", ChatController.State.WORKING,
+      this.controller.state());
 
     this.controller.send(submit.text(), List.of(), List.of(), false, 1);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);

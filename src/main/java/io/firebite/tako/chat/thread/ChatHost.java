@@ -16,6 +16,9 @@ public interface ChatHost {
   /** The person sent a prompt. */
   void activity();
 
+  /** The agent's {@link ChatController.State} changed. */
+  void stateChanged();
+
   /** The workspace's other project folders, which the thread may use too ({@code --add-dir}). */
   List<String> additionalDirectories();
 

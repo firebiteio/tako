@@ -24,4 +24,19 @@ public interface AgentBackend {
   default @Nullable SessionCost sessionCost(String projectPath, String sessionId) {
     return null;
   }
+
+  /**
+   * Copies a session's first {@code prompts} turns into a new session, for agents whose
+   * {@link AgentInfo.Capabilities#fork()} is set. Reads and writes files.
+   *
+   * @return the new session's id
+   */
+  default String fork(String projectPath, String sessionId, int prompts) throws AgentException {
+    throw new UnsupportedOperationException(this.displayName() + " cannot fork sessions");
+  }
+
+  /** Whether the session's prompts or answers contain {@code query}, ignoring case. False when unknown. May read files. */
+  default boolean sessionMentions(String projectPath, String sessionId, String query) {
+    return false;
+  }
 }

@@ -18,6 +18,7 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
@@ -26,6 +27,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
@@ -47,8 +50,12 @@ import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.state.runName
 import io.firebite.tako.ui.state.runningTasks
 import io.firebite.tako.ui.t
+import kotlinx.coroutines.delay
 import org.jetbrains.jewel.ui.component.Text
+import org.jetbrains.jewel.ui.component.TextField
 import org.jetbrains.jewel.ui.component.VerticallyScrollableContainer
+
+private const val SEARCH_DELAY_MILLIS = 300L
 
 enum class StatusKind { INPUT, WORKING, ERROR, DONE, IDLE }
 
@@ -100,6 +107,9 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
       verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(2.dp)) {
       Text(t("sidebar.threads").uppercase(io.firebite.tako.ui.textLocale), Modifier.weight(1f), color = colors.muted,
         style = smallStyle.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.04.em))
+      IconBtn(Icons.search, t("sidebar.search"), color = if (workspace.searching) colors.fg else colors.muted) {
+        if (workspace.searching) workspace.closeSearch() else workspace.searching = true
+      }
       Box {
         IconBtn(Icons.history, t("sidebar.history")) { workspace.showHistory() }
         if (workspace.sessions != null) {
@@ -109,14 +119,28 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
       IconBtn(Icons.addProject, t("sidebar.add.project")) { workspace.service.addProject() }
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
+    if (workspace.searching) {
+      SearchField(workspace)
+    }
     Rule()
     val sorted = workspace.threads.values.sortedByDescending { it.updatedAt }
     val runIds = workspace.benches.flatMap { it.threads }.toSet()
+    val query = if (workspace.searching) workspace.searchInput.text.toString().trim() else ""
+    LaunchedEffect(query) {
+      if (query.isNotEmpty()) {
+        delay(SEARCH_DELAY_MILLIS)
+        workspace.searchSessions(query)
+      }
+    }
     VerticallyScrollableContainer(Modifier.weight(1f)) {
       Column(Modifier.fillMaxWidth().padding(6.dp), verticalArrangement = Arrangement.spacedBy(6.dp)) {
-        val projects = workspace.projectList()
-        for (project in projects) {
-          ProjectGroup(workspace, project, sorted, runIds, narrow)
+        if (query.isNotEmpty()) {
+          SearchResults(workspace, sorted, query, narrow)
+        } else {
+          val projects = workspace.projectList()
+          for (project in projects) {
+            ProjectGroup(workspace, project, sorted, runIds, narrow)
+          }
         }
       }
     }
@@ -158,6 +182,33 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         Spacer(Modifier.weight(1f))
         workspace.usage?.let { Text(money(it.totalCost), color = color, style = smallStyle) }
       }
+    }
+  }
+}
+
+@Composable
+private fun SearchField(workspace: Workspace) {
+  val focus = remember { FocusRequester() }
+  LaunchedEffect(Unit) { focus.requestFocus() }
+  TextField(workspace.searchInput, Modifier.fillMaxWidth().padding(start = 8.dp, end = 8.dp, bottom = 8.dp)
+    .focusRequester(focus), placeholder = { Text(t("sidebar.search.placeholder"), color = colors.muted) })
+}
+
+/** Every thread, archived ones too, whose title, loaded conversation or session mentions the query. */
+@Composable
+private fun SearchResults(workspace: Workspace, sorted: List<ThreadState>, query: String, narrow: Boolean) {
+  val (hitsQuery, hits) = workspace.searchHits
+  val found = sorted.filter {
+    it.title.contains(query, true) || it.mentions(query) || (hitsQuery == query && it.id in hits)
+  }
+  if (found.isEmpty()) {
+    Text(if (hitsQuery == query) t("sidebar.search.none") else t("sidebar.search.searching"),
+      Modifier.padding(horizontal = 8.dp, vertical = 6.dp), color = colors.muted, style = smallStyle)
+    return
+  }
+  Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+    for (thread in found) {
+      ThreadRow(workspace, thread, narrow)
     }
   }
 }

@@ -166,6 +166,8 @@ object Icons {
   val remove: IconKey = lucide("folder-minus")
   val worktree: IconKey = lucide("folder-git-2")
   val branch: IconKey = lucide("git-branch")
+  val fork: IconKey = lucide("git-fork")
+  val search: IconKey = lucide("search")
   val pullRequest: IconKey = lucide("git-pull-request")
   val merged: IconKey = lucide("git-merge")
   val refresh: IconKey = lucide("refresh-cw")

@@ -29,6 +29,7 @@
     <applicationConfigurable parentId="io.firebite.tako.settings" id="io.firebite.tako.settings.acp"
                              key="configurable.acp" instance="io.firebite.tako.settings.AcpAgentsConfigurable"/>
     <notificationGroup id="Tako" displayType="BALLOON" key="notification.group.tako"/>
+    <statusBarWidgetFactory id="Tako.Status" implementation="io.firebite.tako.ide.status.TakoStatusWidgetFactory"/>
   </extensions>
 
   <actions>
