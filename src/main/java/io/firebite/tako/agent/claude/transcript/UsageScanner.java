@@ -1,6 +1,7 @@
 package io.firebite.tako.agent.claude.transcript;
 
 import com.google.gson.JsonObject;
+import io.firebite.tako.agent.PriceRatios;
 import io.firebite.tako.json.Json;
 import java.io.BufferedReader;
 import java.io.IOException;
@@ -30,11 +31,6 @@ import org.jetbrains.annotations.Nullable;
  * estimated from its tokens at the per-model rate the other sessions paid.
  */
 final class UsageScanner {
-  static final double OUTPUT_WEIGHT = 5;
-  static final double CACHE_WRITE_5M_WEIGHT = 1.25;
-  static final double CACHE_WRITE_1H_WEIGHT = 2;
-  static final double CACHE_READ_WEIGHT = 0.1;
-
   private UsageScanner() {
   }
 
@@ -273,8 +269,7 @@ final class UsageScanner {
   ) {
 
     double units() {
-      return this.input + this.output * OUTPUT_WEIGHT + this.cacheRead * CACHE_READ_WEIGHT
-        + this.cacheWrite5m * CACHE_WRITE_5M_WEIGHT + this.cacheWrite1h * CACHE_WRITE_1H_WEIGHT;
+      return PriceRatios.units(this.input, this.output, this.cacheRead, this.cacheWrite5m, this.cacheWrite1h);
     }
   }
 

@@ -105,7 +105,10 @@ private fun ThreadState.onTurnEnded(event: AgentEvent.TurnEnded) {
   if (!this.isActive) {
     this.unread = true
   }
-  event.cost?.let { this.costUsd = it.costUsd }
+  event.cost?.let {
+    this.costUsd = it.costUsd
+    this.inputRate = it.inputRate
+  }
 }
 
 fun ThreadState.setBusy(busy: Boolean) {

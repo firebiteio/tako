@@ -60,6 +60,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var contextUsage by mutableStateOf<ContextUsage?>(null)
   var liveContext by mutableStateOf<LiveContext?>(null)
   var cache by mutableStateOf<PromptCache?>(null)
+  /** USD per input token, learned from the session's reported cost. */
+  var inputRate by mutableStateOf<Double?>(null)
   /** The model's context size, when the agent reports it. */
   var contextWindow by mutableStateOf<Long?>(null)
   val tasks = mutableStateMapOf<String, Task>()

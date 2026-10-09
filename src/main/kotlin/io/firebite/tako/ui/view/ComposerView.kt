@@ -92,12 +92,15 @@ import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.ide.CopyPasteManager
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.PermissionPrompt
+import io.firebite.tako.agent.PriceRatios
 import io.firebite.tako.ide.context.Images
 import io.firebite.tako.ide.project.FileIndex
 import io.firebite.tako.ui.countdown
+import io.firebite.tako.ui.money
 import io.firebite.tako.ui.state.CACHE_TTL_1H
 import io.firebite.tako.ui.state.CacheKind
 import io.firebite.tako.ui.state.CacheState
+import io.firebite.tako.ui.state.PromptCache
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.canPlanRuns
 import io.firebite.tako.ui.state.cacheState
@@ -791,6 +794,19 @@ private fun cacheLabel(state: CacheState): String = when (state.kind) {
   CacheKind.COLD -> t("context.timer.cold")
 }
 
+/** What the cached prompt costs the next message, warm against cold; null while busy or without a price. */
+fun cacheCostText(thread: ThreadState, cache: PromptCache, state: CacheState): String? {
+  val rate = thread.inputRate
+  if (rate == null || state.kind == CacheKind.BUSY) {
+    return null
+  }
+  val price = cache.tokens * rate
+  val warm = money(price * PriceRatios.CACHE_READ)
+  val cold = money(price * if (cache.ttl == CACHE_TTL_1H) PriceRatios.CACHE_WRITE_1H else PriceRatios.CACHE_WRITE_5M)
+  return if (state.kind == CacheKind.WARM) t("context.cache.cost.warm", warm, cold) else
+    t("context.cache.cost.cold", cold, warm)
+}
+
 @Composable
 private fun CacheTimer(thread: ThreadState, iconOnly: Boolean) {
   val cache = thread.cache ?: return
@@ -803,7 +819,7 @@ private fun CacheTimer(thread: ThreadState, iconOnly: Boolean) {
   val ttl = if (cache.ttl == CACHE_TTL_1H) t("context.timer.hour") else t("context.timer.minutes")
   val tip = if (state.kind == CacheKind.COLD) t("context.timer.expired", ttl, tokens(cache.tokens)) else
     t("context.timer.warm", tokens(cache.tokens), ttl)
-  Tip(tip) {
+  Tip(listOfNotNull(tip, cacheCostText(thread, cache, state)).joinToString("\n")) {
     Row(Modifier.height(28.dp).alpha(if (state.kind == CacheKind.COLD) 0.8f else 1f)
       .hoverClick { toggleContextPanel(thread) }.padding(horizontal = 6.dp),
       verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(4.dp)) {

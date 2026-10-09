@@ -2,6 +2,7 @@ package io.firebite.tako.agent.claude.transcript;
 
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
+import io.firebite.tako.agent.PriceRatios;
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.json.Json;
 import java.time.LocalDate;
@@ -60,13 +61,17 @@ public record SessionUsage(
     long output = 0;
     long cacheRead = 0;
     long cacheWrite = 0;
+    ModelUsage main = null;
     for (ModelUsage model : models) {
       input += model.inputTokens();
       output += model.outputTokens();
       cacheRead += model.cacheReadTokens();
       cacheWrite += model.cacheWriteTokens();
+      if (main == null || model.costUsd() > main.costUsd()) {
+        main = model;
+      }
     }
-    return new SessionCost(costUsd, input, output, cacheRead, cacheWrite);
+    return new SessionCost(costUsd, input, output, cacheRead, cacheWrite, main == null ? null : main.inputRate());
   }
 
   public SessionCost toCost() {
@@ -92,6 +97,14 @@ public record SessionUsage(
 
     public long totalTokens() {
       return this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens;
+    }
+
+    /** USD per input token, reading cache writes as 5-minute ones since the CLI does not split them here. */
+    @Nullable
+    Double inputRate() {
+      double units = PriceRatios.units(this.inputTokens, this.outputTokens, this.cacheReadTokens,
+        this.cacheWriteTokens, 0);
+      return this.costUsd > 0 && units > 0 ? this.costUsd / units : null;
     }
   }
 }

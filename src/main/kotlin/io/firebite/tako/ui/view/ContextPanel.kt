@@ -201,11 +201,12 @@ private fun ContextBreakdown(thread: ThreadState) {
     val ttl = if (cache.ttl == CACHE_TTL_1H) t("context.cache.hour") else t("context.cache.minutes")
     val size = tokens(cache.tokens)
     Section(t("context.cache"))
-    Note(when (state.kind) {
+    val note = when (state.kind) {
       CacheKind.BUSY -> t("context.cache.busy", ttl, size)
       CacheKind.WARM -> t("context.cache.warm", countdown(state.remaining), ttl, size)
       CacheKind.COLD -> t("context.cache.expired", size)
-    })
+    }
+    Note(listOfNotNull(note, cacheCostText(thread, cache, state)).joinToString(" "))
   }
   if (thread.info?.capabilities?.compact != false) {
     Row(Modifier.fillMaxWidth().padding(top = 10.dp), horizontalArrangement = Arrangement.End) {

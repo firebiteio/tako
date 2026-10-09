@@ -68,7 +68,12 @@ public class ClaudeTranslatorTest {
       + "\"error_during_execution\",\"is_error\":true,\"result\":\"Boom\",\"duration_ms\":1000}", false).getFirst());
     AgentEvent.TurnEnded ended = (AgentEvent.TurnEnded) translate("{\"type\":\"result\",\"subtype\":\"success\","
       + "\"total_cost_usd\":0.5,\"modelUsage\":{\"m\":{\"inputTokens\":3,\"outputTokens\":4}}}", false).getFirst();
-    assertEquals(new SessionCost(0.5, 3, 4, 0, 0), ended.cost());
+    assertEquals(new SessionCost(0.5, 3, 4, 0, 0, null), ended.cost());
+    AgentEvent.TurnEnded priced = (AgentEvent.TurnEnded) translate("{\"type\":\"result\",\"subtype\":\"success\","
+      + "\"total_cost_usd\":2.1,\"modelUsage\":{\"small\":{\"inputTokens\":1000,\"costUSD\":0.1},"
+      + "\"main\":{\"inputTokens\":400,\"outputTokens\":100,\"cacheReadInputTokens\":1000,"
+      + "\"cacheCreationInputTokens\":800,\"costUSD\":2}}}", false).getFirst();
+    assertEquals(0.001, priced.cost().inputRate(), 1e-12);
   }
 
   @Test
