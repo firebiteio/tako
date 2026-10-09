@@ -50,7 +50,8 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.ide.context.ContextItem
-import io.firebite.tako.ui.bridge.PageMessage
+import io.firebite.tako.ide.project.ProjectIcons
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.state.Alert
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.textLocale
@@ -61,6 +62,7 @@ import org.jetbrains.jewel.ui.component.Icon
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.Tooltip
 import org.jetbrains.jewel.ui.icon.IconKey
+import java.nio.ByteBuffer
 import java.util.Base64
 
 @Composable
@@ -297,18 +299,19 @@ fun AlertCard(alert: Alert, onDismiss: () -> Unit) {
   }
 }
 
-private val projectIcons = HashMap<String, Painter?>()
+/** Decoded project icons by content. */
+private val projectIcons = HashMap<ByteBuffer, Painter?>()
 
 /** A project folder's own icon, else a folder. */
 @Composable
-fun ProjectIcon(project: PageMessage.ProjectItem?, size: Dp = 14.dp, tint: Color = Color.Unspecified) {
-  val url = project?.let { if (JewelTheme.isDark) it.iconDark ?: it.icon else it.icon }
+fun ProjectIcon(project: ChatMessage.ProjectItem?, size: Dp = 14.dp, tint: Color = Color.Unspecified) {
+  val icon = project?.let { if (JewelTheme.isDark) it.iconDark ?: it.icon else it.icon }
   val density = LocalDensity.current
-  val painter = remember(url) {
-    if (url == null) {
+  val painter = remember(icon) {
+    if (icon == null) {
       null
     } else {
-      projectIcons.getOrPut(url) { decodeDataUrl(url, density) }
+      projectIcons.getOrPut(ByteBuffer.wrap(icon.bytes)) { decodeIcon(icon, density) }
     }
   }
   if (painter == null) {
@@ -318,18 +321,13 @@ fun ProjectIcon(project: PageMessage.ProjectItem?, size: Dp = 14.dp, tint: Color
   }
 }
 
-private fun decodeDataUrl(url: String, density: androidx.compose.ui.unit.Density): Painter? {
-  val comma = url.indexOf(',')
-  if (!url.startsWith("data:") || comma < 0) {
-    return null
-  }
+private fun decodeIcon(icon: ProjectIcons.Icon, density: androidx.compose.ui.unit.Density): Painter? {
   return try {
-    val bytes = Base64.getDecoder().decode(url.substring(comma + 1))
-    if (url.startsWith("data:image/svg")) {
-      bytes.decodeToSvgPainter(density)
+    if (icon.isSvg) {
+      icon.bytes.decodeToSvgPainter(density)
     } else {
       androidx.compose.ui.graphics.painter.BitmapPainter(
-        org.jetbrains.skia.Image.makeFromEncoded(bytes).toComposeImageBitmap())
+        org.jetbrains.skia.Image.makeFromEncoded(icon.bytes).toComposeImageBitmap())
     }
   } catch (e: RuntimeException) {
     null

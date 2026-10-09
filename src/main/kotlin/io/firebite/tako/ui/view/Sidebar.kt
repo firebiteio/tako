@@ -36,8 +36,7 @@ import androidx.compose.ui.unit.em
 import com.intellij.openapi.ui.MessageDialogBuilder
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.ui.ago
-import io.firebite.tako.ui.bridge.PageMessage
-import io.firebite.tako.ui.bridge.PageOp
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.dateTime
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.elapsed
@@ -102,12 +101,12 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
       Text(t("sidebar.threads").uppercase(io.firebite.tako.ui.textLocale), Modifier.weight(1f), color = colors.muted,
         style = smallStyle.copy(fontWeight = FontWeight.SemiBold, letterSpacing = 0.04.em))
       Box {
-        IconBtn(Icons.history, t("sidebar.history")) { workspace.send(PageOp.History()) }
+        IconBtn(Icons.history, t("sidebar.history")) { workspace.showHistory() }
         if (workspace.sessions != null) {
           SessionsMenu(workspace)
         }
       }
-      IconBtn(Icons.addProject, t("sidebar.add.project")) { workspace.send(PageOp.AddProject()) }
+      IconBtn(Icons.addProject, t("sidebar.add.project")) { workspace.service.addProject() }
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     Rule()
@@ -150,7 +149,7 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         if (narrow) {
           workspace.setSidebar(false)
         }
-        openUsage(workspace)
+        workspace.showUsage()
       }.padding(horizontal = 8.dp, vertical = 7.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(8.dp)) {
         val color = if (usageHovered) colors.fg else colors.muted
@@ -194,7 +193,7 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
     }
     Rule()
     Box(Modifier.padding(vertical = 4.dp)) {
-      IconBtn(Icons.usage, t("sidebar.usage.title")) { openUsage(workspace) }
+      IconBtn(Icons.usage, t("sidebar.usage.title")) { workspace.showUsage() }
     }
   }
 }
@@ -212,16 +211,10 @@ private fun RailThread(workspace: Workspace, thread: ThreadState) {
   }
 }
 
-private fun openUsage(workspace: Workspace) {
-  workspace.usage = null
-  workspace.usageOpen = true
-  workspace.send(PageOp.Usage())
-}
-
-private fun projectBenches(workspace: Workspace, project: PageMessage.ProjectItem): List<PageMessage.BenchItem> =
+private fun projectBenches(workspace: Workspace, project: ChatMessage.ProjectItem): List<ChatMessage.BenchItem> =
   workspace.benches.reversed().filter { workspace.projectAt(it.projectPath).path == project.path }
 
-private fun projectThreads(workspace: Workspace, project: PageMessage.ProjectItem, sorted: List<ThreadState>,
+private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectItem, sorted: List<ThreadState>,
   runIds: Set<String>): List<ThreadState> =
   sorted.filter { !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path }
 
@@ -235,14 +228,14 @@ fun SessionsMenu(workspace: Workspace) {
     MenuEntry(item.title, (if (agents) item.agentName + " · " else "") +
       (if (several && item.projectName.isNotEmpty()) item.projectName + " · " else "") + dateTime(item.lastModified),
       Icons.question) {
-      workspace.send(PageOp.Resume(item.id, item.title, item.projectPath, item.agent))
+      workspace.service.resume(item.id, item.title, item.projectPath, item.agent)
     }
   }
   MenuPopup(entries, t("sidebar.history")) { workspace.sessions = null }
 }
 
 @Composable
-private fun ProjectGroup(workspace: Workspace, project: PageMessage.ProjectItem, sorted: List<ThreadState>,
+private fun ProjectGroup(workspace: Workspace, project: ChatMessage.ProjectItem, sorted: List<ThreadState>,
   runIds: Set<String>, narrow: Boolean) {
   val benches = projectBenches(workspace, project)
   val threads = projectThreads(workspace, project, sorted, runIds)
@@ -254,7 +247,7 @@ private fun ProjectGroup(workspace: Workspace, project: PageMessage.ProjectItem,
     Tip(project.path) {
       Row(Modifier.fillMaxWidth().height(28.dp).hoverClick(alpha = 0.6f, interaction = interaction) {
         workspace.collapsedProjects[project.path] = !collapsed
-        workspace.send(PageOp.CollapseProject(project.path, !collapsed))
+        workspace.service.collapseProject(project.path, !collapsed)
       }.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         val color = if (hovered || (collapsed && hasActive)) colors.fg else colors.muted
@@ -266,11 +259,11 @@ private fun ProjectGroup(workspace: Workspace, project: PageMessage.ProjectItem,
           maxLines = 1, overflow = TextOverflow.Ellipsis)
         if (hovered) {
           IconBtn(Icons.add, t("sidebar.project.new.thread"), iconSize = 14.dp) {
-            workspace.send(PageOp.NewThread(project.path, null))
+            workspace.service.newThread(project.path, null)
           }
           if (!project.primary) {
             IconBtn(Icons.remove, t("sidebar.project.remove"), iconSize = 14.dp) {
-              workspace.send(PageOp.RemoveProject(project.path))
+              workspace.service.removeProject(project.path)
             }
           }
         } else if (threads.size + benches.size > 0) {
@@ -291,7 +284,7 @@ private fun ProjectGroup(workspace: Workspace, project: PageMessage.ProjectItem,
 }
 
 @Composable
-private fun BenchGroup(workspace: Workspace, bench: PageMessage.BenchItem, narrow: Boolean) {
+private fun BenchGroup(workspace: Workspace, bench: ChatMessage.BenchItem, narrow: Boolean) {
   val runs = bench.threads.mapNotNull { workspace.threads[it] }.filter { !it.archived }
   val collapsed = workspace.collapsedBenches[bench.id] == true
   val (interaction, hovered) = rememberHover()
@@ -324,9 +317,9 @@ private fun BenchGroup(workspace: Workspace, bench: PageMessage.BenchItem, narro
   }
 }
 
-fun confirmDiscard(workspace: Workspace, bench: PageMessage.BenchItem) {
+fun confirmDiscard(workspace: Workspace, bench: ChatMessage.BenchItem) {
   if (MessageDialogBuilder.yesNo(t("bench.discard"), t("bench.discard.confirm", bench.title)).guessWindowAndAsk()) {
-    workspace.send(PageOp.DiscardBench(bench.id))
+    workspace.service.discardBench(bench.id)
     workspace.shownBench = null
   }
 }
@@ -358,7 +351,7 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
   }
   Box(Modifier.fillMaxWidth().hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
     if (thread.archived) {
-      workspace.send(PageOp.Archive(thread.id, false))
+      workspace.service.setArchived(thread.id, false)
     } else {
       workspace.open(thread)
       if (narrow) {
@@ -390,18 +383,18 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
         .background(colors.hover), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
         if (thread.archived) {
           IconBtn(Icons.restore, t("sidebar.restore"), iconSize = 14.dp) {
-            workspace.send(PageOp.Archive(thread.id, false))
+            workspace.service.setArchived(thread.id, false)
           }
         } else {
           IconBtn(Icons.archive, t("sidebar.archive", thread.agentName), iconSize = 14.dp) {
-            workspace.send(PageOp.Archive(thread.id, true))
+            workspace.service.setArchived(thread.id, true)
           }
         }
         IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {
           val confirmed = !thread.busy || MessageDialogBuilder.yesNo(t("sidebar.close"),
             t("sidebar.close.confirm", thread.agentName)).guessWindowAndAsk()
           if (confirmed) {
-            workspace.send(PageOp.Close(thread.id))
+            workspace.service.close(thread.id)
           }
         }
       }

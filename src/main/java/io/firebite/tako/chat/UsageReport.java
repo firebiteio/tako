@@ -4,7 +4,7 @@ import com.intellij.openapi.diagnostic.Logger;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
 import io.firebite.tako.chat.store.ThreadStore;
-import io.firebite.tako.ui.bridge.PageMessage;
+import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -13,7 +13,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.TreeMap;
 
-/** Sums the usage of every session of the workspace's project folders into the page's usage view. */
+/** Sums the usage of every session of the workspace's project folders into the chat's usage view. */
 final class UsageReport {
   private static final Logger LOG = Logger.getInstance(UsageReport.class);
   private static final int TOP_SESSIONS = 8;
@@ -22,10 +22,10 @@ final class UsageReport {
   }
 
   /** Reads every transcript, which {@link SessionStore} caches, so call off the EDT. */
-  static PageMessage.Usage build(List<ThreadStore.ProjectFolder> folders, ThreadStore threads,
+  static ChatMessage.Usage build(List<ThreadStore.ProjectFolder> folders, ThreadStore threads,
     Map<String, String> environment) {
     List<FolderSession> all = new ArrayList<>();
-    List<PageMessage.ProjectCost> projects = new ArrayList<>();
+    List<ChatMessage.ProjectCost> projects = new ArrayList<>();
     for (ThreadStore.ProjectFolder folder : folders) {
       SessionStore sessions = SessionStore.forProject(environment, folder.path);
       double cost = 0;
@@ -41,7 +41,7 @@ final class UsageReport {
       } catch (IOException e) {
         LOG.warn("Could not read session usage of " + folder.path, e);
       }
-      projects.add(new PageMessage.ProjectCost(folder.name, folder.path, cost, tokens, count));
+      projects.add(new ChatMessage.ProjectCost(folder.name, folder.path, cost, tokens, count));
     }
 
     Map<String, ModelTotals> byModel = new TreeMap<>();
@@ -66,30 +66,30 @@ final class UsageReport {
       }
     }
 
-    List<PageMessage.ModelCost> models = new ArrayList<>();
+    List<ChatMessage.ModelCost> models = new ArrayList<>();
     for (Map.Entry<String, ModelTotals> entry : byModel.entrySet()) {
       ModelTotals totals = entry.getValue();
-      models.add(new PageMessage.ModelCost(entry.getKey(), totals.input, totals.output, totals.cacheRead,
+      models.add(new ChatMessage.ModelCost(entry.getKey(), totals.input, totals.output, totals.cacheRead,
         totals.cacheWrite, totals.cost));
     }
-    List<PageMessage.DayCost> days = new ArrayList<>();
+    List<ChatMessage.DayCost> days = new ArrayList<>();
     for (Map.Entry<LocalDate, Double> entry : byDay.entrySet()) {
-      days.add(new PageMessage.DayCost(entry.getKey().toString(), entry.getValue()));
+      days.add(new ChatMessage.DayCost(entry.getKey().toString(), entry.getValue()));
     }
-    return new PageMessage.Usage(totalCost, totalTokens, all.size(), estimated, estimatedCost,
+    return new ChatMessage.Usage(totalCost, totalTokens, all.size(), estimated, estimatedCost,
       SessionStore.retentionDays(environment), byDay.isEmpty() ? null : byDay.firstKey().toString(), models, days,
       projects, topSessions(all, threads));
   }
 
-  private static List<PageMessage.SessionCost> topSessions(List<FolderSession> all, ThreadStore threads) {
+  private static List<ChatMessage.SessionCost> topSessions(List<FolderSession> all, ThreadStore threads) {
     List<FolderSession> sorted = new ArrayList<>(all);
     sorted.sort(Comparator.comparingDouble((FolderSession session) -> session.usage().costUsd()).reversed());
-    List<PageMessage.SessionCost> top = new ArrayList<>();
+    List<ChatMessage.SessionCost> top = new ArrayList<>();
     for (FolderSession session : sorted.subList(0, Math.min(TOP_SESSIONS, sorted.size()))) {
       SessionUsage usage = session.usage();
       ThreadStore.Record thread = threads.findBySession(usage.sessionId());
       String title = thread != null ? thread.title : session.sessions().title(usage.sessionId());
-      top.add(new PageMessage.SessionCost(usage.sessionId(), session.folder().path, session.folder().name,
+      top.add(new ChatMessage.SessionCost(usage.sessionId(), session.folder().path, session.folder().name,
         title != null ? title : usage.sessionId(), usage.costUsd(), usage.totalTokens(),
         thread != null ? thread.id : null, thread != null && thread.archived, usage.estimated()));
     }

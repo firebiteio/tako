@@ -5,8 +5,9 @@ import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import io.firebite.tako.agent.AgentEvent
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.PermissionPrompt
+import io.firebite.tako.chat.BenchRequest
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ide.context.ContextItem
-import io.firebite.tako.ui.bridge.PageOp
 import io.firebite.tako.ui.t
 import kotlin.math.min
 import kotlin.math.roundToInt
@@ -42,7 +43,7 @@ fun ThreadState.submit() {
   val images = this.images.map { it.image }
   if (text.isEmpty() && images.isEmpty()) {
     if (this.busy) {
-      this.send(PageOp.Interrupt())
+      this.controller?.interrupt()
     }
     return
   }
@@ -64,7 +65,7 @@ fun ThreadState.submitAndBranch() {
     return
   }
   this.submit()
-  this.workspace.send(PageOp.NewThread(null, null))
+  this.workspace.service.newThread(null, null)
 }
 
 /** Sends a command as if typed, e.g. `/compact`. */
@@ -115,7 +116,7 @@ fun ThreadState.cancelAllApprovals() {
 /** Answers the waiting prompt. @param suggestion the index of the suggestion approved with */
 fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = null, interrupt: Boolean = false,
   answers: Map<String, String>? = null, suggestion: Int? = null) {
-  this.send(PageOp.Permission(approval.requestId, allow, message, interrupt, answers, suggestion))
+  this.controller?.answer(approval.requestId, allow, message, interrupt, answers, suggestion)
   val prompt = approval.prompt
   val toolUseId = prompt.toolUseId
   if (!allow && toolUseId != null) {
@@ -215,10 +216,10 @@ fun ThreadState.modelLabel(agent: String, model: String): String {
 }
 
 /** What a run starts with: its own choices, else the thread's when it runs the thread's agent. */
-fun ThreadState.specOf(plan: RunPlan): PageOp.RunSpec {
+fun ThreadState.specOf(plan: RunPlan): BenchRequest.RunSpec {
   val agent = plan.agent ?: this.agent
   val isSameAgent = agent == this.agent
-  return PageOp.RunSpec(agent, plan.model ?: (if (isSameAgent) this.model ?: "" else ""),
+  return BenchRequest.RunSpec(agent, plan.model ?: (if (isSameAgent) this.model ?: "" else ""),
     if (isSameAgent && this.info != null) this.mode else "", if (isSameAgent) this.effort ?: "" else "")
 }
 
@@ -246,56 +247,36 @@ fun ThreadState.runName(index: Int): String {
   return "#" + index + " · " + this.agentName + (if (model.isNotEmpty()) " · $model" else "")
 }
 
-/** A prompt waiting for its bench's threads. */
-class PendingBench(val source: ThreadState, val text: String, val contexts: List<ContextItem>,
-  val images: List<PendingImage>, val includeFile: Boolean)
-
 /**
- * Asks the IDE for a worktree and thread per run; the prompt goes out once they exist.
+ * Asks the IDE for a worktree and thread per run, which each send the prompt.
  *
  * @return false while the thread still waits for an earlier bench
  */
 private fun ThreadState.startBench(text: String): Boolean {
-  val workspace = this.workspace
-  if (workspace.pendingBenches.values.any { it.source === this }) {
+  if (this.startingBench) {
     return false
   }
-  val request = ++workspace.lastBenchRequest
-  workspace.pendingBenches[request] = PendingBench(this, text, this.contexts.toList(), this.images.toList(),
-    workspace.includeFile)
-  workspace.send(PageOp.CreateBench(request, text, this.projectPath, this.id, this.runs.map { this.specOf(it) }))
+  this.startingBench = true
+  val prompt = ChatMessage.Submit(text, this.contexts.toList(), this.images.map { it.image },
+    this.workspace.includeFile)
+  this.workspace.service.createBench(BenchRequest(prompt, this.projectPath, this.id, this.runs.map { this.specOf(it) }))
   this.setBusy(true)
   return true
 }
 
-/** Sends the waiting prompt to each run's thread. */
-fun Workspace.onBenchCreated(request: Int, threadIds: List<String>) {
-  val prompt = this.pendingBenches.remove(request) ?: return
-  if (this.threads.containsKey(prompt.source.id)) {
-    prompt.source.setBusy(false)
+/** Gives a bench's prompt back to the thread it was typed in. An empty error means the person cancelled. */
+fun ThreadState.onBenchFailed(prompt: ChatMessage.Submit, error: String) {
+  this.startingBench = false
+  this.setBusy(false)
+  this.contexts.clear()
+  this.contexts.addAll(prompt.context)
+  this.images.clear()
+  this.images.addAll(prompt.images.map { PendingImage(it) })
+  if (this.typed.isEmpty()) {
+    this.input.setTextAndPlaceCursorAtEnd(prompt.text)
   }
-  for (id in threadIds) {
-    this.threads[id]?.startPrompt(prompt.text, prompt.contexts, prompt.images.map { it.image }, prompt.includeFile)
-  }
-}
-
-/** Gives the prompt back to the thread it was typed in. An empty text means the person cancelled. */
-fun Workspace.onBenchFailed(request: Int, text: String) {
-  val prompt = this.pendingBenches.remove(request) ?: return
-  val source = prompt.source
-  if (!this.threads.containsKey(source.id)) {
-    return
-  }
-  source.setBusy(false)
-  source.contexts.clear()
-  source.contexts.addAll(prompt.contexts)
-  source.images.clear()
-  source.images.addAll(prompt.images)
-  if (source.typed.isEmpty()) {
-    source.input.setTextAndPlaceCursorAtEnd(prompt.text)
-  }
-  if (text.isNotEmpty()) {
-    source.showAlert(text)
+  if (error.isNotEmpty()) {
+    this.showAlert(error)
   }
 }
 

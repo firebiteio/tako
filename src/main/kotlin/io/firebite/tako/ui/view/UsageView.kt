@@ -31,8 +31,7 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import io.firebite.tako.ui.bridge.PageMessage
-import io.firebite.tako.ui.bridge.PageOp
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.shortDay
 import io.firebite.tako.ui.state.Workspace
@@ -124,22 +123,22 @@ fun UsageView(workspace: Workspace, modifier: Modifier) {
 }
 
 /** Opens a session from the table: its thread, restored if archived, or a new thread resuming it. */
-private fun openSession(workspace: Workspace, item: PageMessage.SessionCost) {
+private fun openSession(workspace: Workspace, item: ChatMessage.SessionCost) {
   workspace.usageOpen = false
   val thread = item.thread
   when {
-    thread == null -> workspace.send(PageOp.Resume(item.sessionId, item.title, item.projectPath, null))
-    item.archived -> workspace.send(PageOp.Archive(thread, false))
+    thread == null -> workspace.service.resume(item.sessionId, item.title, item.projectPath, null)
+    item.archived -> workspace.service.setArchived(thread, false)
     else -> {
       workspace.activate(workspace.threads[thread])
-      workspace.send(PageOp.Select(thread))
+      workspace.service.select(thread)
     }
   }
 }
 
 /** Tiles in a grid of columns at least [TILE_WIDTH] wide; a row's tiles share its height. */
 @Composable
-private fun Tiles(usage: PageMessage.Usage) {
+private fun Tiles(usage: ChatMessage.Usage) {
   val tiles = listOf(
     Triple(t("usage.tile.cost"), money(usage.totalCost), t("usage.tile.cost.detail")),
     Triple(t("usage.tokens"), tokens(usage.totalTokens), t("usage.tile.tokens.detail")),
@@ -202,7 +201,7 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun DailyChart(days: List<PageMessage.DayCost>, span: Int) {
+private fun DailyChart(days: List<ChatMessage.DayCost>, span: Int) {
   val byDay = days.associate { it.day to it.cost }
   val today = LocalDate.now()
   val series = (span - 1 downTo 0).map { offset ->

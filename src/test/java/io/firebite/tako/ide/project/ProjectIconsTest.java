@@ -1,13 +1,14 @@
 package io.firebite.tako.ide.project;
 
+import static org.junit.Assert.assertArrayEquals;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
 import org.junit.Test;
 
 public class ProjectIconsTest {
@@ -24,10 +25,10 @@ public class ProjectIconsTest {
 
     ProjectIcons.Icons icons = ProjectIcons.find(folder);
 
-    assertEquals(
-      "data:image/svg+xml;base64," + Base64.getEncoder().encodeToString(SVG.getBytes(StandardCharsets.UTF_8)),
-      icons.light());
-    assertTrue(icons.dark().startsWith("data:image/svg+xml;base64,"));
+    assertEquals(folder.resolve(".idea/icon.svg"), icons.light().file());
+    assertArrayEquals(SVG.getBytes(StandardCharsets.UTF_8), icons.light().bytes());
+    assertTrue(icons.light().isSvg());
+    assertEquals(folder.resolve(".idea/icon_dark.svg"), icons.dark().file());
   }
 
   @Test
@@ -38,7 +39,9 @@ public class ProjectIconsTest {
 
     ProjectIcons.Icons icons = ProjectIcons.find(folder);
 
-    assertTrue(icons.light().startsWith("data:image/x-icon;base64,"));
+    assertEquals(folder.resolve("public/favicon.ico"), icons.light().file());
+    assertArrayEquals(new byte[]{0, 0, 1, 0}, icons.light().bytes());
+    assertFalse(icons.light().isSvg());
     assertNull(icons.dark());
   }
 

@@ -11,7 +11,7 @@ public record ImageAttachment(
 ) {
   private static final String IMAGE_MEDIA_PREFIX = "image/";
 
-  /** False when the page sent something the API does not take as an image. */
+  /** False when the chat sent something the API does not take as an image. */
   public boolean isValid() {
     return this.mediaType != null && this.data != null && this.mediaType.startsWith(IMAGE_MEDIA_PREFIX);
   }

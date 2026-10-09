@@ -49,8 +49,7 @@ import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.ide.CopyPasteManager
-import com.intellij.openapi.project.Project
-import io.firebite.tako.ui.bridge.PageOp
+import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.t
 import java.awt.datatransfer.StringSelection
@@ -65,9 +64,9 @@ val LANE: Dp
   @Composable @ReadOnlyComposable get() = (46 * textStyle.fontSize.value).dp
 
 @Composable
-fun ChatScreen(workspace: Workspace, project: Project) {
+fun ChatScreen(workspace: Workspace) {
   ProvideTakoColors {
-    ProvideChatMarkdown(project) {
+    ProvideChatMarkdown(workspace.project) {
       val actions = remember(workspace) { WorkspaceCodeActions(workspace) }
       val markdown = rememberChatMarkdown(actions)
       LaunchedEffect(workspace) {
@@ -173,11 +172,11 @@ private class WorkspaceCodeActions(private val workspace: Workspace) : CodeActio
   }
 
   override fun insert(text: String) {
-    this.workspace.active?.send(PageOp.Insert(text))
+    IdeFiles.insertAtCaret(this.workspace.project, text)
   }
 
   override fun open(path: String, line: Int) {
-    this.workspace.active?.send(PageOp.Open(path, line))
+    IdeFiles.open(this.workspace.project, path, line)
   }
 
   override fun openUrl(url: String) {

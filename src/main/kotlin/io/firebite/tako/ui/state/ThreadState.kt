@@ -11,15 +11,16 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ContextUsage
+import com.intellij.openapi.diagnostic.logger
+import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.ide.context.ContextItem
-import io.firebite.tako.ide.project.FileIndex
 import io.firebite.tako.ide.project.GitInfo
-import io.firebite.tako.ui.bridge.PageMessage
-import io.firebite.tako.ui.bridge.PageOp
-import io.firebite.tako.ui.bridge.PageRequest
+import io.firebite.tako.ui.bridge.ChatMessage
 
 /** A thread as the chat shows it: the IDE's record of it, its conversation and its composer. */
-class ThreadState(val workspace: Workspace, item: PageMessage.ThreadItem) {
+private val LOG = logger<ThreadState>()
+
+class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val id: String = item.id
   var title by mutableStateOf(item.title)
   var archived by mutableStateOf(item.archived)
@@ -39,7 +40,7 @@ class ThreadState(val workspace: Workspace, item: PageMessage.ThreadItem) {
   var projectRoot by mutableStateOf<String?>(null)
 
   val turns = mutableStateListOf<Turn>()
-  /** The page's number for the last prompt sent. */
+  /** The chat's number for the last prompt sent. */
   var turnNo = 0
   var turn: Turn? = null
   val entries = HashMap<String, Entry>()
@@ -70,6 +71,8 @@ class ThreadState(val workspace: Workspace, item: PageMessage.ThreadItem) {
   var effort by mutableStateOf<String?>(null)
   /** The runs the next prompt starts, each in its own worktree; fewer than two sends to this thread. */
   val runs = mutableStateListOf<RunPlan>()
+  /** Whether a bench started from this thread waits for its worktrees. */
+  var startingBench = false
   /** What the agent offers, once it started. */
   var info by mutableStateOf<AgentInfo?>(null)
   var commands by mutableStateOf<List<AgentInfo.Command>>(emptyList())
@@ -83,10 +86,8 @@ class ThreadState(val workspace: Workspace, item: PageMessage.ThreadItem) {
   var stick by mutableStateOf(true)
   /** Bumped to scroll the timeline to its end, e.g. after sending. */
   var scrollToEnd by mutableIntStateOf(0)
-  /** The IDE's files for the latest `@` mention, by request. */
-  var mentionReply by mutableStateOf<Pair<Int, List<FileIndex.Match>>?>(null)
 
-  fun update(item: PageMessage.ThreadItem) {
+  fun update(item: ChatMessage.ThreadItem) {
     this.title = item.title.ifEmpty { this.title }
     this.archived = item.archived
     if (item.updatedAt > 0) {
@@ -109,9 +110,9 @@ class ThreadState(val workspace: Workspace, item: PageMessage.ThreadItem) {
     }
   }
 
-  fun send(op: PageOp.ThreadOp) {
-    this.workspace.handler(PageRequest(this.id, op))
-  }
+  /** The thread's controller in the IDE, while the thread is open there. */
+  val controller: ChatController?
+    get() = this.workspace.service.controller(this.id) ?: null.also { LOG.warn("No controller for thread " + this.id) }
 
   val isActive: Boolean
     get() = this.workspace.active === this

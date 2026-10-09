@@ -51,7 +51,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
-import io.firebite.tako.ui.bridge.PageOp
+import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.clock
 import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.state.AssistantText
@@ -369,7 +369,7 @@ private fun ChangesCard(thread: ThreadState, turn: Turn) {
       if (!turn.replayed) {
         val (interaction, hovered) = rememberHover()
         val color = if (hovered) colors.fg else colors.muted
-        Row(Modifier.height(26.dp).hoverClick(interaction = interaction) { thread.send(PageOp.TurnDiff(turn.no, null)) }
+        Row(Modifier.height(26.dp).hoverClick(interaction = interaction) { thread.controller?.showTurnDiff(turn.no, null) }
           .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp)) {
           Ico(Icons.diff, size = 14.dp, tint = color)
@@ -382,9 +382,9 @@ private fun ChangesCard(thread: ThreadState, turn: Turn) {
         Tip(if (turn.replayed) t("timeline.open.file") else t("timeline.show.diff")) {
           Row(Modifier.fillMaxWidth().hoverClick {
             if (turn.replayed) {
-              thread.send(PageOp.Open(change.path, 1))
+              IdeFiles.open(thread.workspace.project, change.path, 1)
             } else {
-              thread.send(PageOp.TurnDiff(turn.no, change.path))
+              thread.controller?.showTurnDiff(turn.no, change.path)
             }
           }.padding(horizontal = 6.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {

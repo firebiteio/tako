@@ -5,11 +5,11 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.intellij.openapi.ui.MessageDialogBuilder
-import io.firebite.tako.ui.bridge.PageMessage
-import io.firebite.tako.ui.bridge.PageOp
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.money
@@ -18,6 +18,8 @@ import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.state.runName
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /** A bench's runs side by side: what each changed, cost and took. One run's changes can be applied. */
 @Composable
@@ -27,7 +29,10 @@ fun BenchView(workspace: Workspace, modifier: Modifier) {
     IconBtn(Icons.refresh, t("bench.refresh"), iconSize = 14.dp) { workspace.openBench(bench.id) }
   }) {
     ViewNote(t("bench.note", bench.baseCommit))
-    val runs = workspace.benchRuns
+    val runs = produceState<List<ChatMessage.RunChanges>?>(null, bench.id, workspace.benchLoads) {
+      this.value = null
+      this.value = withContext(Dispatchers.IO) { workspace.service.compareBench(bench.id) }
+    }.value
     if (runs == null) {
       ViewNote(t("bench.reading"))
       return@OverlayView
@@ -41,7 +46,7 @@ fun BenchView(workspace: Workspace, modifier: Modifier) {
 }
 
 /** @param index the run's number, from 1 */
-private fun runRow(workspace: Workspace, bench: PageMessage.BenchItem, run: PageMessage.RunChanges,
+private fun runRow(workspace: Workspace, bench: ChatMessage.BenchItem, run: ChatMessage.RunChanges,
   index: Int): TableRow {
   val thread = workspace.threads[bench.threads.getOrNull(index - 1)]
   val name = thread?.runName(index) ?: "#$index"
@@ -54,10 +59,10 @@ private fun runRow(workspace: Workspace, bench: PageMessage.BenchItem, run: Page
   val actions: (@Composable () -> Unit)? = if (run.files > 0) {
     {
       Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-        OutlineButton(t("bench.diff")) { workspace.send(PageOp.ShowRunDiff(bench.id, index)) }
+        OutlineButton(t("bench.diff")) { workspace.service.showRunDiff(bench.id, index) }
         PrimaryButton(t("bench.pick")) {
           if (MessageDialogBuilder.yesNo(t("bench.pick"), t("bench.pick.confirm", index)).guessWindowAndAsk()) {
-            workspace.send(PageOp.PickWinner(bench.id, index))
+            workspace.service.pickWinner(bench.id, index)
             workspace.shownBench = null
           }
         }

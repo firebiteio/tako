@@ -3,14 +3,13 @@ package io.firebite.tako.ide.project;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.Base64;
 import java.util.List;
 import java.util.Locale;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * A project folder's icon as a data URL. It takes the IDE's own {@code .idea/icon.svg}, {@code .idea/icon_dark.svg}
- * or {@code .idea/icon.png}, else a favicon in one of the usual places.
+ * A project folder's icon. It takes the IDE's own {@code .idea/icon.svg}, {@code .idea/icon_dark.svg} or
+ * {@code .idea/icon.png}, else a favicon in one of the usual places.
  */
 public final class ProjectIcons {
   static final long MAX_BYTES = 256 * 1024;
@@ -24,9 +23,10 @@ public final class ProjectIcons {
   private ProjectIcons() {
   }
 
+  /** Reads the icon files, so call off the EDT. */
   public static Icons find(Path folder) {
-    String light = first(folder, IDE_ICONS);
-    String dark = first(folder, IDE_DARK_ICONS);
+    Icon light = first(folder, IDE_ICONS);
+    Icon dark = first(folder, IDE_DARK_ICONS);
     if (light == null) {
       for (String directory : FAVICON_FOLDERS) {
         light = first(directory.isEmpty() ? folder : folder.resolve(directory), FAVICON_NAMES);
@@ -38,45 +38,45 @@ public final class ProjectIcons {
     return new Icons(light, dark);
   }
 
-  private static @Nullable String first(Path folder, List<String> names) {
+  private static @Nullable Icon first(Path folder, List<String> names) {
     for (String name : names) {
-      String url = dataUrl(folder.resolve(name));
-      if (url != null) {
-        return url;
+      Icon icon = read(folder.resolve(name));
+      if (icon != null) {
+        return icon;
       }
     }
     return null;
   }
 
-  static @Nullable String dataUrl(Path file) {
-    String mediaType = mediaType(file.getFileName().toString());
+  static @Nullable Icon read(Path file) {
     try {
-      if (mediaType == null || !Files.isRegularFile(file) || Files.size(file) > MAX_BYTES) {
+      if (!isImage(file) || !Files.isRegularFile(file) || Files.size(file) > MAX_BYTES) {
         return null;
       }
-      return "data:" + mediaType + ";base64," + Base64.getEncoder().encodeToString(Files.readAllBytes(file));
+      return new Icon(file, Files.readAllBytes(file));
     } catch (IOException e) {
       return null;
     }
   }
 
-  private static @Nullable String mediaType(String name) {
-    String lower = name.toLowerCase(Locale.ROOT);
-    if (lower.endsWith(".svg")) {
-      return "image/svg+xml";
-    }
-    if (lower.endsWith(".png")) {
-      return "image/png";
-    }
-    if (lower.endsWith(".ico")) {
-      return "image/x-icon";
-    }
-    return null;
+  private static boolean isImage(Path file) {
+    String lower = file.getFileName().toString().toLowerCase(Locale.ROOT);
+    return lower.endsWith(".svg") || lower.endsWith(".png") || lower.endsWith(".ico");
   }
 
   public record Icons(
-    @Nullable String light,
-    @Nullable String dark
+    @Nullable Icon light,
+    @Nullable Icon dark
   ) {
+  }
+
+  /** @param bytes the file's content */
+  public record Icon(
+    Path file,
+    byte[] bytes
+  ) {
+    public boolean isSvg() {
+      return this.file.getFileName().toString().toLowerCase(Locale.ROOT).endsWith(".svg");
+    }
   }
 }

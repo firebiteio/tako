@@ -132,7 +132,7 @@ class Fold(val label: String, val items: Set<TurnItem>) {
 }
 
 class Turn(
-  /** The page's number for the prompt that started the turn; the IDE keeps the turn's changes under it. */
+  /** The chat's number for the prompt that started the turn; the IDE keeps the turn's changes under it. */
   val no: Int,
   val prompt: Prompt?,
   val replayed: Boolean,

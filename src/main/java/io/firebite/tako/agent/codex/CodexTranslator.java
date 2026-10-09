@@ -121,7 +121,7 @@ final class CodexTranslator {
     return AgentEvent.todoList(id, "update_plan", todos);
   }
 
-  /** Tokens of the turn's last request. The page shows how full the context is, not a prompt cache. */
+  /** Tokens of the turn's last request. The chat shows how full the context is, not a prompt cache. */
   static AgentEvent.Usage usage(JsonObject update) {
     JsonObject usage = Json.object(update, "tokenUsage");
     JsonObject last = Json.object(usage, "last");

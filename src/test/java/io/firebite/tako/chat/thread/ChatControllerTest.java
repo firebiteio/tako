@@ -11,8 +11,7 @@ import io.firebite.tako.agent.claude.FakeClaude;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.settings.AuthMode;
 import io.firebite.tako.settings.ChatSettings;
-import io.firebite.tako.ui.bridge.PageMessage;
-import io.firebite.tako.ui.bridge.PageOp;
+import io.firebite.tako.ui.bridge.ChatMessage;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,7 +24,7 @@ import java.util.concurrent.TimeUnit;
 public class ChatControllerTest extends BasePlatformTestCase {
   private static final long TIMEOUT_MILLIS = 20000;
 
-  private final BlockingQueue<PageMessage.ThreadMessage> posted = new LinkedBlockingQueue<>();
+  private final BlockingQueue<ChatMessage.ThreadMessage> posted = new LinkedBlockingQueue<>();
   private final ThreadStore.Record record = new ThreadStore.Record();
   private ChatSettings.Data savedSettings;
   private ChatController controller;
@@ -99,37 +98,37 @@ public class ChatControllerTest extends BasePlatformTestCase {
     return script;
   }
 
-  private <T extends PageMessage.ThreadMessage> T awaitPost(Class<T> type) throws InterruptedException {
+  private <T extends ChatMessage.ThreadMessage> T awaitPost(Class<T> type) throws InterruptedException {
     long deadline = System.currentTimeMillis() + TIMEOUT_MILLIS;
     while (System.currentTimeMillis() < deadline) {
       PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
-      PageMessage.ThreadMessage message = this.posted.poll(50, TimeUnit.MILLISECONDS);
+      ChatMessage.ThreadMessage message = this.posted.poll(50, TimeUnit.MILLISECONDS);
       if (type.isInstance(message)) {
         return type.cast(message);
       }
-      if (message instanceof PageMessage.Error error) {
+      if (message instanceof ChatMessage.Error error) {
         throw new AssertionError("Chat error: " + error.text());
       }
     }
     throw new AssertionError("Nothing of type " + type.getSimpleName() + " was posted");
   }
 
-  public void testPromptPermissionAndResultFlowThroughThePage() throws Exception {
+  public void testPromptPermissionAndResultFlowThroughTheView() throws Exception {
     this.controller.open();
-    PageMessage.Init init = this.awaitPost(PageMessage.Init.class);
+    ChatMessage.Init init = this.awaitPost(ChatMessage.Init.class);
     assertEquals("Using the Claude CLI login", init.info().authDescription());
 
-    this.controller.handle(new PageOp.SetEffort("high"));
+    this.controller.setEffort("high");
 
-    this.controller.handle(new PageOp.Send("write a.txt", List.of(), List.of(), false, 1));
-    PageMessage.Permission permission = this.awaitPost(PageMessage.Permission.class);
+    this.controller.send("write a.txt", List.of(), List.of(), false, 1);
+    ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals("Write", permission.prompt().toolName());
     assertEquals(ToolKind.EDIT, permission.prompt().category());
     assertEquals("write a.txt", this.title);
 
-    this.controller.handle(new PageOp.Permission(permission.requestId(), false, "no", false, null, null));
+    this.controller.answer(permission.requestId(), false, "no", false, null, null);
     while (true) {
-      PageMessage.Event message = this.awaitPost(PageMessage.Event.class);
+      ChatMessage.Event message = this.awaitPost(ChatMessage.Event.class);
       if (message.event() instanceof AgentEvent.Text text) {
         assertEquals("denied", text.text());
       }
@@ -143,18 +142,18 @@ public class ChatControllerTest extends BasePlatformTestCase {
   public void testFirstPromptIsSubmittedOnceTheAgentIsReadyAndStateFollowsTheTurn() throws Exception {
     this.record.projectPath = Files.createTempDirectory("tako-work").toString();
     this.controller.open("write a.txt");
-    this.awaitPost(PageMessage.Init.class);
-    PageMessage.Submit submit = this.awaitPost(PageMessage.Submit.class);
+    this.awaitPost(ChatMessage.Init.class);
+    ChatMessage.Submit submit = this.awaitPost(ChatMessage.Submit.class);
     assertEquals("write a.txt", submit.text());
     assertEquals(ChatController.State.IDLE, this.controller.state());
 
-    this.controller.handle(new PageOp.Send(submit.text(), List.of(), List.of(), false, 1));
-    PageMessage.Permission permission = this.awaitPost(PageMessage.Permission.class);
+    this.controller.send(submit.text(), List.of(), List.of(), false, 1);
+    ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals(ChatController.State.WAITING, this.controller.state());
     assertNull("a given title stays", this.title);
 
-    this.controller.handle(new PageOp.Permission(permission.requestId(), false, "no", false, null, null));
-    while (!(this.awaitPost(PageMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+    this.controller.answer(permission.requestId(), false, "no", false, null, null);
+    while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
     }
     assertEquals(ChatController.State.IDLE, this.controller.state());
     assertEquals("denied", this.controller.lastAnswer());

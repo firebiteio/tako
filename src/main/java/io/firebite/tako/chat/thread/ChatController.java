@@ -1,6 +1,5 @@
 package io.firebite.tako.chat.thread;
 
-import com.intellij.ide.actions.RevealFileAction;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
@@ -33,8 +32,7 @@ import io.firebite.tako.ide.context.PromptComposer;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.FileIndex;
 import io.firebite.tako.ide.project.GitInfo;
-import io.firebite.tako.ui.bridge.PageMessage;
-import io.firebite.tako.ui.bridge.PageOp;
+import io.firebite.tako.ui.bridge.ChatMessage;
 import java.awt.Image;
 import java.awt.datatransfer.DataFlavor;
 import java.io.IOException;
@@ -48,7 +46,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jetbrains.annotations.Nullable;
 
-/** One chat thread. It owns its agent session and answers what the page asks for it. */
+/** One chat thread. It owns its agent session and does what the chat asks of it. */
 public final class ChatController implements Disposable {
   private static final Logger LOG = Logger.getInstance(ChatController.class);
   private static final int TITLE_LENGTH = 40;
@@ -105,7 +103,7 @@ public final class ChatController implements Disposable {
         String projectPath = this.projectPath();
         if (resume != null && projectPath != null) {
           switch (this.backend.history(projectPath, resume)) {
-            case AgentHistory.Loaded loaded -> this.view.post(new PageMessage.Replay(loaded.events()));
+            case AgentHistory.Loaded loaded -> this.view.post(new ChatMessage.Replay(loaded.events()));
             case AgentHistory.Missing missing -> {
               resume = null;
               this.record.sessionId = null;
@@ -129,55 +127,44 @@ public final class ChatController implements Disposable {
     });
   }
 
-  public void handle(PageOp.ThreadOp op) {
-    switch (op) {
-      case PageOp.Send send -> this.onSend(send);
-      case PageOp.Interrupt interrupt -> this.connection.ifLive(AgentSession::interrupt);
-      case PageOp.Permission permission -> {
-        this.state = State.WORKING;
-        this.connection.ifLive(session -> session.answer(permission.requestId(),
-          new PermissionAnswer(permission.allow(), permission.message(), permission.interrupt(),
-            permission.answers() != null ? permission.answers() : Map.of(), permission.suggestion())));
-      }
-      case PageOp.Diff diff -> Async.inBackground(() -> this.showProposedEdit(diff.requestId()));
-      case PageOp.TurnDiff turnDiff -> Async.inBackground(() -> this.showTurnDiff(turnDiff.turn(), turnDiff.path()));
-      case PageOp.Open open -> Async.onEdt(() -> IdeFiles.open(this.project, open.path(), open.line()));
-      case PageOp.Insert insert -> Async.onEdt(() -> IdeFiles.insertAtCaret(this.project, insert.text()));
-      case PageOp.SetModel setModel -> {
-        this.record.model = setModel.model();
-        this.recordChanged();
-        this.connection.ifLive(session -> session.setModel(setModel.model()));
-      }
-      case PageOp.SetMode setMode -> {
-        this.record.mode = setMode.mode();
-        this.recordChanged();
-        this.connection.ifLive(session -> session.setMode(setMode.mode()));
-      }
-      case PageOp.SetEffort setEffort -> {
-        this.record.effort = setEffort.effort();
-        this.recordChanged();
-        this.connection.ifLive(session -> session.setEffort(setEffort.effort()));
-      }
-      case PageOp.PasteImage pasteImage -> Async.onEdt(this::pasteImage);
-      case PageOp.PickImage pickImage -> Async.onEdt(this::pickImages);
-      case PageOp.AttachFiles attachFiles -> {
-        List<Path> files = new ArrayList<>();
-        for (String path : attachFiles.paths()) {
-          files.add(Path.of(path));
-        }
-        Async.inBackground(() -> this.attachFiles(files));
-      }
-      case PageOp.ContextUsage contextUsage -> this.refreshContext();
-      case PageOp.Files files -> Async.inBackground(() -> this.findFiles(files));
-      case PageOp.Restart restart -> Async.inBackground(() -> this.launch(this.record.sessionId));
-      case PageOp.Scratchpad scratchpad -> Async.inBackground(this::listScratchpad);
-      case PageOp.RevealScratchpad revealScratchpad -> {
-        String directory = this.scratchpadPath;
-        if (directory != null) {
-          RevealFileAction.openDirectory(Path.of(directory));
-        }
-      }
-    }
+  public void interrupt() {
+    this.connection.ifLive(AgentSession::interrupt);
+  }
+
+  /**
+   * Answers a {@link ChatMessage.Permission}.
+   *
+   * @param answers    question → answer
+   * @param suggestion the index of the suggestion approved with
+   */
+  public void answer(String requestId, boolean allow, @Nullable String message, boolean interrupt,
+    @Nullable Map<String, String> answers, @Nullable Integer suggestion) {
+    this.state = State.WORKING;
+    this.connection.ifLive(session -> session.answer(requestId,
+      new PermissionAnswer(allow, message, interrupt, answers != null ? answers : Map.of(), suggestion)));
+  }
+
+  public void setModel(String model) {
+    this.record.model = model;
+    this.recordChanged();
+    this.connection.ifLive(session -> session.setModel(model));
+  }
+
+  public void setMode(String mode) {
+    this.record.mode = mode;
+    this.recordChanged();
+    this.connection.ifLive(session -> session.setMode(mode));
+  }
+
+  public void setEffort(String effort) {
+    this.record.effort = effort;
+    this.recordChanged();
+    this.connection.ifLive(session -> session.setEffort(effort));
+  }
+
+  /** Starts the agent again, e.g. after its process ended. */
+  public void restart() {
+    Async.inBackground(() -> this.launch(this.record.sessionId));
   }
 
   /**
@@ -237,18 +224,22 @@ public final class ChatController implements Disposable {
   }
 
   public void addContext(ContextItem item, @Nullable String prefill) {
-    this.view.post(new PageMessage.Context(item, prefill));
+    this.view.post(new ChatMessage.Context(item, prefill));
   }
 
-  /** Reads image files and attaches them to the composer. Call off the EDT. */
+  /** Reads image files in the background and attaches them to the composer. */
   public void attachFiles(List<Path> files) {
+    Async.inBackground(() -> this.readImages(files));
+  }
+
+  private void readImages(List<Path> files) {
     for (Path file : files) {
       try {
         ImageAttachment image = Images.fromFile(file);
         if (image == null) {
           this.postError(TakoBundle.message("error.image.unsupported", file.getFileName()));
         } else {
-          this.view.post(new PageMessage.Image(image));
+          this.view.post(new ChatMessage.Image(image));
         }
       } catch (IOException e) {
         this.postError(TakoBundle.message("error.image.read", file.getFileName(), e.getMessage()));
@@ -285,29 +276,34 @@ public final class ChatController implements Disposable {
         return;
       }
       this.state = State.IDLE;
-      this.view.post(new PageMessage.Init(info, this.projectPath()));
+      this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
       String prompt = this.firstPrompt.getAndSet(null);
       if (prompt != null) {
-        this.view.post(new PageMessage.Submit(prompt));
+        this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of(), false));
       }
     });
   }
 
-  private void onSend(PageOp.Send send) {
-    this.changes.startTurn(send.turn());
+  /**
+   * Sends a prompt, starting the agent if it is not running.
+   *
+   * @param turn the chat's number for this prompt's turn, which {@link #showTurnDiff} names later
+   */
+  public void send(String text, List<ContextItem> context, List<ImageAttachment> attached, boolean includeActiveFile,
+    int turn) {
+    this.changes.startTurn(turn);
     List<ImageAttachment> images = new ArrayList<>();
-    for (ImageAttachment image : send.images()) {
+    for (ImageAttachment image : attached) {
       if (image.isValid()) {
         images.add(image);
       }
     }
-    String text = send.text();
     Async.onEdt(() -> {
-      String activeFile = send.includeActiveFile() ? IdeContext.activeFile(this.project) : null;
+      String activeFile = includeActiveFile ? IdeContext.activeFile(this.project) : null;
       String composed = text.isBlank() && !images.isEmpty()
         ? ""
-        : PromptComposer.compose(text, send.context(), activeFile);
+        : PromptComposer.compose(text, context, activeFile);
       String folder = this.projectFolder();
       String prompt = this.record.workPath != null && folder != null
         ? PromptComposer.rebase(composed, folder, this.record.workPath)
@@ -346,30 +342,40 @@ public final class ChatController implements Disposable {
     return line.length() <= TITLE_LENGTH ? line : line.substring(0, TITLE_LENGTH - 1) + "…";
   }
 
-  /** Reads the file, so call off the EDT. */
-  private void showProposedEdit(String requestId) {
-    AgentSession session = this.connection.live();
-    EditPreview preview = session == null ? null : session.proposedEdit(requestId);
-    if (preview == null) {
-      this.postError(TakoBundle.message("error.no.diff"));
-      return;
-    }
-    String title = TakoBundle.message("diff.title", this.backend.displayName(),
-      Path.of(preview.filePath()).getFileName());
-    Async.onEdt(() -> IdeFiles.showDiff(this.project, preview, title));
+  /** Shows what the tool call a permission prompt is about would change. */
+  public void showProposedEdit(String requestId) {
+    Async.inBackground(() -> {
+      AgentSession session = this.connection.live();
+      EditPreview preview = session == null ? null : session.proposedEdit(requestId);
+      if (preview == null) {
+        this.postError(TakoBundle.message("error.no.diff"));
+        return;
+      }
+      String title = TakoBundle.message("diff.title", this.backend.displayName(),
+        Path.of(preview.filePath()).getFileName());
+      Async.onEdt(() -> IdeFiles.showDiff(this.project, preview, title));
+    });
   }
 
-  /** Reads the files, so call off the EDT. */
-  private void showTurnDiff(int turn, @Nullable String path) {
-    List<EditPreview> previews = this.changes.previews(turn, path);
-    if (previews.isEmpty()) {
-      this.postError(TakoBundle.message("error.no.turn.changes"));
-      return;
-    }
-    Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews));
+  /**
+   * Shows what the turn changed.
+   *
+   * @param turn the chat's number for the turn's prompt
+   * @param path one file of the turn, or all of them when null
+   */
+  public void showTurnDiff(int turn, @Nullable String path) {
+    Async.inBackground(() -> {
+      List<EditPreview> previews = this.changes.previews(turn, path);
+      if (previews.isEmpty()) {
+        this.postError(TakoBundle.message("error.no.turn.changes"));
+        return;
+      }
+      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews));
+    });
   }
 
-  private void pasteImage() {
+  /** Attaches the clipboard's image, if it holds one. Must run on the EDT. */
+  public void pasteImage() {
     Image image;
     try {
       image = CopyPasteManager.getInstance().getContents(DataFlavor.imageFlavor);
@@ -382,14 +388,19 @@ public final class ChatController implements Disposable {
     Image clipboardImage = image;
     Async.inBackground(() -> {
       try {
-        this.view.post(new PageMessage.Image(Images.fromImage(clipboardImage, PASTED_IMAGE_NAME)));
+        this.view.post(new ChatMessage.Image(Images.fromImage(clipboardImage, PASTED_IMAGE_NAME)));
       } catch (IOException e) {
         this.postError(TakoBundle.message("error.clipboard.image", e.getMessage()));
       }
     });
   }
 
-  private void pickImages() {
+  /** Asks for image files to attach. The chooser opens once the current event is handled. */
+  public void pickImages() {
+    Async.onEdt(this::chooseImages);
+  }
+
+  private void chooseImages() {
     FileChooserDescriptor descriptor = FileChooserDescriptorFactory.multiFiles()
       .withTitle(TakoBundle.message("dialog.attach.images.title"))
       .withFileFilter(file -> Images.isImageFile(file.getName()));
@@ -397,27 +408,30 @@ public final class ChatController implements Disposable {
     for (VirtualFile file : FileChooser.chooseFiles(descriptor, this.project, null)) {
       paths.add(file.toNioPath());
     }
-    Async.inBackground(() -> this.attachFiles(paths));
+    this.attachFiles(paths);
   }
 
-  private void findFiles(PageOp.Files request) {
+  /** Project files matching an {@code @} mention. Lists the folder, so call off the EDT. */
+  public List<FileIndex.Match> findFiles(String query) {
     String directory = this.projectPath();
     if (directory == null) {
-      return;
+      return List.of();
     }
     List<String> entries = FileIndex.entries(Path.of(directory), EnvironmentUtil.getEnvironmentMap());
-    this.view.post(new PageMessage.Files(request.requestId(),
-      FileIndex.search(entries, request.query(), FILE_MATCHES)));
+    return FileIndex.search(entries, query, FILE_MATCHES);
   }
 
-  private void listScratchpad() {
+  /**
+   * The files in the agent's scratchpad, relative to it with {@code /} separators, newest first. Null without a
+   * scratchpad. Lists the folder, so call off the EDT.
+   */
+  public @Nullable List<String> scratchpadFiles() {
     String directory = this.scratchpadPath;
-    if (directory != null) {
-      this.view.post(new PageMessage.Scratchpad(directory, IdeFiles.newestFiles(Path.of(directory), SCRATCHPAD_FILES)));
-    }
+    return directory == null ? null : IdeFiles.newestFiles(Path.of(directory), SCRATCHPAD_FILES);
   }
 
-  private void refreshContext() {
+  /** Asks the agent how full its context is, which arrives as {@link ChatMessage.ContextUsage}. */
+  public void refreshContext() {
     this.connection.ifLive(session -> {
       CompletableFuture<ContextUsage> usage = session.contextUsage();
       if (usage == null) {
@@ -428,7 +442,7 @@ public final class ChatController implements Disposable {
           LOG.debug("No context usage", error);
           return;
         }
-        this.view.post(new PageMessage.ContextUsage(breakdown));
+        this.view.post(new ChatMessage.ContextUsage(breakdown));
       });
     });
   }
@@ -460,7 +474,7 @@ public final class ChatController implements Disposable {
       default -> {
       }
     }
-    this.view.post(new PageMessage.Event(event));
+    this.view.post(new ChatMessage.Event(event));
   }
 
   private void onTurnEnded(AgentEvent.TurnEnded ended) {
@@ -481,7 +495,7 @@ public final class ChatController implements Disposable {
 
   private void onPermission(String requestId, PermissionPrompt prompt) {
     this.state = State.WAITING;
-    this.view.post(new PageMessage.Permission(requestId, prompt));
+    this.view.post(new ChatMessage.Permission(requestId, prompt));
     String agent = this.backend.displayName();
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
       ? TakoBundle.message("notification.question", agent)
@@ -499,7 +513,7 @@ public final class ChatController implements Disposable {
   }
 
   private void postError(String text) {
-    this.view.post(new PageMessage.Error(text));
+    this.view.post(new ChatMessage.Error(text));
   }
 
   /** What the thread's agent is doing. */
@@ -521,7 +535,7 @@ public final class ChatController implements Disposable {
 
     @Override
     public void onHistory(List<AgentEvent> events) {
-      ChatController.this.view.post(new PageMessage.Replay(events));
+      ChatController.this.view.post(new ChatMessage.Replay(events));
     }
 
     @Override
@@ -537,7 +551,7 @@ public final class ChatController implements Disposable {
     @Override
     public void onExit(int exitCode, String stderrTail) {
       ChatController.this.stopped(exitCode == 0 ? null : stderrTail);
-      ChatController.this.view.post(new PageMessage.Exit(exitCode, stderrTail));
+      ChatController.this.view.post(new ChatMessage.Exit(exitCode, stderrTail));
     }
   }
 }

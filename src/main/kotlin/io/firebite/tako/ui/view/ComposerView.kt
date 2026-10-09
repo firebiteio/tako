@@ -94,7 +94,6 @@ import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.ide.context.Images
 import io.firebite.tako.ide.project.FileIndex
-import io.firebite.tako.ui.bridge.PageOp
 import io.firebite.tako.ui.countdown
 import io.firebite.tako.ui.state.CACHE_TTL_1H
 import io.firebite.tako.ui.state.CacheKind
@@ -116,8 +115,10 @@ import io.firebite.tako.ui.state.submitAndBranch
 import io.firebite.tako.ui.state.typed
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
+import kotlinx.coroutines.withContext
 import org.jetbrains.jewel.bridge.actionSystem.ComposePasteProvider
 import org.jetbrains.jewel.foundation.InternalJewelApi
 import org.jetbrains.jewel.foundation.actionSystem.provideData
@@ -168,7 +169,6 @@ private class Suggestions {
   var isMention by mutableStateOf(false)
   var index by mutableIntStateOf(0)
   var mention: Mention? = null
-  var request = 0
 
   val size: Int
     get() = if (this.isMention) this.files.size else this.commands.size
@@ -199,15 +199,15 @@ private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
     if (clipboard.areDataFlavorsAvailable(DataFlavor.javaFileListFlavor)) {
       @Suppress("UNCHECKED_CAST")
       val files = clipboard.getContents<List<File>>(DataFlavor.javaFileListFlavor) ?: emptyList()
-      val images = files.filter { Images.isImageFile(it.name) }.map { it.path }
+      val images = files.filter { Images.isImageFile(it.name) }.map { it.toPath() }
       if (images.isNotEmpty()) {
-        this.thread.send(PageOp.AttachFiles(images))
+        this.thread.controller?.attachFiles(images)
         return
       }
     }
     if (!clipboard.areDataFlavorsAvailable(DataFlavor.stringFlavor) &&
       clipboard.areDataFlavorsAvailable(DataFlavor.imageFlavor)) {
-      this.thread.send(PageOp.PasteImage())
+      this.thread.controller?.pasteImage()
       return
     }
     this.text.performPaste(dataContext)
@@ -257,25 +257,16 @@ private fun Composer(thread: ThreadState) {
       updateMention(thread, suggestions, text, selection)
     }
   }
-  LaunchedEffect(thread.mentionReply) {
-    val (request, files) = thread.mentionReply ?: return@LaunchedEffect
-    if (request != suggestions.request || suggestions.mention == null) {
-      return@LaunchedEffect
-    }
-    suggestions.isMention = true
-    suggestions.files = files
-    suggestions.index = suggestions.index.coerceAtMost(max(0, files.size - 1))
-  }
   val dropTarget = remember(thread) {
     object : DragAndDropTarget {
       override fun onDrop(event: DragAndDropEvent): Boolean {
         dragging = false
         val data = event.dragData() as? DragData.FilesList ?: return false
-        val paths = data.readFiles().map { Path.of(URI(it)).toString() }.filter { Images.isImageFile(it) }
+        val paths = data.readFiles().map { Path.of(URI(it)) }.filter { Images.isImageFile(it.toString()) }
         if (paths.isEmpty()) {
           return false
         }
-        thread.send(PageOp.AttachFiles(paths))
+        thread.controller?.attachFiles(paths)
         return true
       }
 
@@ -345,7 +336,7 @@ private fun Composer(thread: ThreadState) {
           ContextMeter(thread)
           val info = thread.info
           if (info == null || info.capabilities.images) {
-            IconBtn(Icons.attach, t("composer.attach")) { thread.send(PageOp.PickImage()) }
+            IconBtn(Icons.attach, t("composer.attach")) { thread.controller?.pickImages() }
           }
           SendButton(thread)
         }
@@ -402,9 +393,11 @@ private suspend fun updateMention(thread: ThreadState, suggestions: Suggestions,
   val query = raw.removePrefix("\"")
   suggestions.mention = Mention(before.length - raw.length - 1, selection.start, query)
   delay(MENTION_DEBOUNCE_MILLIS)
-  val workspace = thread.workspace
-  suggestions.request = ++workspace.mentionRequest
-  thread.send(PageOp.Files(query, suggestions.request))
+  val controller = thread.controller ?: return
+  val files = withContext(Dispatchers.IO) { controller.findFiles(query) }
+  suggestions.isMention = true
+  suggestions.files = files
+  suggestions.index = suggestions.index.coerceAtMost(max(0, files.size - 1))
 }
 
 private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, index: Int) {
@@ -460,7 +453,7 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, event: androidx
       return true
     }
     if (thread.busy) {
-      thread.send(PageOp.Interrupt())
+      thread.controller?.interrupt()
       return true
     }
   }
@@ -543,7 +536,7 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
       workspace.agents.map { agent ->
         MenuEntry(agent.name, checked = agent.id == thread.agent) {
           if (agent.id != thread.agent) {
-            workspace.send(PageOp.SetAgent(thread.id, agent.id))
+            workspace.service.setAgent(thread.id, agent.id)
           }
         }
       }
@@ -556,7 +549,7 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
       thread.models.map { option ->
         MenuEntry(option.displayName.ifEmpty { option.value }, option.description, checked = option.value == thread.model) {
           thread.model = option.value
-          thread.send(PageOp.SetModel(option.value))
+          thread.controller?.setModel(option.value)
         }
       }
     }, menuTitle = t("composer.model")))
@@ -567,7 +560,7 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
         model.efforts.map { level ->
           MenuEntry(effortLabel(level), effortDescription(level), checked = level == thread.effort) {
             thread.effort = level
-            thread.send(PageOp.SetEffort(level))
+            thread.controller?.setEffort(level)
           }
         }
       }, menuTitle = t("composer.effort")))
@@ -580,7 +573,7 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
         modes.map { option ->
           MenuEntry(option.label, option.description, Icons.mode(option.value), option.value == thread.mode) {
             thread.mode = option.value
-            thread.send(PageOp.SetMode(option.value))
+            thread.controller?.setMode(option.value)
           }
         }
       }, menuTitle = t("composer.permissions")))
@@ -788,7 +781,7 @@ fun toggleContextPanel(thread: ThreadState) {
   val workspace = thread.workspace
   workspace.contextPanelOpen = !workspace.contextPanelOpen
   if (workspace.contextPanelOpen) {
-    thread.send(PageOp.ContextUsage())
+    thread.controller?.refreshContext()
   }
 }
 

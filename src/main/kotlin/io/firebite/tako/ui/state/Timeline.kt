@@ -5,7 +5,6 @@ import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.ide.context.ContextItem
-import io.firebite.tako.ui.bridge.PageOp
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.t
 
@@ -361,7 +360,7 @@ fun ThreadState.onExit(code: Int, stderr: String) {
   if (code != 0 && stderr.isNotEmpty()) {
     this.failed = true
     this.showAlert(t("thread.exited", this.agentName, code, stderr.trim()), t("thread.restart")) {
-      this.send(PageOp.Restart())
+      this.controller?.restart()
     }
   }
 }
@@ -379,7 +378,7 @@ fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: L
   this.finished = false
   this.failed = false
   this.startTurn(Prompt(text, contexts, images), false)
-  this.send(PageOp.Send(text, contexts, images, includeActiveFile, this.turnNo))
+  this.controller?.send(text, contexts, images, includeActiveFile, this.turnNo)
   this.updatedAt = System.currentTimeMillis()
   this.setBusy(true)
   this.scrollToEnd++

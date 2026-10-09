@@ -38,7 +38,6 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
-import io.firebite.tako.ui.bridge.PageOp
 import io.firebite.tako.ui.countdown
 import io.firebite.tako.ui.state.CACHE_TTL_1H
 import io.firebite.tako.ui.state.CacheKind
@@ -104,7 +103,7 @@ fun ContextPanel(thread: ThreadState, maxHeight: Dp) {
       Row(Modifier.padding(bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(4.dp)) {
         Text(t("context.title"), Modifier.weight(1f), color = colors.fg, fontWeight = FontWeight.Bold)
-        IconBtn(Icons.refresh, t("context.refresh"), iconSize = 14.dp) { thread.send(PageOp.ContextUsage()) }
+        IconBtn(Icons.refresh, t("context.refresh"), iconSize = 14.dp) { thread.controller?.refreshContext() }
         IconBtn(Icons.closeSmall, t("common.close"), iconSize = 14.dp) { workspace.contextPanelOpen = false }
       }
       ContextBreakdown(thread)

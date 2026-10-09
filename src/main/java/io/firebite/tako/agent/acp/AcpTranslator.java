@@ -102,7 +102,7 @@ final class AcpTranslator {
     };
   }
 
-  /** The call's arguments with the fields the page reads filled in from its kind, locations and title. */
+  /** The call's arguments with the fields the chat reads filled in from its kind, locations and title. */
   static JsonObject input(JsonObject toolCall) {
     JsonObject raw = Json.object(toolCall, "rawInput");
     JsonObject input = raw != null ? raw.deepCopy() : new JsonObject();

@@ -32,7 +32,6 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import io.firebite.tako.agent.PermissionPrompt
-import io.firebite.tako.ui.bridge.PageOp
 import io.firebite.tako.ui.state.Approval
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.advanceQuestion
@@ -137,7 +136,7 @@ private fun ApprovalDrawer(thread: ThreadState, approval: Approval) {
     }
     Actions {
       if (prompt.canDiff) {
-        OutlineButton(t("approvals.diff"), icon = Icons.diff) { thread.send(PageOp.Diff(approval.requestId)) }
+        OutlineButton(t("approvals.diff"), icon = Icons.diff) { thread.controller?.showProposedEdit(approval.requestId) }
       }
       MoreButton(thread, approval)
       OutlineButton(t("approvals.decline")) { thread.deny(approval, "The user declined this tool call.") }

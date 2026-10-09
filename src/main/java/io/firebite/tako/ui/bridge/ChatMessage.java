@@ -5,21 +5,21 @@ import io.firebite.tako.agent.AgentInfo;
 import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.agent.PermissionPrompt;
 import io.firebite.tako.ide.context.ContextItem;
-import io.firebite.tako.ide.project.FileIndex;
 import io.firebite.tako.ide.project.GitInfo;
+import io.firebite.tako.ide.project.ProjectIcons;
 import java.util.List;
 import org.jetbrains.annotations.Nullable;
 
 /**
  * What the IDE tells the chat.
  */
-public sealed interface PageMessage {
+public sealed interface ChatMessage {
 
-  sealed interface WorkspaceMessage extends PageMessage {
+  sealed interface WorkspaceMessage extends ChatMessage {
   }
 
-  /** Posted for one thread, which the page learns from the added {@code thread} field. */
-  sealed interface ThreadMessage extends PageMessage {
+  /** Posted for one thread, along with its id. */
+  sealed interface ThreadMessage extends ChatMessage {
   }
 
   record Project(
@@ -39,8 +39,8 @@ public sealed interface PageMessage {
     String name,
     boolean collapsed,
     boolean primary,
-    @Nullable String icon,
-    @Nullable String iconDark
+    @Nullable ProjectIcons.Icon icon,
+    @Nullable ProjectIcons.Icon iconDark
   ) {
   }
 
@@ -93,7 +93,7 @@ public sealed interface PageMessage {
   ) {
   }
 
-  /** What the settings let the page offer. */
+  /** What the settings let the chat offer. */
   record Settings(
     boolean parallelRuns
   ) implements WorkspaceMessage {
@@ -118,35 +118,10 @@ public sealed interface PageMessage {
   }
 
   /**
-   * The runs of a {@link PageOp.CreateBench} have threads, which the page sends the prompt to.
+   * What a run changed against the commit the bench started from.
    *
-   * @param threads in run order
+   * @param error why the run's changes could not be read, such as a removed worktree
    */
-  record BenchCreated(
-    int request,
-    List<String> threads
-  ) implements WorkspaceMessage {
-  }
-
-  /** No runs started; the page gives the prompt back to the composer. */
-  record BenchFailed(
-    int request,
-    String text
-  ) implements WorkspaceMessage {
-  }
-
-  /**
-   * What each run changed against the commit the bench started from.
-   *
-   * @param runs in run order
-   */
-  record BenchComparison(
-    String bench,
-    List<RunChanges> runs
-  ) implements WorkspaceMessage {
-  }
-
-  /** @param error why the run's changes could not be read, such as a removed worktree */
   record RunChanges(
     int files,
     int added,
@@ -160,12 +135,7 @@ public sealed interface PageMessage {
   ) implements WorkspaceMessage {
   }
 
-  /** The agents' sessions that no thread holds yet, offered to resume. */
-  record Sessions(
-    List<SessionItem> items
-  ) implements WorkspaceMessage {
-  }
-
+  /** An agent's session that no thread holds yet, offered to resume. */
   record SessionItem(
     String id,
     String title,
@@ -190,7 +160,7 @@ public sealed interface PageMessage {
     List<DayCost> days,
     List<ProjectCost> projects,
     List<SessionCost> top
-  ) implements WorkspaceMessage {
+  ) {
   }
 
   record ModelCost(
@@ -275,19 +245,6 @@ public sealed interface PageMessage {
   ) implements ThreadMessage {
   }
 
-  record Files(
-    int requestId,
-    List<FileIndex.Match> items
-  ) implements ThreadMessage {
-  }
-
-  /** @param files paths relative to {@code path} with {@code /} separators, newest first */
-  record Scratchpad(
-    String path,
-    List<String> files
-  ) implements ThreadMessage {
-  }
-
   record ContextUsage(
     io.firebite.tako.agent.ContextUsage data
   ) implements ThreadMessage {
@@ -301,7 +258,21 @@ public sealed interface PageMessage {
 
   /** Sends a prompt as if the person typed it, e.g. the one an agent gave the thread it created. */
   record Submit(
-    String text
+    String text,
+    List<ContextItem> context,
+    List<ImageAttachment> images,
+    boolean includeActiveFile
+  ) implements ThreadMessage {
+  }
+
+  /**
+   * No run of a {@link io.firebite.tako.chat.BenchRequest} started; gives its prompt back to its source thread.
+   *
+   * @param error why, empty when the person cancelled
+   */
+  record BenchFailed(
+    Submit prompt,
+    String error
   ) implements ThreadMessage {
   }
 }

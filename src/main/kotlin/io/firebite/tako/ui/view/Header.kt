@@ -14,6 +14,11 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -24,13 +29,18 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
-import io.firebite.tako.ui.bridge.PageOp
+import com.intellij.ide.actions.RevealFileAction
+import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.icon.IconKey
+import java.nio.file.Path
 
 /**
  * The project and thread names, the thread's cost, the rate-limit windows, and its worktree, branch and pull request.
@@ -103,19 +113,24 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
           Text(meta, color = colors.muted, style = tinyStyle, maxLines = 1)
         }
       }
-      if (thread?.scratchpad != null) {
+      thread?.scratchpad?.let { path ->
         Box {
-          IconBtn(Icons.scratchpad, t("header.scratchpad.tooltip")) { thread.send(PageOp.Scratchpad()) }
-          workspace.scratchpadFiles?.let { (path, files) ->
+          val scope = rememberCoroutineScope()
+          var shown by remember(thread) { mutableStateOf<List<String>?>(null) }
+          IconBtn(Icons.scratchpad, t("header.scratchpad.tooltip")) {
+            val controller = thread.controller ?: return@IconBtn
+            scope.launch { shown = withContext(Dispatchers.IO) { controller.scratchpadFiles() } }
+          }
+          shown?.let { files ->
             val entries = files.map { file ->
               val slash = file.lastIndexOf('/')
               MenuEntry(file.substring(slash + 1), if (slash < 0) null else file.substring(0, slash), Icons.file) {
-                thread.send(PageOp.Open("$path/$file", 1))
+                IdeFiles.open(workspace.project, "$path/$file", 1)
               }
             } + MenuEntry(t("header.scratchpad.reveal"), icon = Icons.folderOpen) {
-              thread.send(PageOp.RevealScratchpad())
+              RevealFileAction.openDirectory(Path.of(path))
             }
-            MenuPopup(entries, t("header.scratchpad"), Alignment.End) { workspace.scratchpadFiles = null }
+            MenuPopup(entries, t("header.scratchpad"), Alignment.End) { shown = null }
           }
         }
       }

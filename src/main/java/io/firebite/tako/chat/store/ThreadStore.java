@@ -10,7 +10,7 @@ import com.intellij.openapi.project.Project;
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.ide.project.GitInfo;
-import io.firebite.tako.ui.bridge.PageMessage;
+import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -265,8 +265,8 @@ public final class ThreadStore {
       return this.agent != null ? this.agent : ClaudeBackend.ID;
     }
 
-    public PageMessage.ThreadItem toItem() {
-      return new PageMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
+    public ChatMessage.ThreadItem toItem() {
+      return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
         this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis);
     }
@@ -292,12 +292,12 @@ public final class ThreadStore {
     public String baseCommit = "";
     public List<Run> runs = new ArrayList<>();
 
-    public PageMessage.BenchItem toItem() {
+    public ChatMessage.BenchItem toItem() {
       List<String> threads = new ArrayList<>();
       for (Run run : this.runs) {
         threads.add(run.thread);
       }
-      return new PageMessage.BenchItem(this.id, this.title, this.projectPath,
+      return new ChatMessage.BenchItem(this.id, this.title, this.projectPath,
         this.baseCommit.substring(0, Math.min(SHORT_COMMIT, this.baseCommit.length())), threads);
     }
   }

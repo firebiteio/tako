@@ -2,7 +2,7 @@ package io.firebite.tako.agent;
 
 import com.google.gson.annotations.SerializedName;
 
-/** What a tool call does, which decides how the page shows it. */
+/** What a tool call does, which decides how the chat shows it. */
 public enum ToolKind {
   @SerializedName("read") READ,
   @SerializedName("edit") EDIT,

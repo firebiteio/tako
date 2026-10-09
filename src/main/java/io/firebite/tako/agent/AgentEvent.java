@@ -103,7 +103,7 @@ public sealed interface AgentEvent {
    * A tool call began.
    *
    * @param name  the agent's tool name, for display
-   * @param input the call's arguments. The page reads {@code command}, {@code file_path}, {@code pattern},
+   * @param input the call's arguments. The chat reads {@code command}, {@code file_path}, {@code pattern},
    *              {@code path}, {@code query}, {@code url}, {@code todos}, {@code old_string}/{@code new_string},
    *              {@code edits} and {@code content} when present
    * @param title a ready-made label, when the agent provides one
