@@ -122,8 +122,6 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.withContext
-import org.jetbrains.jewel.bridge.actionSystem.ComposePasteProvider
-import org.jetbrains.jewel.foundation.InternalJewelApi
 import org.jetbrains.jewel.foundation.actionSystem.provideData
 import org.jetbrains.jewel.ui.component.PopupContainer
 import org.jetbrains.jewel.ui.component.Text
@@ -193,10 +191,7 @@ private class AboveAnchor(private val gap: Int, private val inset: Int) : PopupP
 }
 
 /** Pastes images and image files as attachments, everything else as text. */
-@OptIn(InternalJewelApi::class)
 private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
-  private val text = ComposePasteProvider()
-
   override fun performPaste(dataContext: DataContext) {
     val clipboard = CopyPasteManager.getInstance()
     if (clipboard.areDataFlavorsAvailable(DataFlavor.javaFileListFlavor)) {
@@ -213,7 +208,12 @@ private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
       this.thread.controller?.pasteImage()
       return
     }
-    this.text.performPaste(dataContext)
+    val text = clipboard.getContents<String>(DataFlavor.stringFlavor) ?: return
+    this.thread.input.edit {
+      val start = this.selection.min
+      this.replace(start, this.selection.max, text)
+      this.selection = TextRange(start + text.length)
+    }
   }
 
   override fun isPastePossible(dataContext: DataContext): Boolean = true

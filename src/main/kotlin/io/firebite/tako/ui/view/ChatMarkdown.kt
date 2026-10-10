@@ -260,6 +260,7 @@ private object ChatTableProcessor : MarkdownProcessorExtension, MarkdownBlockPro
 }
 
 /** Tables as the page drew them: small text, a rule under each row, as wide as their content and scrolling sideways. */
+@JvmDefaultWithoutCompatibility
 private class ChatTables(
   private val cell: MarkdownStyling.Paragraph,
   private val header: MarkdownStyling.Paragraph,
