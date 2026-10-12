@@ -41,7 +41,7 @@ public class AcpSessionTest {
       assertEquals("Edits freely", info.modes().get(1).description());
       assertTrue(info.capabilities().images());
 
-      session.prompt("change a.txt", List.of());
+      session.prompt("change a.txt", List.of(), 1);
       List<AgentEvent> streamed = listener.until(AgentEvent.ToolStarted.class);
       assertTrue(streamed.contains(new AgentEvent.TextDelta("message-1", "Sure, ")));
       assertTrue(streamed.contains(new AgentEvent.Text("message-1", "Sure, editing.", null)));

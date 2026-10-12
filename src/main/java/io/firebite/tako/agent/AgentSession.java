@@ -10,8 +10,13 @@ public interface AgentSession {
   /** Connects and starts or resumes the session. Completes with what the agent offers. */
   CompletableFuture<AgentInfo> initialize();
 
-  /** Sends a prompt. A prompt sent while the agent works waits for its turn to end. */
-  void prompt(String text, List<ImageAttachment> images);
+  /**
+   * Sends a prompt. One sent while a turn runs waits until the agent takes it, into that turn or as the next one. The
+   * agent announces each prompt it takes with an {@link AgentEvent.PromptTaken}.
+   *
+   * @param key names the prompt in its {@link AgentEvent.PromptTaken}
+   */
+  void prompt(String text, List<ImageAttachment> images, int key);
 
   void interrupt();
 

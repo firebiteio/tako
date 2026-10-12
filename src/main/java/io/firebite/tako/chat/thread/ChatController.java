@@ -41,7 +41,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jetbrains.annotations.Nullable;
@@ -67,6 +69,8 @@ public final class ChatController implements Disposable {
   private final CompletableFuture<Void> opened = new CompletableFuture<>();
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
+  /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
+  private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
 
   /** Guards waking {@link #awaitSettled} waiters on each change of {@link #state}. */
   private final Object stateLock = new Object();
@@ -333,7 +337,6 @@ public final class ChatController implements Disposable {
    */
   public void send(String text, List<ContextItem> context, List<ImageAttachment> attached, boolean includeActiveFile,
     int turn) {
-    this.changes.startTurn(turn);
     List<ImageAttachment> images = new ArrayList<>();
     for (ImageAttachment image : attached) {
       if (image.isValid()) {
@@ -349,11 +352,11 @@ public final class ChatController implements Disposable {
       String prompt = this.record.workPath != null && folder != null
         ? PromptComposer.rebase(composed, folder, this.record.workPath)
         : composed;
-      Async.inBackground(() -> this.sendPrompt(text, prompt, images));
+      Async.inBackground(() -> this.sendPrompt(text, prompt, images, turn));
     });
   }
 
-  private void sendPrompt(String typed, String prompt, List<ImageAttachment> images) {
+  private void sendPrompt(String typed, String prompt, List<ImageAttachment> images, int turn) {
     this.opened.join();
     AgentSession session = this.connection.live();
     if (session == null) {
@@ -363,12 +366,10 @@ public final class ChatController implements Disposable {
         return;
       }
     }
-    synchronized (this.answer) {
-      this.answer.setLength(0);
-    }
     this.setState(State.WORKING);
     this.error = null;
-    session.prompt(prompt, images);
+    this.untakenTurns.add(turn);
+    session.prompt(prompt, images, turn);
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
       this.isTitled = true;
@@ -512,14 +513,29 @@ public final class ChatController implements Disposable {
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
       case AgentEvent.TurnEnded ended -> this.onTurnEnded(ended);
+      case AgentEvent.PromptTaken taken -> this.onPromptTaken(taken);
       default -> {
       }
     }
     this.view.post(new ChatMessage.Event(event));
   }
 
+  /** A prompt that joins the running turn keeps its changes and answer under that turn. */
+  private void onPromptTaken(AgentEvent.PromptTaken taken) {
+    this.untakenTurns.remove(taken.key());
+    if (taken.startsTurn()) {
+      this.changes.startTurn(taken.key());
+      synchronized (this.answer) {
+        this.answer.setLength(0);
+      }
+    }
+  }
+
+  /** The thread stays working while prompts wait. */
   private void onTurnEnded(AgentEvent.TurnEnded ended) {
-    this.setState(State.IDLE);
+    if (this.untakenTurns.isEmpty()) {
+      this.setState(State.IDLE);
+    }
     this.error = ended.error();
     this.refreshContext();
     if (ended.cost() != null) {
@@ -545,6 +561,7 @@ public final class ChatController implements Disposable {
   }
 
   private void stopped(@Nullable String error) {
+    this.untakenTurns.clear();
     this.setState(State.STOPPED);
     this.error = error;
   }

@@ -11,9 +11,9 @@ public final class PromptQueue {
   private boolean isTurnRunning;
 
   /** True if the prompt starts a turn now, else it waits for {@link #next}. */
-  public synchronized boolean offer(String text, List<ImageAttachment> images) {
+  public synchronized boolean offer(String text, List<ImageAttachment> images, int key) {
     if (this.isTurnRunning) {
-      this.waiting.add(new Queued(text, images));
+      this.waiting.add(new Queued(text, images, key));
       return false;
     }
     this.isTurnRunning = true;
@@ -27,13 +27,10 @@ public final class PromptQueue {
     return next;
   }
 
-  public synchronized void clear() {
-    this.waiting.clear();
-  }
-
   public record Queued(
     String text,
-    List<ImageAttachment> images
+    List<ImageAttachment> images,
+    int key
   ) {
   }
 }

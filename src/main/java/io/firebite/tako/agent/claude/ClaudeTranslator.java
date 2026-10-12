@@ -126,6 +126,26 @@ final class ClaudeTranslator {
     }
   }
 
+  /** The text of a prompt the CLI echoes as it takes it, empty for images alone; null for other lines. */
+  static @Nullable String echoedPrompt(CliMessage message) {
+    JsonObject json = message.json();
+    if (message.type() != CliMessage.Type.USER || !Json.bool(json, "isReplay")
+      || Json.string(json, PARENT_TOOL_USE_ID) != null || !message.toolResults().isEmpty()) {
+      return null;
+    }
+    JsonObject body = message.body();
+    JsonElement content = body == null ? null : body.get("content");
+    if (content != null && content.isJsonPrimitive()) {
+      return content.getAsString();
+    }
+    for (JsonObject block : Json.objects(body, "content")) {
+      if (TEXT.equals(Json.string(block, "type"))) {
+        return String.valueOf(Json.string(block, TEXT));
+      }
+    }
+    return "";
+  }
+
   private static void user(JsonObject json, @Nullable FileChange change, boolean replaying, List<AgentEvent> events) {
     JsonObject body = Json.object(json, "message");
     boolean isPrompt = replaying && Json.string(json, PARENT_TOOL_USE_ID) == null;

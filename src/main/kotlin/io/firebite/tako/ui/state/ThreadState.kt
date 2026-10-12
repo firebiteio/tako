@@ -43,6 +43,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The chat's number for the last prompt sent. */
   var turnNo = 0
   var turn: Turn? = null
+  /** Prompts sent while a turn ran, for agents that take one turn at a time. */
+  val queued = mutableStateListOf<QueuedPrompt>()
   val entries = HashMap<String, Entry>()
   val declined = HashSet<String>()
   val live = HashMap<String?, MutableList<LiveText>>()
@@ -152,7 +154,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** Whether a prompt or answer the chat holds contains the query, ignoring case. */
   fun mentions(query: String): Boolean = this.turns.any { turn ->
     turn.prompt?.text?.contains(query, true) == true ||
-      turn.items.any { it is TurnItem.Text && it.text.text.contains(query, true) }
+      turn.items.any {
+        it is TurnItem.Text && it.text.text.contains(query, true) ||
+          it is TurnItem.FollowUp && it.prompt.text.contains(query, true)
+      }
   }
 
   fun showAlert(text: String, actionLabel: String? = null, action: (() -> Unit)? = null) {

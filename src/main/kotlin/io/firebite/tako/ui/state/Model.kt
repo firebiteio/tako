@@ -119,6 +119,9 @@ sealed interface TurnItem {
 
   /** A plan the agent proposes. */
   class Plan(val plan: String) : TurnItem
+
+  /** A prompt sent while the turn ran, which the agent took into it. */
+  class FollowUp(val prompt: Prompt) : TurnItem
 }
 
 /** The prompt that started a turn. */
@@ -126,8 +129,13 @@ class Prompt(val text: String, val contexts: List<ContextItem>, val images: List
   val at = System.currentTimeMillis()
 }
 
-/** A finished turn's work, folded under "Worked for …". */
+/** A prompt the agent holds until the running turn ends; [no] is the chat's number for the turn it starts. */
+class QueuedPrompt(val no: Int, val prompt: Prompt)
+
+/** A finished turn's work up to its end or a follow-up, folded under "Worked for …". */
 class Fold(val label: String, val items: Set<TurnItem>) {
+  val first = items.first()
+  val last = items.last()
   var open by mutableStateOf(false)
 }
 
@@ -144,7 +152,7 @@ class Turn(
   val startedAt = System.currentTimeMillis()
   var done by mutableStateOf(false)
   var stopped = false
-  var fold by mutableStateOf<Fold?>(null)
+  var folds by mutableStateOf<List<Fold>>(emptyList())
   var error by mutableStateOf<String?>(null)
 }
 

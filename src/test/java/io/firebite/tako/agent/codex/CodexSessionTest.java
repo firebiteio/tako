@@ -38,7 +38,7 @@ public class CodexSessionTest {
         .getLast();
       assertEquals("019a0000-0000-7000-8000-000000000001", started.sessionId());
 
-      session.prompt("list files", List.of());
+      session.prompt("list files", List.of(), 1);
       List<AgentEvent> beforeApproval = listener.until(AgentEvent.ToolStarted.class);
       assertTrue(beforeApproval.contains(new AgentEvent.TextDelta("m1", "Hel")));
       assertTrue(beforeApproval.contains(new AgentEvent.Text("m1", "Hello", null)));

@@ -61,6 +61,7 @@ fun ThreadState.handleEvent(event: AgentEvent) {
     is AgentEvent.Compacted -> this.currentTurn().items.add(TurnItem.Note(t("stream.compacted")))
     is AgentEvent.PermissionCancelled -> this.removeApproval(event.requestId)
     is AgentEvent.TaskUpdated -> this.onTaskEvent(event)
+    is AgentEvent.PromptTaken -> this.takeQueued(event.key, event.startsTurn)
   }
 }
 
@@ -98,16 +99,20 @@ private fun ThreadState.onText(messageId: String?, text: String, parentId: Strin
   }
 }
 
+/** Ends the running turn; the thread stays busy while prompts wait for the agent. */
 private fun ThreadState.onTurnEnded(event: AgentEvent.TurnEnded) {
   this.finishTurn(event)
+  event.cost?.let {
+    this.costUsd = it.costUsd
+    this.inputRate = it.inputRate
+  }
+  if (this.queued.isNotEmpty()) {
+    return
+  }
   this.setBusy(false)
   this.finished = true
   if (!this.isActive) {
     this.unread = true
-  }
-  event.cost?.let {
-    this.costUsd = it.costUsd
-    this.inputRate = it.inputRate
   }
 }
 
@@ -121,9 +126,9 @@ fun ThreadState.setBusy(busy: Boolean) {
   }
 }
 
-fun ThreadState.startTurn(prompt: Prompt?, replayed: Boolean): Turn {
+fun ThreadState.startTurn(prompt: Prompt?, replayed: Boolean, no: Int = this.turnNo): Turn {
   this.finishTurn(null)
-  val turn = Turn(this.turnNo, prompt, replayed)
+  val turn = Turn(no, prompt, replayed)
   this.turns.add(turn)
   this.turn = turn
   return turn
@@ -284,27 +289,47 @@ fun ThreadState.finishTurn(result: AgentEvent.TurnEnded?) {
   turn.changeList = turn.changes.values.toList()
 }
 
-/** Folds a finished turn's work under "Worked for …", leaving the final text visible. */
+/**
+ * Folds a finished turn's work under "Worked for …", one fold per stretch between follow-ups, leaving each stretch's
+ * last text visible.
+ */
 private fun ThreadState.foldWork(turn: Turn, took: Long?) {
-  val items = turn.items.filter { item ->
-    item !is TurnItem.Completion && !(item is TurnItem.Task && this.cardState(item.card) == TaskState.RUNNING)
+  val folds = ArrayList<Fold>()
+  var stretch = ArrayList<TurnItem>()
+  var from = turn.startedAt
+  for (item in turn.items) {
+    if (item is TurnItem.FollowUp) {
+      fold(stretch, took?.let { item.prompt.at - from }, false)?.let { folds.add(it) }
+      stretch = ArrayList()
+      from = item.prompt.at
+    } else if (item !is TurnItem.Completion &&
+      !(item is TurnItem.Task && this.cardState(item.card) == TaskState.RUNNING)) {
+      stretch.add(item)
+    }
   }
+  fold(stretch, took?.let { turn.startedAt + it - from }, turn.stopped)?.let { folds.add(it) }
+  turn.folds = folds
+}
+
+/** The work of a turn's stretch under one fold, without its last text; null when there is no work. */
+private fun fold(items: List<TurnItem>, took: Long?, stopped: Boolean): Fold? {
   val foldable = if (items.lastOrNull() is TurnItem.Text) items.dropLast(1) else items
   if (foldable.none { it !is TurnItem.Text }) {
-    return
+    return null
   }
   val label = when {
-    turn.stopped -> t("timeline.stopped", duration(took ?: 0))
+    stopped -> t("timeline.stopped", duration(took ?: 0))
     took != null -> t("timeline.worked.for", duration(took))
     else -> t("timeline.worked")
   }
-  turn.fold = Fold(label, foldable.toSet())
+  return Fold(label, foldable.toSet())
 }
 
 /** Rebuilds the timeline from the thread's transcript. */
 fun ThreadState.replay(events: List<AgentEvent>) {
   this.turns.clear()
   this.turn = null
+  this.queued.clear()
   this.turnNo = 0
   this.entries.clear()
   this.declined.clear()
@@ -357,6 +382,7 @@ private fun ThreadState.selectResolvedModel(resolved: String) {
 /** The process ended; a crash offers a restart. */
 fun ThreadState.onExit(code: Int, stderr: String) {
   this.finishTurn(null)
+  this.queued.clear()
   this.setBusy(false)
   this.cancelAllApprovals()
   this.stopAllTasks()
@@ -368,19 +394,39 @@ fun ThreadState.onExit(code: Int, stderr: String) {
   }
 }
 
+/** The agent took the queued prompt of turn [no]: as the next turn, or as a follow-up in the running one. */
+private fun ThreadState.takeQueued(no: Int, startsTurn: Boolean) {
+  val queued = this.queued.firstOrNull { it.no == no } ?: return
+  this.queued.remove(queued)
+  if (startsTurn) {
+    this.startTurn(queued.prompt, false, no)
+  } else {
+    val turn = this.currentTurn()
+    this.clearThinking()
+    turn.group = null
+    turn.items.add(TurnItem.FollowUp(queued.prompt))
+  }
+  this.setBusy(true)
+}
+
 fun ThreadState.onError(text: String) {
   this.setBusy(false)
   this.failed = true
   this.showAlert(text)
 }
 
-/** Shows the prompt as the thread's next turn and sends it. */
+/** Shows the prompt as the thread's next turn and sends it; while the agent works it waits until the agent takes it. */
 fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: List<ImageAttachment>,
   includeActiveFile: Boolean) {
+  val prompt = Prompt(text, contexts, images)
   this.turnNo++
   this.finished = false
   this.failed = false
-  this.startTurn(Prompt(text, contexts, images), false)
+  if (this.busy) {
+    this.queued.add(QueuedPrompt(this.turnNo, prompt))
+  } else {
+    this.startTurn(prompt, false)
+  }
   this.controller?.send(text, contexts, images, includeActiveFile, this.turnNo)
   this.updatedAt = System.currentTimeMillis()
   this.setBusy(true)

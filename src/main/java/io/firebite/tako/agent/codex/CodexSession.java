@@ -83,16 +83,15 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
   }
 
   @Override
-  public void prompt(String text, List<ImageAttachment> images) {
-    if (this.prompts.offer(text, images)) {
-      this.startTurn(text, images);
+  public void prompt(String text, List<ImageAttachment> images, int key) {
+    if (this.prompts.offer(text, images, key)) {
+      this.startTurn(text, images, key);
     }
   }
 
   @Override
   public void interrupt() {
     String turn = this.turnId;
-    this.prompts.clear();
     if (this.threadId != null && turn != null) {
       JsonObject params = Json.of(THREAD_ID, this.threadId);
       params.addProperty("turnId", turn);
@@ -298,7 +297,8 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
       this.effort.isBlank() ? null : this.effort, List.of());
   }
 
-  private void startTurn(String text, List<ImageAttachment> images) {
+  private void startTurn(String text, List<ImageAttachment> images, int key) {
+    this.emit(new AgentEvent.PromptTaken(key, true));
     JsonArray input = new JsonArray();
     JsonObject textInput = Json.of("type", "text");
     textInput.addProperty("text", text);
@@ -346,7 +346,7 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
     this.turnId = null;
     PromptQueue.Queued next = this.prompts.next();
     if (next != null) {
-      this.startTurn(next.text(), next.images());
+      this.startTurn(next.text(), next.images(), next.key());
     }
   }
 

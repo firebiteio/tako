@@ -78,15 +78,14 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
   }
 
   @Override
-  public void prompt(String text, List<ImageAttachment> images) {
-    if (this.prompts.offer(text, images)) {
-      this.startTurn(text, images);
+  public void prompt(String text, List<ImageAttachment> images, int key) {
+    if (this.prompts.offer(text, images, key)) {
+      this.startTurn(text, images, key);
     }
   }
 
   @Override
   public void interrupt() {
-    this.prompts.clear();
     for (String requestId : List.copyOf(this.pendingRequests.keySet())) {
       this.answer(requestId, new PermissionAnswer(false, null, true, Map.of(), null));
     }
@@ -337,7 +336,8 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
     this.connection.request("session/set_config_option", params);
   }
 
-  private void startTurn(String text, List<ImageAttachment> images) {
+  private void startTurn(String text, List<ImageAttachment> images, int key) {
+    this.emit(new AgentEvent.PromptTaken(key, true));
     JsonArray prompt = new JsonArray();
     JsonObject textBlock = Json.of("type", "text");
     textBlock.addProperty("text", text);
@@ -373,7 +373,7 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
   private void nextPrompt() {
     PromptQueue.Queued next = this.prompts.next();
     if (next != null) {
-      this.startTurn(next.text(), next.images());
+      this.startTurn(next.text(), next.images(), next.key());
     }
   }
 

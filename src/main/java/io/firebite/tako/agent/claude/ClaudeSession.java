@@ -37,6 +37,7 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
   private final AgentListener listener;
   private final SubagentRelay subagents;
   private final Map<String, JsonObject> pendingRequests = new ConcurrentHashMap<>();
+  private final PromptEchoes echoes = new PromptEchoes();
   private volatile @Nullable String sessionId;
 
   ClaudeSession(ClaudeLaunch command, AgentLaunch launch, String authDescription, Map<String, String> environment,
@@ -59,7 +60,10 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
   }
 
   @Override
-  public void prompt(String text, List<ImageAttachment> images) {
+  public synchronized void prompt(String text, List<ImageAttachment> images, int key) {
+    if (!this.echoes.sent(text, key)) {
+      this.listener.onEvent(new AgentEvent.PromptTaken(key, true));
+    }
     this.process.sendUser(text, images);
   }
 
@@ -128,6 +132,11 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
     if (task != null) {
       this.subagents.onTaskEvent(task);
     }
+    String echoed = ClaudeTranslator.echoedPrompt(message);
+    AgentEvent.PromptTaken taken = echoed == null ? null : this.echoes.echoed(echoed);
+    if (taken != null) {
+      this.listener.onEvent(taken);
+    }
     FileChange change = null;
     if (message.type() == CliMessage.Type.USER) {
       change = FileChange.fromToolResult(message.takeToolUseResult());
@@ -138,6 +147,9 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
     }
     for (AgentEvent event : ClaudeTranslator.translate(message, change, false)) {
       this.listener.onEvent(event instanceof AgentEvent.SessionStarted started ? this.withScratchpad(started) : event);
+    }
+    if (message.type() == CliMessage.Type.RESULT) {
+      this.echoes.turnEnded();
     }
   }
 
@@ -197,5 +209,4 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
       : SessionStore.forProject(this.environment, this.launch.workDirectory().toString())
         .subagentTranscript(session, taskId);
   }
-
 }

@@ -57,6 +57,7 @@ import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.state.AssistantText
 import io.firebite.tako.ui.state.Fold
 import io.firebite.tako.ui.state.Prompt
+import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
@@ -88,9 +89,11 @@ private sealed class TimelineRow(val key: String) {
   class Error(val turn: Turn, val text: String) : TimelineRow("e" + System.identityHashCode(turn))
 
   class Changes(val turn: Turn) : TimelineRow("c" + System.identityHashCode(turn))
+
+  class Queued(val queued: QueuedPrompt) : TimelineRow("q" + System.identityHashCode(queued))
 }
 
-/** The turns as rows: prompts, what the agent did (some folded away) and what each turn changed. */
+/** The turns as rows: prompts, what the agent did (some folded away), what each turn changed and queued prompts. */
 private fun timelineRows(thread: ThreadState): List<TimelineRow> {
   val rows = ArrayList<TimelineRow>()
   val canFork = thread.info?.capabilities?.fork == true
@@ -101,16 +104,14 @@ private fun timelineRows(thread: ThreadState): List<TimelineRow> {
       rows.add(TimelineRow.PromptRow(turn, it))
     }
     val forkAfter = if (canFork && turn.done && prompts > 0) turn.items.lastOrNull { it is TurnItem.Text } else null
-    val fold = turn.fold
-    var foldPlaced = false
     for (item in turn.items) {
-      if (fold != null && item in fold.items) {
-        if (!foldPlaced) {
+      val fold = turn.folds.firstOrNull { item in it.items }
+      if (fold != null) {
+        if (item === fold.first) {
           rows.add(TimelineRow.FoldHead(turn, fold))
-          foldPlaced = true
         }
         if (fold.open) {
-          rows.add(TimelineRow.Item(turn, item, item === fold.items.last(), prompts.takeIf { item === forkAfter }))
+          rows.add(TimelineRow.Item(turn, item, item === fold.last, prompts.takeIf { item === forkAfter }))
         }
         continue
       }
@@ -123,6 +124,9 @@ private fun timelineRows(thread: ThreadState): List<TimelineRow> {
     if (turn.changeList.isNotEmpty()) {
       rows.add(TimelineRow.Changes(turn))
     }
+  }
+  for (queued in thread.queued) {
+    rows.add(TimelineRow.Queued(queued))
   }
   return rows
 }
@@ -225,6 +229,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
     is TimelineRow.Working -> WorkingRow(thread)
     is TimelineRow.Error -> InlineAlert(row.text, Modifier.fillMaxWidth().padding(bottom = 12.dp))
     is TimelineRow.Changes -> ChangesCard(thread, row.turn)
+    is TimelineRow.Queued -> UserRow(thread, row.queued.prompt, true)
   }
 }
 
@@ -246,6 +251,7 @@ private fun TurnItemView(thread: ThreadState, item: TurnItem, forkPrompts: Int?,
     is TurnItem.Task -> TaskRowView(item.card)
     is TurnItem.Completion -> CompletionRowView(item.card)
     is TurnItem.Plan -> PlanCard(item.plan, markdown, actions)
+    is TurnItem.FollowUp -> UserRow(thread, item.prompt)
   }
 }
 
@@ -261,7 +267,8 @@ val cssRem: Dp
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun UserRow(thread: ThreadState, prompt: Prompt) {
+/** @param queued the prompt waits for the running turn to end */
+private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false) {
   val workspace = thread.workspace
   val (interaction, hovered) = rememberHover()
   val long = prompt.text.length > COLLAPSE_CHARS || prompt.text.count { it == '\n' } >= COLLAPSE_LINES
@@ -269,7 +276,7 @@ private fun UserRow(thread: ThreadState, prompt: Prompt) {
   val rem = cssRem
   Column(Modifier.fillMaxWidth().hoverable(interaction).padding(bottom = 6.dp), horizontalAlignment = Alignment.End,
     verticalArrangement = Arrangement.spacedBy(2.dp)) {
-    Box(Modifier.fillMaxWidth(0.8f), contentAlignment = Alignment.CenterEnd) {
+    Box(Modifier.fillMaxWidth(0.8f).alpha(if (queued) 0.6f else 1f), contentAlignment = Alignment.CenterEnd) {
       Column(Modifier.clip(RoundedCornerShape(18.dp)).background(colors.message)
         .let { if (collapsed) it.heightIn(max = rem * 11) else it }.padding(horizontal = 14.dp, vertical = 10.dp)) {
         if (prompt.images.isNotEmpty()) {
@@ -300,6 +307,9 @@ private fun UserRow(thread: ThreadState, prompt: Prompt) {
         Box(Modifier.align(Alignment.BottomCenter).fillMaxWidth().height(rem * 1.75f)
           .background(Brush.verticalGradient(listOf(Color.Transparent, colors.bg))))
       }
+    }
+    if (queued) {
+      Text(t("timeline.queued"), Modifier.padding(horizontal = 6.dp), color = colors.muted, style = smallStyle)
     }
     HoverMeta(hovered) {
       if (long) {

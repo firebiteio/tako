@@ -135,6 +135,18 @@ public sealed interface AgentEvent {
   ) {
   }
 
+  /**
+   * The agent took a prompt, at once or after it waited for the running turn.
+   *
+   * @param key        what the prompt was sent with
+   * @param startsTurn it starts a turn rather than joining the running one
+   */
+  record PromptTaken(
+    int key,
+    boolean startsTurn
+  ) implements AgentEvent {
+  }
+
   /** A prompt of a replayed session, which starts its turn. */
   record Prompt(
     String text,

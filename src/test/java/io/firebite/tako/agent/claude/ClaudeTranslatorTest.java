@@ -1,6 +1,7 @@
 package io.firebite.tako.agent.claude;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertNull;
 
 import com.google.gson.JsonParser;
 import io.firebite.tako.agent.AgentEvent;
@@ -15,6 +16,18 @@ public class ClaudeTranslatorTest {
 
   private static List<AgentEvent> translate(String line, boolean replaying) {
     return ClaudeTranslator.translate(new CliMessage(JsonParser.parseString(line).getAsJsonObject()), null, replaying);
+  }
+
+  @Test
+  public void echoedPromptIsTheReplayedText() {
+    assertEquals("hi", ClaudeTranslator.echoedPrompt(new CliMessage(JsonParser.parseString("{\"type\":\"user\","
+      + "\"isReplay\":true,\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}")
+      .getAsJsonObject())));
+    assertNull(ClaudeTranslator.echoedPrompt(new CliMessage(JsonParser.parseString("{\"type\":\"user\","
+      + "\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":\"hi\"}]}}").getAsJsonObject())));
+    assertNull(ClaudeTranslator.echoedPrompt(new CliMessage(JsonParser.parseString("{\"type\":\"user\","
+      + "\"isReplay\":true,\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"tool_result\","
+      + "\"tool_use_id\":\"t\",\"content\":\"ok\"}]}}").getAsJsonObject())));
   }
 
   @Test

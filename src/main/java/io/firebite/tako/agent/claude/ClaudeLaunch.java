@@ -30,6 +30,7 @@ public record ClaudeLaunch(
       "--output-format", "stream-json",
       "--include-partial-messages",
       "--verbose",
+      "--replay-user-messages",
       "--permission-prompt-tool", "stdio"));
     addFlag(command, "--model", options.model());
     addFlag(command, "--permission-mode", options.permissionMode());
