@@ -4,6 +4,7 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -13,7 +14,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.FlowRow
-import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
@@ -23,15 +23,13 @@ import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
-import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.LazyListState
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
@@ -131,11 +129,8 @@ private fun timelineRows(thread: ThreadState): List<TimelineRow> {
   return rows
 }
 
-private suspend fun LazyListState.scrollToEnd() {
-  val count = this.layoutInfo.totalItemsCount
-  if (count > 0) {
-    this.scrollToItem(count - 1, Int.MAX_VALUE)
-  }
+private suspend fun ScrollState.scrollToEnd() {
+  this.scrollTo(this.maxValue)
 }
 
 /** A thread's conversation over its composer; an empty thread shows a headline instead. */
@@ -150,7 +145,7 @@ fun ThreadView(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions
     } else {
       Box(Modifier.weight(1f).fillMaxWidth()) {
         Timeline(thread, markdown, actions)
-        if (!thread.stick && thread.listState.canScrollForward) {
+        if (!thread.stick && thread.scrollState.canScrollForward) {
           ScrollToEnd(Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)) { thread.scrollToEnd++ }
         }
       }
@@ -191,26 +186,29 @@ private fun Hero(thread: ThreadState) {
 
 @Composable
 private fun Timeline(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
-  val listState = thread.listState
+  val scrollState = thread.scrollState
   val rows = timelineRows(thread)
-  LaunchedEffect(listState) {
-    snapshotFlow { listState.isScrollInProgress to listState.canScrollForward }.collect { (scrolling, canForward) ->      if (scrolling) {
+  LaunchedEffect(scrollState) {
+    snapshotFlow { scrollState.isScrollInProgress to scrollState.canScrollForward }.collect { (scrolling, canForward) ->
+      if (scrolling) {
         thread.stick = !canForward
       } else if (thread.stick && canForward) {
-        listState.scrollToEnd()
+        scrollState.scrollToEnd()
       }
     }
   }
   LaunchedEffect(thread.scrollToEnd) {
     thread.stick = true
-    listState.scrollToEnd()
+    scrollState.scrollToEnd()
   }
-  VerticallyScrollableContainer(listState, Modifier.fillMaxSize()) {
-    LazyColumn(Modifier.fillMaxSize(), listState, PaddingValues(top = 16.dp, bottom = 8.dp)) {
-      items(rows, key = { it.key }) { row ->
-        Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp), contentAlignment = Alignment.TopCenter) {
-          Box(Modifier.widthIn(max = LANE).fillMaxWidth()) {
-            TimelineRowView(thread, row, markdown, actions)
+  VerticallyScrollableContainer(Modifier.fillMaxSize(), scrollState = scrollState) {
+    Column(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp)) {
+      for (row in rows) {
+        key(row.key) {
+          Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp), contentAlignment = Alignment.TopCenter) {
+            Box(Modifier.widthIn(max = LANE).fillMaxWidth()) {
+              TimelineRowView(thread, row, markdown, actions)
+            }
           }
         }
       }

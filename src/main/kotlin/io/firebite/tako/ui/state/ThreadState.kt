@@ -1,6 +1,6 @@
 package io.firebite.tako.ui.state
 
-import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.text.input.TextFieldState
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
@@ -85,7 +85,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val alerts = mutableStateListOf<Alert>()
 
   val input = TextFieldState()
-  val listState = LazyListState()
+  val scrollState = ScrollState(0)
   /** Whether the timeline keeps following its end, until the person scrolls away. */
   var stick by mutableStateOf(true)
   /** Bumped to scroll the timeline to its end, e.g. after sending. */
