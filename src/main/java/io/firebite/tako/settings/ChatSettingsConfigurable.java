@@ -1,8 +1,6 @@
 package io.firebite.tako.settings;
 
 import com.intellij.openapi.options.Configurable;
-import com.intellij.openapi.project.Project;
-import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.ui.ComboBox;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBLabel;
@@ -53,12 +51,12 @@ public final class ChatSettingsConfigurable implements Configurable {
   @Override
   public void apply() {
     ChatSettings.Data data = ChatSettings.state();
+    boolean changed = !this.selectedId().equals(data.defaultAgent)
+      || this.parallelRunsBox.isSelected() != data.parallelRuns;
     data.defaultAgent = this.selectedId();
-    if (data.parallelRuns != this.parallelRunsBox.isSelected()) {
-      data.parallelRuns = this.parallelRunsBox.isSelected();
-      for (Project project : ProjectManager.getInstance().getOpenProjects()) {
-        ChatService.getInstance(project).postSettings();
-      }
+    data.parallelRuns = this.parallelRunsBox.isSelected();
+    if (changed) {
+      ChatService.postSettingsToOpenProjects();
     }
   }
 
