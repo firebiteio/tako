@@ -89,7 +89,9 @@ public sealed interface ChatMessage {
     @Nullable String projectPath,
     @Nullable GitInfo.PullRequest pullRequest,
     String agent,
-    long firstTurnMillis
+    long firstTurnMillis,
+    /** The thread whose agent created this one, null for a top level thread. */
+    @Nullable String parentId
   ) {
   }
 

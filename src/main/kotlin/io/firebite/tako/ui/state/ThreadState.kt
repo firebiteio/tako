@@ -22,6 +22,8 @@ private val LOG = logger<ThreadState>()
 
 class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val id: String = item.id
+  /** The thread whose agent created this one, null for a top level thread. */
+  val parentId: String? = item.parentId
   var title by mutableStateOf(item.title)
   var archived by mutableStateOf(item.archived)
   var updatedAt by mutableLongStateOf(if (item.updatedAt > 0) item.updatedAt else System.currentTimeMillis())

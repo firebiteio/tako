@@ -269,6 +269,56 @@ private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectIte
   runIds: Set<String>): List<ThreadState> =
   sorted.filter { !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path }
 
+/** A thread with the sub threads hanging under it. */
+private class ThreadBranch(val thread: ThreadState) {
+  val children = mutableListOf<ThreadBranch>()
+
+  /** Whether a thread below this one is active or waits for the person. */
+  fun needsAttention(workspace: Workspace): Boolean {
+    for (child in this.children) {
+      if (child.thread === workspace.active || child.thread.unread || child.thread.approvals.isNotEmpty() ||
+        child.needsAttention(workspace)) {
+        return true
+      }
+    }
+    return false
+  }
+}
+
+/** The threads as a tree, each level newest first, with threads whose parent is not in the list on top. */
+private fun threadBranches(threads: List<ThreadState>): List<ThreadBranch> {
+  val branches = HashMap<String, ThreadBranch>()
+  for (thread in threads) {
+    branches[thread.id] = ThreadBranch(thread)
+  }
+  val top = mutableListOf<ThreadBranch>()
+  for (thread in threads) {
+    val branch = branches.getValue(thread.id)
+    val parent = thread.parentId?.let { branches[it] }
+    if (parent == null || parent === branch) {
+      top.add(branch)
+    } else {
+      parent.children.add(branch)
+    }
+  }
+  return top
+}
+
+/** A thread and its sub threads, folded until the person opens them or one of them wants a look. */
+@Composable
+private fun ThreadBranchView(workspace: Workspace, branch: ThreadBranch, narrow: Boolean, depth: Int) {
+  val folded = workspace.collapsedThreads[branch.thread.id]
+  val expanded = if (folded != null) !folded else branch.needsAttention(workspace)
+  ThreadRow(workspace, branch.thread, narrow, depth, branch.children.size, expanded) {
+    workspace.collapsedThreads[branch.thread.id] = expanded
+  }
+  if (expanded) {
+    for (child in branch.children) {
+      ThreadBranchView(workspace, child, narrow, depth + 1)
+    }
+  }
+}
+
 /** The agents' sessions no thread holds, to resume. */
 @Composable
 fun SessionsMenu(workspace: Workspace) {
@@ -327,8 +377,8 @@ private fun ProjectGroup(workspace: Workspace, project: ChatMessage.ProjectItem,
       for (bench in benches) {
         BenchGroup(workspace, bench, narrow)
       }
-      for (thread in threads) {
-        ThreadRow(workspace, thread, narrow)
+      for (branch in threadBranches(threads)) {
+        ThreadBranchView(workspace, branch, narrow, 0)
       }
     }
   }
@@ -376,7 +426,8 @@ fun confirmDiscard(workspace: Workspace, bench: ChatMessage.BenchItem) {
 }
 
 @Composable
-private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean) {
+private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean, depth: Int = 0,
+  childCount: Int = 0, expanded: Boolean = false, onToggle: (() -> Unit)? = null) {
   val status = rememberStatus(workspace, thread)
   val updated by remember(thread) {
     derivedStateOf(structuralEqualityPolicy()) { ago(thread.updatedAt, workspace.now) }
@@ -391,6 +442,7 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     ""
   }
   val sub = (if (thread.archived) t("sidebar.archived") else status.label) + otherAgent +
+    (if (childCount > 0 && !expanded) " · " + t("sidebar.subthreads.count", childCount) else "") +
     (if (run != null && thread.firstTurnMillis > 0) " · " + duration(thread.firstTurnMillis) else "") +
     (if (thread.costUsd > 0) " · " + money(thread.costUsd) else "")
   val statusColor = statusColor(status.kind)
@@ -400,7 +452,8 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     StatusKind.ERROR -> colors.del
     else -> colors.muted
   }
-  Box(Modifier.fillMaxWidth().hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
+  Box(Modifier.fillMaxWidth().padding(start = 14.dp * depth)
+    .hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
     if (thread.archived) {
       workspace.service.setArchived(thread.id, false)
     } else {
@@ -412,6 +465,9 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
   }.alpha(if (thread.archived) 0.75f else 1f)) {
     Row(Modifier.fillMaxWidth().padding(horizontal = 8.dp, vertical = 7.dp),
       horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+      if (childCount > 0 && onToggle != null) {
+        ThreadChevron(expanded, onToggle)
+      }
       Box(Modifier.width(18.dp).padding(top = 3.dp), contentAlignment = Alignment.Center) {
         StatusIcon(status.kind, thread, statusColor)
       }
@@ -449,6 +505,18 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
           }
         }
       }
+    }
+  }
+}
+
+@Composable
+private fun ThreadChevron(expanded: Boolean, onToggle: () -> Unit) {
+  val (interaction, hovered) = rememberHover()
+  val tooltip = if (expanded) t("sidebar.subthreads.collapse") else t("sidebar.subthreads.expand")
+  Tip(tooltip) {
+    Box(Modifier.size(14.dp).hoverable(interaction).clickable(interaction, indication = null) { onToggle() }
+      .pointerHoverIcon(PointerIcon.Hand), contentAlignment = Alignment.Center) {
+      Chevron(expanded, size = 11.dp, tint = if (hovered) colors.fg else colors.muted)
     }
   }
 }

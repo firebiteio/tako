@@ -93,6 +93,38 @@ public class ThreadStoreTest {
   }
 
   @Test
+  public void subThreadKeepsItsParent() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record parent = store.create(null, "Parent", null, "claude");
+    ThreadStore.Record child = store.create(null, "Child", null, "claude");
+    child.parentId = parent.id;
+    store.save();
+
+    ThreadStore reloaded = new ThreadStore(file);
+
+    assertEquals(parent.id, reloaded.find(child.id).parentId);
+    assertEquals(parent.id, reloaded.find(child.id).toItem().parentId());
+    assertNull(reloaded.find(parent.id).toItem().parentId());
+  }
+
+  @Test
+  public void removingAParentLeavesTheSubThread() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record parent = store.create(null, "Parent", null, "claude");
+    ThreadStore.Record child = store.create(null, "Child", null, "claude");
+    child.parentId = parent.id;
+    store.save();
+    store.remove(parent.id);
+
+    ThreadStore reloaded = new ThreadStore(file);
+
+    assertEquals(1, reloaded.all().size());
+    assertEquals(child.id, reloaded.all().getFirst().id);
+  }
+
+  @Test
   public void corruptFileStartsEmpty() throws Exception {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     Files.writeString(file, "{not json");

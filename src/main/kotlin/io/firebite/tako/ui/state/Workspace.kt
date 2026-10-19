@@ -47,6 +47,8 @@ class Workspace(val service: ChatService, val project: Project) {
   var benches by mutableStateOf<List<ChatMessage.BenchItem>>(emptyList())
   /** Benches the person folded; only this session remembers. */
   val collapsedBenches = mutableStateMapOf<String, Boolean>()
+  /** Sub thread trees the person folded, by the parent thread's id; only this session remembers. */
+  val collapsedThreads = mutableStateMapOf<String, Boolean>()
   /** Each agent's models, as its threads reported them, for picking a run's model before it starts. */
   val agentModels = HashMap<String, List<AgentInfo.Model>>()
   val alerts = mutableStateListOf<Alert>()
