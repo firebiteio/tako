@@ -268,7 +268,7 @@ public final class ThreadStore {
     public ChatMessage.ThreadItem toItem() {
       return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
-        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis);
+        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId);
     }
   }
 
