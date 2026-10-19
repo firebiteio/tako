@@ -71,6 +71,8 @@ final class ThreadTools implements McpTools {
     createProperties.add("mode", property("string", "The permission or approval mode, by the agent's id for it, "
       + "e.g. Claude Code's \"plan\" or \"acceptEdits\". Defaults to yours when the agent is yours, else to the "
       + "agent's default."));
+    createProperties.add("effort", property("string", "The reasoning effort, by the agent's id for it, e.g. "
+      + "\"low\", \"medium\" or \"high\". Defaults to yours when the agent is yours, else to the agent's default."));
 
     JsonObject threadIdProperties = new JsonObject();
     threadIdProperties.add(THREAD_ID, property("string", "The id create_thread or list_threads gave."));
@@ -141,7 +143,7 @@ final class ThreadTools implements McpTools {
     NewThread spec = new NewThread(title, prompt, backend.id(),
       orDefault(Json.string(arguments, "model"), isSameAgent ? parent.model : ""),
       orDefault(Json.string(arguments, "mode"), isSameAgent ? parent.mode : ""),
-      isSameAgent ? parent.effort : "",
+      orDefault(Json.string(arguments, "effort"), isSameAgent ? parent.effort : ""),
       worktree != null ? worktree.folder().toString() : parent.workPath);
     AtomicReference<ThreadStore.Record> created = new AtomicReference<>();
     ApplicationManager.getApplication().invokeAndWait(() -> created.set(this.service.spawn(parent, spec)));
