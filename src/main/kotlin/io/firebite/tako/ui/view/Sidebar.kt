@@ -27,13 +27,16 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.intellij.openapi.ui.MessageDialogBuilder
@@ -45,10 +48,12 @@ import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.samePath
+import io.firebite.tako.ui.state.ThreadNode
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.state.runName
 import io.firebite.tako.ui.state.runningTasks
+import io.firebite.tako.ui.state.threadTree
 import io.firebite.tako.ui.t
 import kotlinx.coroutines.delay
 import org.jetbrains.jewel.ui.component.Text
@@ -236,8 +241,8 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
               RailThread(workspace, run)
             }
           }
-          for (thread in projectThreads(workspace, project, sorted, runIds)) {
-            RailThread(workspace, thread)
+          for (node in projectThreads(workspace, project, sorted, runIds)) {
+            RailBranch(workspace, node)
           }
         }
       }
@@ -262,12 +267,24 @@ private fun RailThread(workspace: Workspace, thread: ThreadState) {
   }
 }
 
+/** The thread and, where the list unfolds them, its sub threads. */
+@Composable
+private fun RailBranch(workspace: Workspace, node: ThreadNode<ThreadState>) {
+  RailThread(workspace, node.thread)
+  if (workspace.expandedThreads[node.thread.id] == true) {
+    for (child in node.children) {
+      RailBranch(workspace, child)
+    }
+  }
+}
+
 private fun projectBenches(workspace: Workspace, project: ChatMessage.ProjectItem): List<ChatMessage.BenchItem> =
   workspace.benches.reversed().filter { workspace.projectAt(it.projectPath).path == project.path }
 
 private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectItem, sorted: List<ThreadState>,
-  runIds: Set<String>): List<ThreadState> =
-  sorted.filter { !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path }
+  runIds: Set<String>): List<ThreadNode<ThreadState>> =
+  threadTree(sorted.filter { !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path },
+    { it.id }, { it.parentId })
 
 /** The agents' sessions no thread holds, to resume. */
 @Composable
@@ -327,9 +344,117 @@ private fun ProjectGroup(workspace: Workspace, project: ChatMessage.ProjectItem,
       for (bench in benches) {
         BenchGroup(workspace, bench, narrow)
       }
-      for (thread in threads) {
-        ThreadRow(workspace, thread, narrow)
+      for (node in threads) {
+        ThreadBranch(workspace, node, narrow)
       }
+    }
+  }
+}
+
+/** The thread's row and, unfolded, its sub threads hanging off a line under its status icon. */
+@Composable
+private fun ThreadBranch(workspace: Workspace, node: ThreadNode<ThreadState>, narrow: Boolean) {
+  if (node.children.isEmpty()) {
+    ThreadRow(workspace, node.thread, narrow)
+    return
+  }
+  ThreadRow(workspace, node.thread, narrow) { FoldPill(workspace, node) }
+  if (isExpanded(workspace, node)) {
+    TreeChildren(workspace, node.children, narrow, 10.dp)
+  }
+}
+
+private fun isExpanded(workspace: Workspace, node: ThreadNode<ThreadState>): Boolean =
+  workspace.expandedThreads[node.thread.id] == true
+
+private fun toggle(workspace: Workspace, node: ThreadNode<ThreadState>) {
+  workspace.expandedThreads[node.thread.id] = !isExpanded(workspace, node)
+}
+
+/** The fold's color: a warning when a sub thread waits for input, else bright when it hides the active thread. */
+@Composable
+private fun foldColor(workspace: Workspace, node: ThreadNode<ThreadState>, hovered: Boolean): Color = when {
+  node.children.any { child -> child.any { it.approvals.isNotEmpty() } } -> colors.warn
+  hovered || (!isExpanded(workspace, node) && node.children.any { child -> child.any { it === workspace.active } }) ->
+    colors.fg
+  else -> colors.muted
+}
+
+/** Sub threads as compact rows hanging off a line under their parent's status icon, which sits at [start] + 7dp. */
+@Composable
+private fun TreeChildren(workspace: Workspace, children: List<ThreadNode<ThreadState>>, narrow: Boolean, start: Dp) {
+  val line = colors.faint.copy(alpha = 0.45f)
+  Column(Modifier.padding(start = start)) {
+    for ((index, child) in children.withIndex()) {
+      val last = index == children.lastIndex
+      Column(Modifier.drawBehind {
+        val x = 7.dp.toPx()
+        val y = 14.dp.toPx()
+        this.drawLine(line, Offset(x, 0f), Offset(x, if (last) y else this.size.height), 1.dp.toPx())
+        this.drawLine(line, Offset(x, y), Offset(12.dp.toPx(), y), 1.dp.toPx())
+      }.padding(start = 14.dp)) {
+        SubThreadRow(workspace, child.thread, narrow) {
+          if (child.children.isNotEmpty()) {
+            FoldPill(workspace, child)
+          }
+        }
+        if (child.children.isNotEmpty() && isExpanded(workspace, child)) {
+          TreeChildren(workspace, child.children, narrow, 6.dp)
+        }
+      }
+    }
+  }
+}
+
+/** A chevron and the number of sub threads, which folds them. */
+@Composable
+private fun FoldPill(workspace: Workspace, node: ThreadNode<ThreadState>) {
+  val (interaction, hovered) = rememberHover()
+  val color = foldColor(workspace, node, hovered)
+  Tip(t("sidebar.sub.threads", node.children.size)) {
+    Row(Modifier.height(18.dp).hoverClick(RoundedCornerShape(6.dp), interaction = interaction) {
+      toggle(workspace, node)
+    }.padding(horizontal = 4.dp), verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+      Chevron(isExpanded(workspace, node), size = 10.dp, tint = color)
+      Text(node.children.size.toString(), color = color, style = tinyStyle.copy(fontWeight = FontWeight.Medium))
+    }
+  }
+}
+
+/** A sub thread on one line: its status, title and age, with the thread row's actions on hover. */
+@Composable
+private fun SubThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean, extra: @Composable () -> Unit) {
+  val status = rememberStatus(workspace, thread)
+  val updated by remember(thread) {
+    derivedStateOf(structuralEqualityPolicy()) { ago(thread.updatedAt, workspace.now) }
+  }
+  val isActive = thread === workspace.active
+  val (interaction, hovered) = rememberHover()
+  Box(Modifier.fillMaxWidth().hoverClick(RoundedCornerShape(8.dp), 0.7f, isActive, interaction = interaction) {
+    workspace.open(thread)
+    if (narrow) {
+      workspace.setSidebar(false)
+    }
+  }) {
+    Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 6.dp),
+      verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+      Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
+        StatusIcon(status.kind, thread, statusColor(status.kind))
+      }
+      val emphasized = isActive || thread.unread
+      Row(Modifier.weight(1f), verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+        Tip(thread.title + "\n" + status.label, Modifier.weight(1f, fill = false)) {
+          Text(thread.title, color = if (emphasized) colors.fg else colors.body, style = smallStyle,
+            fontWeight = if (emphasized) FontWeight.Medium else null, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        }
+        extra()
+      }
+      Text(updated, Modifier.alpha(if (hovered) 0f else 1f), color = colors.faint, style = tinyStyle)
+    }
+    if (hovered) {
+      RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 4.dp))
     }
   }
 }
@@ -376,7 +501,8 @@ fun confirmDiscard(workspace: Workspace, bench: ChatMessage.BenchItem) {
 }
 
 @Composable
-private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean) {
+private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean,
+  extra: (@Composable () -> Unit)? = null) {
   val status = rememberStatus(workspace, thread)
   val updated by remember(thread) {
     derivedStateOf(structuralEqualityPolicy()) { ago(thread.updatedAt, workspace.now) }
@@ -425,29 +551,43 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
           Text(updated, Modifier.alpha(if (hovered) 0f else 1f), color = colors.faint,
             style = tinyStyle)
         }
-        Text(sub, color = subColor, style = tinyStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        if (extra == null) {
+          Text(sub, color = subColor, style = tinyStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+        } else {
+          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Text(sub, Modifier.weight(1f, fill = false), color = subColor, style = tinyStyle, maxLines = 1,
+              overflow = TextOverflow.Ellipsis)
+            extra()
+          }
+        }
         GitLine(thread, isActive)
       }
     }
     if (hovered) {
-      Row(Modifier.align(Alignment.CenterEnd).padding(end = 6.dp).clip(RoundedCornerShape(8.dp))
-        .background(colors.hover), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
-        if (thread.archived) {
-          IconBtn(Icons.restore, t("sidebar.restore"), iconSize = 14.dp) {
-            workspace.service.setArchived(thread.id, false)
-          }
-        } else {
-          IconBtn(Icons.archive, t("sidebar.archive", thread.agentName), iconSize = 14.dp) {
-            workspace.service.setArchived(thread.id, true)
-          }
-        }
-        IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {
-          val confirmed = !thread.busy || MessageDialogBuilder.yesNo(t("sidebar.close"),
-            t("sidebar.close.confirm", thread.agentName)).guessWindowAndAsk()
-          if (confirmed) {
-            workspace.service.close(thread.id)
-          }
-        }
+      RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 6.dp))
+    }
+  }
+}
+
+/** Archive or restore, and close, shown over a row's end while the mouse is on it. */
+@Composable
+private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modifier) {
+  Row(modifier.clip(RoundedCornerShape(8.dp)).background(colors.hover),
+    horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    if (thread.archived) {
+      IconBtn(Icons.restore, t("sidebar.restore"), iconSize = 14.dp) {
+        workspace.service.setArchived(thread.id, false)
+      }
+    } else {
+      IconBtn(Icons.archive, t("sidebar.archive", thread.agentName), iconSize = 14.dp) {
+        workspace.service.setArchived(thread.id, true)
+      }
+    }
+    IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {
+      val confirmed = !thread.busy || MessageDialogBuilder.yesNo(t("sidebar.close"),
+        t("sidebar.close.confirm", thread.agentName)).guessWindowAndAsk()
+      if (confirmed) {
+        workspace.service.close(thread.id)
       }
     }
   }

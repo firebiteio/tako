@@ -50,6 +50,21 @@ public class ThreadStoreTest {
   }
 
   @Test
+  public void subThreadKeepsItsParentForTheList() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record parent = store.create(null, null, null, "claude");
+    ThreadStore.Record child = store.create(null, "Spawned", null, "claude");
+    child.parentId = parent.id;
+    store.save();
+
+    ThreadStore reloaded = new ThreadStore(file);
+
+    assertEquals(parent.id, reloaded.find(child.id).toItem().parentId());
+    assertNull(reloaded.find(parent.id).toItem().parentId());
+  }
+
+  @Test
   public void ideProjectIsAlwaysTheFirstFolder() throws Exception {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     ThreadStore store = new ThreadStore(file);

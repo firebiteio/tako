@@ -47,6 +47,8 @@ class Workspace(val service: ChatService, val project: Project) {
   var benches by mutableStateOf<List<ChatMessage.BenchItem>>(emptyList())
   /** Benches the person folded; only this session remembers. */
   val collapsedBenches = mutableStateMapOf<String, Boolean>()
+  /** Threads whose sub threads the list shows; folded by default, only this session remembers. */
+  val expandedThreads = mutableStateMapOf<String, Boolean>()
   /** Each agent's models, as its threads reported them, for picking a run's model before it starts. */
   val agentModels = HashMap<String, List<AgentInfo.Model>>()
   val alerts = mutableStateListOf<Alert>()
@@ -102,7 +104,10 @@ class Workspace(val service: ChatService, val project: Project) {
     return projects.firstOrNull { samePath(it.path, wanted) } ?: projects[0]
   }
 
-  /** Shows the thread, keeping the one it replaces as it was: its draft, alerts and scroll position. */
+  /**
+   * Shows the thread, keeping the one it replaces as it was: its draft, alerts and scroll position. Unfolds the
+   * threads it is nested under, so the list shows it.
+   */
   fun activate(thread: ThreadState?) {
     if (thread == null || this.active === thread) {
       return
@@ -112,6 +117,11 @@ class Workspace(val service: ChatService, val project: Project) {
     this.active = thread
     thread.unread = false
     this.focusComposer++
+    var parent = thread.parentId?.let { this.threads[it] }
+    while (parent != null) {
+      this.expandedThreads[parent.id] = true
+      parent = parent.parentId?.let { this.threads[it] }
+    }
   }
 
   /** Shows the thread and tells the IDE, which starts its agent if needed. */
