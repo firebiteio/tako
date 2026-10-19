@@ -53,7 +53,12 @@ public final class ChatSettingsConfigurable implements Configurable {
   @Override
   public void apply() {
     ChatSettings.Data data = ChatSettings.state();
-    data.defaultAgent = this.selectedId();
+    if (!data.defaultAgent.equals(this.selectedId())) {
+      data.defaultAgent = this.selectedId();
+      for (Project project : ProjectManager.getInstance().getOpenProjects()) {
+        ChatService.getInstance(project).postAgents();
+      }
+    }
     if (data.parallelRuns != this.parallelRunsBox.isSelected()) {
       data.parallelRuns = this.parallelRunsBox.isSelected();
       for (Project project : ProjectManager.getInstance().getOpenProjects()) {

@@ -625,7 +625,8 @@ public final class ChatService implements Disposable {
     return found.subList(0, Math.min(SESSION_LIST_LIMIT, found.size()));
   }
 
-  private void postAgents() {
+  /** Tells the chat which agents a thread can run. */
+  public void postAgents() {
     List<ChatMessage.AgentOption> agents = new ArrayList<>();
     for (AgentBackend backend : AgentRegistry.backends(EnvironmentUtil.getEnvironmentMap())) {
       agents.add(new ChatMessage.AgentOption(backend.id(), backend.displayName()));

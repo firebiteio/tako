@@ -1,6 +1,8 @@
 package io.firebite.tako.settings;
 
 import com.intellij.openapi.options.Configurable;
+import com.intellij.openapi.project.Project;
+import com.intellij.openapi.project.ProjectManager;
 import com.intellij.ui.ToolbarDecorator;
 import com.intellij.ui.components.JBLabel;
 import com.intellij.ui.table.TableView;
@@ -9,6 +11,7 @@ import com.intellij.util.ui.FormBuilder;
 import com.intellij.util.ui.ListTableModel;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentRegistry;
+import io.firebite.tako.chat.ChatService;
 import java.util.ArrayList;
 import java.util.List;
 import javax.swing.JComponent;
@@ -55,6 +58,9 @@ public final class AcpAgentsConfigurable implements Configurable {
   @Override
   public void apply() {
     ChatSettings.state().acpAgents = this.lines();
+    for (Project project : ProjectManager.getInstance().getOpenProjects()) {
+      ChatService.getInstance(project).postAgents();
+    }
   }
 
   @Override
