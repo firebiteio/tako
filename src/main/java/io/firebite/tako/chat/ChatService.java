@@ -12,6 +12,7 @@ import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.openapi.wm.ToolWindow;
@@ -150,6 +151,18 @@ public final class ChatService implements Disposable {
   /** Tells the chat what the settings let it offer. */
   public void postSettings() {
     this.post(new ChatMessage.Settings(ChatSettings.state().parallelRuns));
+  }
+
+  /**
+   * Tells every open project's chat what the settings now let it offer. The settings pages call this on apply, so a
+   * new agent or a changed default shows without a restart. Must run on the EDT.
+   */
+  public static void postSettingsToOpenProjects() {
+    for (Project project : ProjectManager.getInstance().getOpenProjects()) {
+      ChatService service = ChatService.getInstance(project);
+      service.postSettings();
+      service.postAgents();
+    }
   }
 
   private void showInitialState() {
@@ -625,7 +638,8 @@ public final class ChatService implements Disposable {
     return found.subList(0, Math.min(SESSION_LIST_LIMIT, found.size()));
   }
 
-  private void postAgents() {
+  /** Tells the chat which agents a thread can run. */
+  public void postAgents() {
     List<ChatMessage.AgentOption> agents = new ArrayList<>();
     for (AgentBackend backend : AgentRegistry.backends(EnvironmentUtil.getEnvironmentMap())) {
       agents.add(new ChatMessage.AgentOption(backend.id(), backend.displayName()));
