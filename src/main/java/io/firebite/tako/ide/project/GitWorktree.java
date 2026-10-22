@@ -16,7 +16,8 @@ public final class GitWorktree {
   }
 
   /**
-   * Checks out the commit {@code directory} is on into a new worktree on branch {@code <name>}.
+   * Checks out the commit {@code directory} is on into a new worktree on branch {@code <name>}, with the files
+   * {@code .worktreeinclude} lists.
    *
    * @return the worktree, or null when {@code directory} is not in a git repository or git fails
    */
@@ -37,7 +38,11 @@ public final class GitWorktree {
       if (!isTaken) {
         String added = GitInfo.run(directory, environment,
           List.of("git", "worktree", "add", "-b", candidate, folder.toString()), ADD_TIMEOUT_SECONDS);
-        return added == null ? null : new Worktree(folder, candidate);
+        if (added == null) {
+          return null;
+        }
+        WorktreeInclude.copy(folder, environment);
+        return new Worktree(folder, candidate);
       }
     }
   }

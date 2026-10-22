@@ -65,10 +65,14 @@ public final class Worktrees {
     return slug.isEmpty() ? "run" : slug.toString();
   }
 
-  /** Adds a worktree at {@code location} on a new {@code branch} starting at {@code commit}. */
+  /**
+   * Adds a worktree at {@code location} on a new {@code branch} starting at {@code commit}, with the files
+   * {@code .worktreeinclude} lists.
+   */
   public static void add(Path repository, Path location, String branch, String commit,
     Map<String, String> environment) throws GitException {
     git(repository, environment, "worktree", "add", "-b", branch, location.toString(), commit);
+    WorktreeInclude.copy(location, environment);
   }
 
   /**
@@ -197,7 +201,7 @@ public final class Worktrees {
     }
   }
 
-  private static String git(Path directory, Map<String, String> environment, String... arguments)
+  static String git(Path directory, Map<String, String> environment, String... arguments)
     throws GitException {
     Path output = createTemp(".out");
     try {

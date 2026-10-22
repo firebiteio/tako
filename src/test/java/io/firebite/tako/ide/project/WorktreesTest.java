@@ -68,6 +68,75 @@ public class WorktreesTest {
     assertTrue(git(repository, "branch", "--list", "test-1").isBlank());
   }
 
+  @Test
+  public void worktreeIncludeCopiesListedIgnoredFiles() throws Exception {
+    Path repository = repository();
+    write(repository, ".gitignore", "*.env\n*.log\nbuild/\nsecrets/\nlocal.cfg\n");
+    write(repository, "tracked.env", "committed");
+    write(repository, "local.cfg", "committed");
+    write(repository, "data", "committed");
+    write(repository, "config/settings.json", "{}");
+    git(repository, "add", ".");
+    git(repository, "add", "-f", "tracked.env", "local.cfg");
+    git(repository, "commit", "-q", "-m", "base");
+    git(repository, "rm", "-q", "--cached", "local.cfg");
+    String commit = Worktrees.head(repository, ENVIRONMENT);
+    write(repository, ".worktreeinclude", "*.env\nsecrets/\nlocal.cfg\n");
+    write(repository, ".env", "secret");
+    write(repository, "tracked.env", "changed");
+    write(repository, "debug.log", "log");
+    write(repository, "build/out.txt", "out");
+    write(repository, "config/local.env", "local");
+    write(repository, "secrets/deep/key.txt", "key");
+    write(repository, "local.cfg", "mine");
+    Files.delete(repository.resolve("data"));
+    write(repository, "data/x.env", "blocked by the committed file data");
+    Path worktree = Worktrees.benchFolder(repository, "include").resolve("1");
+
+    Worktrees.add(repository, worktree, "include-1", commit, ENVIRONMENT);
+
+    assertEquals("secret", Files.readString(worktree.resolve(".env")));
+    assertEquals("committed", Files.readString(worktree.resolve("tracked.env")));
+    assertFalse(Files.exists(worktree.resolve("debug.log")));
+    assertFalse(Files.exists(worktree.resolve("build")));
+    assertEquals("local", Files.readString(worktree.resolve("config/local.env")));
+    assertEquals("key", Files.readString(worktree.resolve("secrets/deep/key.txt")));
+    assertEquals("committed", Files.readString(worktree.resolve("local.cfg")));
+    assertTrue(Files.isRegularFile(worktree.resolve("data")));
+    Worktrees.remove(repository, worktree, "include-1", ENVIRONMENT);
+  }
+
+  @Test
+  public void noWorktreeIncludeCopiesNothing() throws Exception {
+    Path repository = repository();
+    write(repository, ".gitignore", "*.env\n");
+    git(repository, "add", ".");
+    git(repository, "commit", "-q", "-m", "base");
+    write(repository, ".env", "secret");
+    Path worktree = Worktrees.benchFolder(repository, "plain").resolve("1");
+
+    Worktrees.add(repository, worktree, "plain-1", Worktrees.head(repository, ENVIRONMENT), ENVIRONMENT);
+
+    assertTrue(Files.isRegularFile(worktree.resolve(".gitignore")));
+    assertFalse(Files.exists(worktree.resolve(".env")));
+    Worktrees.remove(repository, worktree, "plain-1", ENVIRONMENT);
+  }
+
+  private static Path repository() throws Exception {
+    Path repository = Files.createTempDirectory("tako-repo").toRealPath();
+    git(repository, "init", "-q");
+    git(repository, "config", "user.email", "test@example.com");
+    git(repository, "config", "user.name", "Test");
+    git(repository, "config", "core.autocrlf", "false");
+    return repository;
+  }
+
+  private static void write(Path repository, String path, String text) throws Exception {
+    Path file = repository.resolve(path);
+    Files.createDirectories(file.getParent());
+    Files.writeString(file, text, StandardCharsets.UTF_8);
+  }
+
   private static String git(Path directory, String... arguments) throws Exception {
     List<String> command = new ArrayList<>();
     command.add("git");
