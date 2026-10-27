@@ -96,6 +96,7 @@ import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.PriceRatios
 import io.firebite.tako.ide.context.Images
+import io.firebite.tako.ide.context.PastedText
 import io.firebite.tako.ide.project.FileIndex
 import io.firebite.tako.ui.countdown
 import io.firebite.tako.ui.money
@@ -108,6 +109,7 @@ import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.canPlanRuns
 import io.firebite.tako.ui.state.cacheState
 import io.firebite.tako.ui.state.chooseOption
+import io.firebite.tako.ui.state.addContext
 import io.firebite.tako.ui.state.advanceQuestion
 import io.firebite.tako.ui.state.contextNumbers
 import io.firebite.tako.ui.state.RunPlan
@@ -194,7 +196,7 @@ private class AboveAnchor(private val gap: Int, private val inset: Int) : PopupP
   }
 }
 
-/** Pastes images and image files as attachments, everything else as text. */
+/** Pastes images, image files and large text as attachments, everything else as text. */
 private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
   override fun performPaste(dataContext: DataContext) {
     val clipboard = CopyPasteManager.getInstance()
@@ -213,11 +215,14 @@ private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
       return
     }
     val text = clipboard.getContents<String>(DataFlavor.stringFlavor) ?: return
-    this.thread.input.edit {
-      val start = this.selection.min
-      this.replace(start, this.selection.max, text)
-      this.selection = TextRange(start + text.length)
+    val controller = this.thread.controller
+    if (controller != null && PastedText.isLarge(text)) {
+      val item = controller.pasteText(text) ?: return
+      insertText(this.thread, "")
+      this.thread.addContext(item, null)
+      return
     }
+    insertText(this.thread, text)
   }
 
   override fun isPastePossible(dataContext: DataContext): Boolean = true
@@ -225,6 +230,14 @@ private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
   override fun isPasteEnabled(dataContext: DataContext): Boolean = true
 
   override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+}
+
+private fun insertText(thread: ThreadState, text: String) {
+  thread.input.edit {
+    val start = this.selection.min
+    this.replace(start, this.selection.max, text)
+    this.selection = TextRange(start + text.length)
+  }
 }
 
 /** What sits under the conversation: running tasks, the waiting prompt's drawer and the composer. */
@@ -331,7 +344,10 @@ private fun Composer(thread: ThreadState) {
         FlowRow(Modifier.padding(start = 14.dp, end = 14.dp, top = if (thread.images.isEmpty()) 12.dp else 8.dp),
           horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
           for (item in thread.contexts.toList()) {
-            MentionChip(item) { thread.contexts.remove(item) }
+            MentionChip(item) {
+              thread.contexts.remove(item)
+              thread.controller?.discardPaste(item)
+            }
           }
         }
       }
@@ -476,6 +492,10 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptR
   if (event.key == Key.Enter && !event.isShiftPressed) {
     suggestions.hide()
     thread.submit()
+    return true
+  }
+  if (event.key == Key.V && event.isShiftPressed && (event.isCtrlPressed || event.isMetaPressed)) {
+    CopyPasteManager.getInstance().getContents<String>(DataFlavor.stringFlavor)?.let { insertText(thread, it) }
     return true
   }
   if (event.key == Key.Escape) {

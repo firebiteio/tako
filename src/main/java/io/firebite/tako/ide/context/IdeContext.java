@@ -10,6 +10,7 @@ import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 import io.firebite.tako.TakoBundle;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -39,6 +40,10 @@ public final class IdeContext {
 
   public static ContextItem file(VirtualFile file) {
     return ContextItem.create(ContextItem.Kind.FILE, file.getName(), "Referenced file: " + file.getPath());
+  }
+
+  public static ContextItem file(Path file) {
+    return ContextItem.create(ContextItem.Kind.FILE, file.getFileName().toString(), "Referenced file: " + file);
   }
 
   public static @Nullable ContextItem problems(Project project, Editor editor) {

@@ -34,6 +34,7 @@ import io.firebite.tako.chat.thread.ChatHost;
 import io.firebite.tako.chat.thread.ChatView;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
@@ -41,6 +42,7 @@ import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -98,6 +100,7 @@ public final class ChatService implements Disposable {
     window.getContentManager().addContent(content);
     this.panel = chatPanel;
     Async.inBackground(this::warmUsage);
+    Async.inBackground(ChatService::deleteOldPastes);
     ScheduledFuture<?> gitRefresh = AppExecutorUtil.getAppScheduledExecutorService()
       .scheduleWithFixedDelay(this::refreshActiveGit, GIT_REFRESH_SECONDS, GIT_REFRESH_SECONDS, TimeUnit.SECONDS);
     Disposer.register(content, () -> {
@@ -685,6 +688,14 @@ public final class ChatService implements Disposable {
     }
   }
 
+  private static void deleteOldPastes() {
+    try {
+      PastedText.deleteOlderThan(PastedText.folder(), Instant.now().minus(PastedText.MAX_AGE));
+    } catch (IOException e) {
+      LOG.debug("Could not delete old pasted text files", e);
+    }
+  }
+
   private void warmUsage() {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     for (ThreadStore.ProjectFolder folder : this.projects()) {
@@ -802,6 +813,11 @@ public final class ChatService implements Disposable {
         if (!folder.path.isEmpty() && !ThreadStore.samePath(folder.path, own)) {
           directories.add(folder.path);
         }
+      }
+      try {
+        directories.add(PastedText.createFolder(PastedText.folder()).toString());
+      } catch (IOException e) {
+        LOG.warn("Could not create the folder for pasted text", e);
       }
       return directories;
     }
