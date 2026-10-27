@@ -21,6 +21,14 @@ public class PromptComposerTest {
   }
 
   @Test
+  public void threadIsReferencedByTitleAndId() {
+    String prompt = PromptComposer.compose("continue", List.of(ContextItem.thread("t-1", "Login bug")));
+
+    assertEquals("continue\n\n<ide_context>\nReferenced Tako thread \"Login bug\" (id t-1). Read its conversation "
+      + "with Tako's get_thread tool, threadId \"t-1\" and conversation true.\n\n</ide_context>", prompt);
+  }
+
+  @Test
   public void slashCommandsGetNoContext() {
     assertEquals("/compact", PromptComposer.compose("/compact", List.of(selection())));
   }

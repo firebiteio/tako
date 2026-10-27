@@ -93,6 +93,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.PriceRatios
+import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ide.context.Images
 import io.firebite.tako.ide.project.FileIndex
 import io.firebite.tako.ui.countdown
@@ -134,6 +135,7 @@ import java.nio.file.Path
 import kotlin.math.max
 
 private const val MAX_SLASH_ITEMS = 50
+private const val MAX_THREAD_ITEMS = 10
 /** Waits for typing to pause before asking the IDE for files. */
 private const val MENTION_DEBOUNCE_MILLIS = 80L
 private val RUN_COUNTS = listOf(2, 3, 4, 5, 6, 8)
@@ -163,20 +165,22 @@ private fun effortDescription(level: String): String? = when (level) {
 /** The `@` mention being typed: where it is and what it asks for. */
 private data class Mention(val start: Int, val end: Int, val query: String)
 
-/** The suggestions over the composer: slash commands or files for an `@` mention. */
+/** The suggestions over the composer: slash commands, or files and then threads for an `@` mention. */
 private class Suggestions {
   var commands by mutableStateOf<List<AgentInfo.Command>>(emptyList())
   var files by mutableStateOf<List<FileIndex.Match>>(emptyList())
+  var threads by mutableStateOf<List<ThreadState>>(emptyList())
   var isMention by mutableStateOf(false)
   var index by mutableIntStateOf(0)
   var mention: Mention? = null
 
   val size: Int
-    get() = if (this.isMention) this.files.size else this.commands.size
+    get() = if (this.isMention) this.files.size + this.threads.size else this.commands.size
 
   fun hide() {
     this.commands = emptyList()
     this.files = emptyList()
+    this.threads = emptyList()
     this.index = 0
   }
 }
@@ -380,7 +384,7 @@ private fun updateSlash(thread: ThreadState, suggestions: Suggestions, text: Str
   suggestions.index = suggestions.index.coerceAtMost(max(0, items.size - 1))
 }
 
-/** An `@` before the caret asks the IDE for matching files. */
+/** An `@` before the caret asks the IDE for matching files and looks for threads by title. */
 private suspend fun updateMention(thread: ThreadState, suggestions: Suggestions, text: String, selection: TextRange) {
   val before = text.substring(0, selection.start.coerceAtMost(text.length))
   val match = MENTION.find(before)
@@ -398,12 +402,39 @@ private suspend fun updateMention(thread: ThreadState, suggestions: Suggestions,
   delay(MENTION_DEBOUNCE_MILLIS)
   val controller = thread.controller ?: return
   val files = withContext(Dispatchers.IO) { controller.findFiles(query) }
+  val threads = mentionThreads(thread, query)
   suggestions.isMention = true
   suggestions.files = files
-  suggestions.index = suggestions.index.coerceAtMost(max(0, files.size - 1))
+  suggestions.threads = threads
+  suggestions.index = suggestions.index.coerceAtMost(max(0, files.size + threads.size - 1))
+}
+
+/** The other unarchived threads of the composer's project whose title has the query, title starts first. */
+private fun mentionThreads(thread: ThreadState, query: String): List<ThreadState> {
+  val workspace = thread.workspace
+  val project = workspace.projectOf(thread).path
+  return workspace.threads.values.filter {
+    it !== thread && !it.archived && workspace.projectOf(it).path == project && it.title.contains(query, true)
+  }.sortedWith(compareBy<ThreadState> { !it.title.startsWith(query, true) }.thenByDescending { it.updatedAt })
+    .take(MAX_THREAD_ITEMS)
 }
 
 private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, index: Int) {
+  if (suggestions.isMention && index >= suggestions.files.size) {
+    val mentioned = suggestions.threads.getOrNull(index - suggestions.files.size) ?: return
+    val mention = suggestions.mention ?: return
+    thread.input.edit {
+      this.replace(mention.start, mention.end.coerceAtMost(this.length), "")
+      this.selection = TextRange(mention.start)
+    }
+    val item = ContextItem.thread(mentioned.id, mentioned.title)
+    if (thread.contexts.none { it.text == item.text }) {
+      thread.contexts.add(item)
+    }
+    suggestions.hide()
+    suggestions.isMention = false
+    return
+  }
   if (suggestions.isMention) {
     val item = suggestions.files.getOrNull(index) ?: return
     val mention = suggestions.mention ?: return
@@ -473,10 +504,24 @@ private fun SuggestionPopup(thread: ThreadState, suggestions: Suggestions, width
     Column(Modifier.heightIn(max = maxHeight).verticalScroll(rememberScrollState()).padding(4.dp)) {
       for (index in 0 until suggestions.size) {
         val active = index == suggestions.index
+        val isThread = suggestions.isMention && index >= suggestions.files.size
+        if (isThread && index == suggestions.files.size && index > 0) {
+          Text(t("composer.mention.threads"), Modifier.padding(start = 8.dp, top = 8.dp, bottom = 2.dp),
+            color = colors.muted, style = tinyStyle)
+        }
         Row(Modifier.fillMaxWidth().hoverClick(selected = active) { chooseSuggestion(thread, suggestions, index) }
           .padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-          if (suggestions.isMention) {
+          if (isThread) {
+            val item = suggestions.threads[index - suggestions.files.size]
+            Ico(Icons.thread, size = 14.dp, tint = colors.muted)
+            Column(Modifier.weight(1f)) {
+              Text(item.title, color = colors.fg, style = smallStyle, fontWeight = FontWeight.Medium, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+              Text(t("composer.mention.thread", item.agentName), color = colors.muted, style = tinyStyle, maxLines = 1,
+                overflow = TextOverflow.Ellipsis)
+            }
+          } else if (suggestions.isMention) {
             val item = suggestions.files[index]
             Ico(if (item.isDirectory) Icons.folder else Icons.file, size = 14.dp, tint = colors.muted)
             val slash = item.path.lastIndexOf('/')

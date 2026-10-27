@@ -68,6 +68,7 @@ public final class ChatController implements Disposable {
   private final CompletableFuture<Void> opened = new CompletableFuture<>();
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
+  private final Conversation conversation = new Conversation();
   /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
   private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
 
@@ -110,7 +111,7 @@ public final class ChatController implements Disposable {
         String projectPath = this.projectPath();
         if (resume != null && projectPath != null) {
           switch (this.backend.history(projectPath, resume)) {
-            case AgentHistory.Loaded loaded -> this.view.post(new ChatMessage.Replay(loaded.events()));
+            case AgentHistory.Loaded loaded -> this.replay(loaded.events());
             case AgentHistory.Missing missing -> {
               resume = null;
               this.record.sessionId = null;
@@ -230,6 +231,11 @@ public final class ChatController implements Disposable {
     synchronized (this.answer) {
       return this.answer.toString();
     }
+  }
+
+  /** The prompts and answers of the whole thread, see {@link Conversation#text}. */
+  public String conversation(int maxChars) {
+    return this.conversation.text(maxChars);
   }
 
   /** Why the agent did not start or the last turn failed, if it did. */
@@ -366,6 +372,7 @@ public final class ChatController implements Disposable {
     this.setState(State.WORKING);
     this.error = null;
     this.untakenTurns.add(turn);
+    this.conversation.prompt(typed);
     session.prompt(prompt, images, turn);
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
@@ -486,6 +493,11 @@ public final class ChatController implements Disposable {
     });
   }
 
+  private void replay(List<AgentEvent> events) {
+    this.conversation.reset(events);
+    this.view.post(new ChatMessage.Replay(events));
+  }
+
   private void onEvent(AgentEvent event) {
     switch (event) {
       case AgentEvent.SessionStarted started -> {
@@ -506,6 +518,7 @@ public final class ChatController implements Disposable {
             this.answer.append(this.answer.isEmpty() ? "" : "\n\n").append(text.text());
           }
         }
+        this.conversation.add(text);
       }
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
@@ -595,7 +608,7 @@ public final class ChatController implements Disposable {
 
     @Override
     public void onHistory(List<AgentEvent> events) {
-      ChatController.this.view.post(new ChatMessage.Replay(events));
+      ChatController.this.replay(events);
     }
 
     @Override
