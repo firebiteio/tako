@@ -6,6 +6,7 @@ import io.firebite.tako.agent.AgentEvent
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.chat.BenchRequest
+import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ui.t
@@ -72,6 +73,36 @@ fun ThreadState.submitAndBranch() {
 fun ThreadState.sendCommand(command: String) {
   this.input.setTextAndPlaceCursorAtEnd(command)
   this.submit()
+}
+
+/**
+ * Puts the draft with its attachments in the project's stash and clears the box. With an empty box it brings back the
+ * stashed draft, or offers the stashed ones to pick from when there are several.
+ */
+fun ThreadState.toggleStash() {
+  val stash = PromptStash.getInstance(this.workspace.project)
+  if (this.typed.isNotEmpty() || this.images.isNotEmpty() || this.contexts.isNotEmpty()) {
+    stash.push(this.typed, this.contexts.toList(), this.images.map { it.image })
+    this.contexts.clear()
+    this.images.clear()
+    this.input.clearText()
+    return
+  }
+  val entries = stash.entries()
+  when (entries.size) {
+    0 -> {}
+    1 -> this.restoreStash(entries[0])
+    else -> this.stashMenu = entries
+  }
+}
+
+/** Takes the draft out of the stash and into the box. */
+fun ThreadState.restoreStash(entry: PromptStash.Entry) {
+  val taken = PromptStash.getInstance(this.workspace.project).take(entry.id) ?: return
+  this.contexts.addAll(taken.context)
+  this.images.addAll(taken.images.map { PendingImage(it) })
+  this.input.setTextAndPlaceCursorAtEnd(taken.text)
+  this.workspace.focusComposer++
 }
 
 /** IDE context attached from an editor action; a proposed prompt fills an empty box. */
