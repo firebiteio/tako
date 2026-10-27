@@ -37,6 +37,16 @@ public final class IdeContext {
     return ContextItem.create(ContextItem.Kind.SELECTION, file.getName() + ":" + startLine + "-" + endLine, text);
   }
 
+  /**
+   * Text selected outside a file, such as in the terminal or a run console.
+   *
+   * @param label  what the chip shows
+   * @param source where the agent reads the text came from, such as {@code the terminal}
+   */
+  public static ContextItem excerpt(String label, String source, String text) {
+    return ContextItem.create(ContextItem.Kind.SELECTION, label, "Selected in " + source + ":\n```\n" + text + "\n```");
+  }
+
   public static ContextItem file(VirtualFile file) {
     return ContextItem.create(ContextItem.Kind.FILE, file.getName(), "Referenced file: " + file.getPath());
   }

@@ -1,0 +1,7 @@
+<idea-plugin>
+  <actions>
+    <reference ref="Tako.AddToChat">
+      <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+    </reference>
+  </actions>
+</idea-plugin>
