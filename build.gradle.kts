@@ -49,6 +49,7 @@ dependencies {
     pluginVerifier()
     zipSigner()
     composeUI()
+    bundledPlugin("org.jetbrains.plugins.terminal")
     bundledModule("intellij.platform.compose.markdown")
     bundledModule("intellij.platform.jewel.markdown.core")
     bundledModule("intellij.platform.jewel.markdown.ideLafBridgeStyling")

@@ -22,10 +22,12 @@ import io.firebite.tako.ui.t
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 private const val SIDEBAR_KEY = "tako.sidebar"
+private const val ARCHIVED_TOAST_MILLIS = 5000L
 
 /** What the chat knows beyond single threads, and what the IDE tells it. Touched on the EDT only. */
 class Workspace(val service: ChatService, val project: Project) {
@@ -54,6 +56,8 @@ class Workspace(val service: ChatService, val project: Project) {
 
   var sidebarOpen by mutableStateOf(PropertiesComponent.getInstance().getBoolean(SIDEBAR_KEY, true))
   var showArchived by mutableStateOf(false)
+  /** The thread last archived, while the toast offering to undo it shows. */
+  var archivedToast by mutableStateOf<ChatService.Archived?>(null)
   /** Whether the thread list shows the search field. */
   var searching by mutableStateOf(false)
   val searchInput = TextFieldState()
@@ -127,6 +131,43 @@ class Workspace(val service: ChatService, val project: Project) {
   fun open(thread: ThreadState) {
     this.activate(thread)
     this.service.select(thread.id)
+  }
+
+  /**
+   * Archives the thread and offers to undo it for a few seconds, replacing the offer before. Not while its agent works,
+   * as archiving stops it and undoing would not bring that work back.
+   */
+  fun archive(thread: ThreadState) {
+    val isWorking = thread.busy || thread.runningTasks().isNotEmpty()
+    val archived = this.service.archive(thread.id)
+    val toast = if (isWorking) null else archived
+    this.archivedToast = toast
+    if (toast != null) {
+      this.scope.launch {
+        delay(ARCHIVED_TOAST_MILLIS)
+        if (this@Workspace.archivedToast === toast) {
+          this@Workspace.archivedToast = null
+        }
+      }
+    }
+  }
+
+  /**
+   * Lists the thread last archived again. Shows it if the thread shown in its place still is, and closes that one if it
+   * was made for it and never used.
+   */
+  fun undoArchive() {
+    val archived = this.archivedToast ?: return
+    this.archivedToast = null
+    this.service.restore(archived.thread)
+    val replacement = archived.replacement?.let { this.threads[it] } ?: return
+    if (this.active === replacement) {
+      this.threads[archived.thread]?.let { this.open(it) }
+    }
+    val isUnused = replacement.turns.isEmpty() && !replacement.busy && replacement.input.text.isEmpty()
+    if (archived.isNewReplacement && isUnused) {
+      this.service.close(replacement.id)
+    }
   }
 
   /** Opens the menu of sessions to resume once the IDE found them. */
@@ -206,6 +247,7 @@ class Workspace(val service: ChatService, val project: Project) {
       is ChatMessage.Submit -> thread.startPrompt(message.text, message.context, message.images)
       is ChatMessage.BenchFailed -> thread.onBenchFailed(message.prompt, message.error)
       is ChatMessage.Error -> thread.onError(message.text)
+      is ChatMessage.Notice -> thread.showAlert(message.text)
     }
   }
 

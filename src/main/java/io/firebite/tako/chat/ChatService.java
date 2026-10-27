@@ -36,6 +36,7 @@ import io.firebite.tako.chat.thread.ChatView;
 import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
@@ -43,6 +44,7 @@ import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -101,6 +103,7 @@ public final class ChatService implements Disposable {
     window.getContentManager().addContent(content);
     this.panel = chatPanel;
     Async.inBackground(this::warmUsage);
+    Async.inBackground(ChatService::deleteOldPastes);
     ScheduledFuture<?> gitRefresh = AppExecutorUtil.getAppScheduledExecutorService()
       .scheduleWithFixedDelay(this::refreshActiveGit, GIT_REFRESH_SECONDS, GIT_REFRESH_SECONDS, TimeUnit.SECONDS);
     Disposer.register(content, () -> {
@@ -586,18 +589,44 @@ public final class ChatService implements Disposable {
   }
 
   public void setArchived(String id, boolean archived) {
+    if (archived) {
+      this.archive(id);
+    } else {
+      this.select(id);
+    }
+  }
+
+  /**
+   * Archives the thread and stops its agent. Selects the first open thread in place of the active one, or a new
+   * thread when none is open.
+   * @return what undoing it needs, or null when there is no such thread
+   */
+  public @Nullable Archived archive(String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
-      return;
-    }
-    if (!archived) {
-      this.select(record.id);
-      return;
+      return null;
     }
     record.archived = true;
     this.disposeController(record.id);
     this.postUpdate(record);
-    this.selectAnotherIfActive(record.id);
+    if (!record.id.equals(this.store.activeId())) {
+      return new Archived(record.id, null, false);
+    }
+    ThreadStore.Record next = this.firstOpenThread(record.id);
+    if (next != null) {
+      this.select(next.id);
+      return new Archived(record.id, next.id, false);
+    }
+    this.newThread(null, null, null, null);
+    return new Archived(record.id, this.store.activeId(), true);
+  }
+
+  /** Lists an archived thread again without selecting it. */
+  public void restore(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record != null) {
+      this.unarchive(record);
+    }
   }
 
   private void selectAnotherIfActive(String id) {
@@ -737,6 +766,14 @@ public final class ChatService implements Disposable {
     }
   }
 
+  private static void deleteOldPastes() {
+    try {
+      PastedText.deleteOlderThan(PastedText.folder(), Instant.now().minus(PastedText.MAX_AGE));
+    } catch (IOException e) {
+      LOG.debug("Could not delete old pasted text files", e);
+    }
+  }
+
   private void warmUsage() {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     for (ThreadStore.ProjectFolder folder : this.projects()) {
@@ -792,6 +829,18 @@ public final class ChatService implements Disposable {
   ) {
   }
 
+  /**
+   * A thread just archived.
+   * @param replacement      the thread selected in its place, or null when it was not the active one
+   * @param isNewReplacement whether the replacement is a new thread, made because no other was open
+   */
+  public record Archived(
+    String thread,
+    @Nullable String replacement,
+    boolean isNewReplacement
+  ) {
+  }
+
   private final class ThreadView implements ChatView {
     private final String threadId;
 
@@ -842,6 +891,11 @@ public final class ChatService implements Disposable {
         if (!folder.path.isEmpty() && !ThreadStore.samePath(folder.path, own)) {
           directories.add(folder.path);
         }
+      }
+      try {
+        directories.add(PastedText.createFolder(PastedText.folder()).toString());
+      } catch (IOException e) {
+        LOG.warn("Could not create the folder for pasted text", e);
       }
       return directories;
     }

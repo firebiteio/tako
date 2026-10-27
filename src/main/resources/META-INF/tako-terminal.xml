@@ -1,0 +1,11 @@
+<idea-plugin>
+  <extensions defaultExtensionNs="org.jetbrains.plugins.terminal">
+    <allowedActionsProvider implementation="io.firebite.tako.ide.actions.TerminalAllowedActions"/>
+  </extensions>
+
+  <actions>
+    <reference ref="Tako.AddToChat">
+      <add-to-group group-id="Terminal.ReworkedTerminalContextMenu" anchor="last"/>
+    </reference>
+  </actions>
+</idea-plugin>

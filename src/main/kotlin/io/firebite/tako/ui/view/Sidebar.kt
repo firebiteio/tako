@@ -1,6 +1,7 @@
 package io.firebite.tako.ui.view
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.Arrangement
@@ -46,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.intellij.openapi.ui.MessageDialogBuilder
 import io.firebite.tako.agent.PermissionPrompt
+import io.firebite.tako.chat.ChatService
 import io.firebite.tako.ui.ago
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.dateTime
@@ -156,6 +158,7 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         }
       }
     }
+    workspace.archivedToast?.let { ArchivedToast(workspace, it) }
     val archived = sorted.filter { it.archived }
     if (archived.isNotEmpty()) {
       Rule()
@@ -195,6 +198,23 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         workspace.usage?.let { Text(money(it.totalCost), color = color, style = smallStyle) }
       }
     }
+  }
+}
+
+/** Offers to undo the last archive, below the list so it covers nothing, while the thread is still archived. */
+@Composable
+private fun ArchivedToast(workspace: Workspace, archived: ChatService.Archived) {
+  if (workspace.threads[archived.thread]?.archived != true) {
+    return
+  }
+  val shape = RoundedCornerShape(10.dp)
+  Row(Modifier.fillMaxWidth().padding(6.dp).clip(shape).background(colors.card).border(1.dp, colors.softBorder, shape)
+    .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Ico(Icons.archive, size = 14.dp, tint = colors.muted)
+    Text(t("sidebar.archived.toast"), Modifier.weight(1f), color = colors.fg, style = smallStyle, maxLines = 1,
+      overflow = TextOverflow.Ellipsis)
+    OutlineButton(t("sidebar.archived.undo")) { workspace.undoArchive() }
   }
 }
 
@@ -605,7 +625,7 @@ private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modi
       }
     } else {
       IconBtn(Icons.archive, t("sidebar.archive", thread.agentName), iconSize = 14.dp) {
-        workspace.service.setArchived(thread.id, true)
+        workspace.archive(thread)
       }
     }
     IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {

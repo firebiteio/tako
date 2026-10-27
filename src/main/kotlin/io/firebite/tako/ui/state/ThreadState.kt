@@ -84,6 +84,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var startingBench = false
   /** What the agent offers, once it started. */
   var info by mutableStateOf<AgentInfo?>(null)
+  /** The agent's process ended or was stopped. The next prompt starts it again. */
+  var stopped by mutableStateOf(false)
   var commands by mutableStateOf<List<AgentInfo.Command>>(emptyList())
   /** The folder the agent keeps its scratch files in, if it has one. */
   var scratchpad by mutableStateOf<String?>(null)

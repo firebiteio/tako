@@ -40,7 +40,7 @@ public final class ClaudeBackend implements AgentBackend {
   public static final String ID = "claude";
   public static final String NAME = "Claude Code";
   private static final Logger LOG = Logger.getInstance(ClaudeBackend.class);
-  private static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, true, true);
+  private static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, true, true, true, true);
   private static final long ASK_TIMEOUT_SECONDS = 60;
 
   private final Map<String, String> environment;

@@ -235,7 +235,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
 private fun TurnItemView(thread: ThreadState, item: TurnItem, forkPrompts: Int?, markdown: ChatMarkdown,
   actions: CodeActions) {
   when (item) {
-    is TurnItem.Text -> AssistantRow(item.text, markdown, actions,
+    is TurnItem.Text -> AssistantRow(thread, item.text, markdown, actions,
       forkPrompts?.let { prompts -> { thread.workspace.service.fork(thread.id, prompts) } })
     is TurnItem.Thinking -> Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).padding(2.dp),
       verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -332,16 +332,22 @@ private fun HoverMeta(hovered: Boolean, content: @Composable () -> Unit) {
   }
 }
 
-/** @param onFork forks the thread after this text, null where no fork goes */
+/**
+ * @param thread whose composer takes quotes of the selected text
+ * @param onFork forks the thread after this text, null where no fork goes
+ */
 @Composable
-private fun AssistantRow(text: AssistantText, markdown: ChatMarkdown, actions: CodeActions, onFork: (() -> Unit)?) {
+private fun AssistantRow(thread: ThreadState, text: AssistantText, markdown: ChatMarkdown, actions: CodeActions,
+  onFork: (() -> Unit)?) {
   val (interaction, hovered) = rememberHover()
   val fade = remember { Animatable(if (text.done) 1f else 0f) }
   LaunchedEffect(Unit) {
     fade.animateTo(1f, tween(600, easing = LinearOutSlowInEasing))
   }
   Column(Modifier.fillMaxWidth().hoverable(interaction).padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 8.dp)) {
-    MarkdownText(markdown, text.text, text.done, actions, Modifier.graphicsLayer { this.alpha = fade.value })
+    QuoteMenu(thread) {
+      MarkdownText(markdown, text.text, text.done, actions, Modifier.graphicsLayer { this.alpha = fade.value })
+    }
     HoverMeta(hovered) {
       IconBtn(Icons.copy, t("common.copy"), iconSize = 14.dp) { actions.copy(text.text) }
       if (onFork != null) {

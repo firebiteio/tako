@@ -17,7 +17,7 @@ It works with:
 - After each turn you get a diff of every file the agent touched
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
 - Each thread has its own model, mode and effort
-- Type `@` to mention a file, paste images, or send the editor selection
+- Type `@` to mention a file or another thread, paste images, or send the editor selection
 - Fix Problems sends a file's inspection results to the agent
 - For Claude Code, a context meter and a usage view with cost and tokens per session
 - Optional parallel runs: one prompt goes to several agents or models at once, each in its own git worktree. Compare what each changed, cost and took, then apply the best one

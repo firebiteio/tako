@@ -7,9 +7,11 @@ import com.google.gson.JsonObject;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.util.EnvironmentUtil;
 import io.firebite.tako.agent.AgentBackend;
+import io.firebite.tako.agent.AgentHistory;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.chat.thread.Conversation;
 import io.firebite.tako.ide.project.GitWorktree;
 import io.firebite.tako.json.Json;
 import io.firebite.tako.mcp.McpToolException;
@@ -32,8 +34,12 @@ final class ThreadTools implements McpTools {
   static final String STOP = "stop_thread";
   private static final long DEFAULT_WAIT_SECONDS = 300;
   private static final long MAX_WAIT_SECONDS = 3600;
+  /** About 10k tokens, below what agents take from one tool result. */
+  private static final int MAX_CONVERSATION_CHARS = 40_000;
   private static final Gson GSON = new GsonBuilder().setPrettyPrinting().create();
   private static final String THREAD_ID = "threadId";
+  private static final String CONVERSATION = "conversation";
+  private static final String NOTE = "note";
   private static final String STATES = "starting, working, waiting (for the person to answer a permission prompt or "
     + "question), idle (done, waiting for a prompt), stopped (the agent failed or exited) or closed (not open in Tako)";
 
@@ -77,6 +83,11 @@ final class ThreadTools implements McpTools {
     JsonObject threadIdProperties = new JsonObject();
     threadIdProperties.add(THREAD_ID, property("string", "The id create_thread or list_threads gave."));
 
+    JsonObject getProperties = threadIdProperties.deepCopy();
+    getProperties.add(CONVERSATION, property("boolean", "Also return the whole conversation as text: each prompt "
+      + "and the agent's answers, without tool calls. The oldest turns are left out when it is long. Use it to read "
+      + "a thread for context. Defaults to false."));
+
     JsonObject sendProperties = threadIdProperties.deepCopy();
     sendProperties.add("prompt", property("string", "The prompt, e.g. a follow-up or a correction. The thread's agent "
       + "knows its own conversation, but nothing of yours."));
@@ -93,7 +104,8 @@ final class ThreadTools implements McpTools {
       new Tool(LIST, "Lists the project's chat threads in Tako with their state: " + STATES + ".",
         schema(new JsonObject())),
       new Tool(GET, "Tells what a thread is doing: its state (" + STATES + "), its folder and branch, and the text "
-        + "its agent wrote since its last prompt.", schema(threadIdProperties, THREAD_ID)),
+        + "its agent wrote since its last prompt, or with conversation, the whole conversation instead.",
+        schema(getProperties, THREAD_ID)),
       new Tool(SEND, "Sends a prompt to another thread as if the person typed it, and opens the thread if it is "
         + "closed. Fails while the thread is starting, working or waiting, so wait_for_thread first. Returns at once; "
         + "wait_for_thread then gives the answer.", schema(sendProperties, THREAD_ID, "prompt")),
@@ -167,7 +179,43 @@ final class ThreadTools implements McpTools {
 
   private String get(JsonObject arguments) throws McpToolException {
     ThreadStore.Record record = this.find(arguments);
-    return GSON.toJson(this.details(record, this.service.controller(record.id)));
+    ChatController controller = this.service.controller(record.id);
+    JsonObject thread = this.details(record, controller);
+    if (Json.bool(arguments, CONVERSATION)) {
+      thread.remove("answer");
+      this.addConversation(thread, record, controller);
+    }
+    return GSON.toJson(thread);
+  }
+
+  /**
+   * Adds the open thread's conversation, or else what its agent's records hold, or else a note on why it cannot be
+   * read. Reads the records without starting the agent, so the thread stays as it is.
+   */
+  private void addConversation(JsonObject thread, ThreadStore.Record record, @Nullable ChatController controller) {
+    String text = controller != null ? controller.conversation(MAX_CONVERSATION_CHARS) : "";
+    if (!text.isEmpty() || record.sessionId == null) {
+      thread.addProperty(CONVERSATION, text);
+      return;
+    }
+    AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
+    switch (backend.history(this.service.workFolder(record), record.sessionId)) {
+      case AgentHistory.Loaded loaded -> thread.addProperty(CONVERSATION,
+        Conversation.of(loaded.events()).text(MAX_CONVERSATION_CHARS));
+      case AgentHistory.Missing missing -> thread.addProperty(NOTE, "The conversation cannot be read: the agent's "
+        + "records of this session are gone.");
+      case AgentHistory.FromSession fromSession -> {
+        if (controller == null) {
+          thread.addProperty(NOTE, "The conversation cannot be read: " + backend.displayName() + " gives it only "
+            + "to a running thread, and this one is closed.");
+        } else if (controller.state() == ChatController.State.STARTING) {
+          thread.addProperty(NOTE, "The thread is starting and its conversation is still loading. Call get_thread "
+            + "again in a moment.");
+        } else {
+          thread.addProperty(CONVERSATION, text);
+        }
+      }
+    }
   }
 
   private String send(JsonObject arguments) throws McpToolException {
