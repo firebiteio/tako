@@ -202,6 +202,8 @@ class MenuEntry(
   val description: String? = null,
   val icon: IconKey? = null,
   val checked: Boolean = false,
+  /** Shows a remove button that runs this and keeps the menu open. */
+  val remove: (() -> Unit)? = null,
   val run: () -> Unit,
 )
 
@@ -244,6 +246,9 @@ fun MenuPopup(entries: List<MenuEntry>, title: String? = null, alignment: Alignm
           }
           if (entry.checked) {
             Ico(Icons.check, size = 14.dp, tint = colors.primary)
+          }
+          if (entry.remove != null) {
+            IconBtn(Icons.closeSmall, t("menu.remove"), iconSize = 14.dp, onClick = entry.remove)
           }
         }
       }

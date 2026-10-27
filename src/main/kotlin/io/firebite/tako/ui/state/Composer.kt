@@ -10,13 +10,20 @@ import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ui.t
+import java.io.IOException
 import kotlin.math.min
 import kotlin.math.roundToInt
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 const val CACHE_TTL_5M = 5 * 60 * 1000L
 const val CACHE_TTL_1H = 60 * 60 * 1000L
 /** Without a reported window size, assume the common one. */
 private const val DEFAULT_MAX_TOKENS = 200000L
+/** Reads and writes the stash file off the EDT, one call at a time in the order asked. */
+private val STASH_IO = Dispatchers.IO.limitedParallelism(1)
 
 /** The typed text, without surrounding blanks. */
 val ThreadState.typed: String
@@ -76,33 +83,77 @@ fun ThreadState.sendCommand(command: String) {
 }
 
 /**
- * Puts the draft with its attachments in the project's stash and clears the box. With an empty box it brings back the
- * stashed draft, or offers the stashed ones to pick from when there are several.
+ * Puts the draft with its attachments in the project's stash and clears the box; a draft that could not be saved comes
+ * back. With an empty box it brings back the stashed draft, or offers the stashed ones when there are several.
  */
-fun ThreadState.toggleStash() {
-  val stash = PromptStash.getInstance(this.workspace.project)
-  if (this.typed.isNotEmpty() || this.images.isNotEmpty() || this.contexts.isNotEmpty()) {
-    stash.push(this.typed, this.contexts.toList(), this.images.map { it.image })
-    this.contexts.clear()
-    this.images.clear()
-    this.input.clearText()
-    return
+fun ThreadState.toggleStash(): Job {
+  if (this.typed.isEmpty() && this.images.isEmpty() && this.contexts.isEmpty()) {
+    return this.workspace.scope.launch {
+      val entries = this@toggleStash.withStash { it.entries() }
+      when (entries.size) {
+        0 -> {}
+        1 -> this@toggleStash.restore(entries[0])
+        else -> this@toggleStash.stashMenu = entries
+      }
+    }
   }
-  val entries = stash.entries()
-  when (entries.size) {
-    0 -> {}
-    1 -> this.restoreStash(entries[0])
-    else -> this.stashMenu = entries
+  val draft = ChatMessage.Submit(this.input.text.toString(), this.contexts.toList(), this.images.map { it.image })
+  this.contexts.clear()
+  this.images.clear()
+  this.input.clearText()
+  return this.workspace.scope.launch {
+    try {
+      this@toggleStash.withStash { it.push(draft) }
+    } catch (e: IOException) {
+      this@toggleStash.putBack(draft)
+      this@toggleStash.showAlert(t("stash.failed", e.message ?: ""))
+    }
   }
 }
 
 /** Takes the draft out of the stash and into the box. */
-fun ThreadState.restoreStash(entry: PromptStash.Entry) {
-  val taken = PromptStash.getInstance(this.workspace.project).take(entry.id) ?: return
-  this.contexts.addAll(taken.context)
-  this.images.addAll(taken.images.map { PendingImage(it) })
-  this.input.setTextAndPlaceCursorAtEnd(taken.text)
+fun ThreadState.restoreStash(entry: PromptStash.Entry): Job = this.workspace.scope.launch {
+  this@restoreStash.restore(entry)
+}
+
+/** Deletes the draft from the stash and from the open menu. */
+fun ThreadState.removeStashed(entry: PromptStash.Entry): Job = this.workspace.scope.launch {
+  this@removeStashed.withStash { it.take(entry.id) }
+  this@removeStashed.stashMenu = this@removeStashed.stashMenu?.filter { it.id != entry.id }?.ifEmpty { null }
+}
+
+private suspend fun ThreadState.restore(entry: PromptStash.Entry) {
+  val taken = this.withStash { it.take(entry.id) }
+  if (taken == null) {
+    this.showAlert(t("stash.gone"))
+    return
+  }
+  this.putBack(taken.prompt)
   this.workspace.focusComposer++
+}
+
+/** Runs a stash call on [STASH_IO]. Says once that an unreadable stash file was moved aside. */
+private suspend fun <T> ThreadState.withStash(call: (PromptStash) -> T): T {
+  val project = this.workspace.project
+  val (result, setAside) = withContext(STASH_IO) {
+    val stash = PromptStash.getInstance(project)
+    call(stash) to stash.takeSetAside()
+  }
+  if (setAside != null) {
+    this.showAlert(t("stash.unreadable", setAside.toString()))
+  }
+  return result
+}
+
+/** Puts a prompt back in the box: its context and images, and its text unless something new was typed. */
+private fun ThreadState.putBack(prompt: ChatMessage.Submit) {
+  this.contexts.clear()
+  this.contexts.addAll(prompt.context)
+  this.images.clear()
+  this.images.addAll(prompt.images.map { PendingImage(it) })
+  if (this.typed.isEmpty()) {
+    this.input.setTextAndPlaceCursorAtEnd(prompt.text)
+  }
 }
 
 /** IDE context attached from an editor action; a proposed prompt fills an empty box. */
@@ -298,13 +349,7 @@ private fun ThreadState.startBench(text: String): Boolean {
 fun ThreadState.onBenchFailed(prompt: ChatMessage.Submit, error: String) {
   this.startingBench = false
   this.setBusy(false)
-  this.contexts.clear()
-  this.contexts.addAll(prompt.context)
-  this.images.clear()
-  this.images.addAll(prompt.images.map { PendingImage(it) })
-  if (this.typed.isEmpty()) {
-    this.input.setTextAndPlaceCursorAtEnd(prompt.text)
-  }
+  this.putBack(prompt)
   if (error.isNotEmpty()) {
     this.showAlert(error)
   }

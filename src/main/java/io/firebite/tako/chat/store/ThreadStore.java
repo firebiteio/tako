@@ -15,7 +15,6 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
@@ -180,10 +179,7 @@ public final class ThreadStore {
   /** Writes the threads. Call after changing a record's fields. */
   public synchronized void save() {
     try {
-      Files.createDirectories(this.file.getParent());
-      Path temporary = this.file.resolveSibling(this.file.getFileName() + ".tmp");
-      Files.writeString(temporary, GSON.toJson(this.data), StandardCharsets.UTF_8);
-      Files.move(temporary, this.file, StandardCopyOption.REPLACE_EXISTING, StandardCopyOption.ATOMIC_MOVE);
+      AtomicFiles.write(this.file, GSON.toJson(this.data));
     } catch (IOException e) {
       LOG.warn("Could not save chat threads to " + this.file, e);
     }

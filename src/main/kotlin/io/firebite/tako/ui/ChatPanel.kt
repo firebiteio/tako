@@ -9,7 +9,6 @@ import io.firebite.tako.chat.ChatService
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.view.ChatScreen
-import io.firebite.tako.ui.view.StashAction
 import kotlinx.coroutines.cancel
 import org.jetbrains.jewel.bridge.JewelComposePanel
 import javax.swing.JComponent
@@ -24,7 +23,6 @@ class ChatPanel(parent: Disposable, project: Project, service: ChatService) : Di
 
   init {
     Disposer.register(parent, this)
-    StashAction().register(this.component, this)
   }
 
   /** Safe from any thread. */
