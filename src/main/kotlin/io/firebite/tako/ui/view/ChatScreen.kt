@@ -50,6 +50,7 @@ import androidx.compose.ui.window.PopupProperties
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.ide.CopyPasteManager
 import io.firebite.tako.ide.editor.IdeFiles
+import io.firebite.tako.ui.state.ArchivedThread
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.t
 import java.awt.datatransfer.StringSelection
@@ -62,6 +63,7 @@ val NARROW = 640.dp
 /** The width conversations and the composer keep to on wide windows, CSS's 46rem. */
 val LANE: Dp
   @Composable @ReadOnlyComposable get() = (46 * textStyle.fontSize.value).dp
+private const val TOAST_MILLIS = 5000L
 
 @Composable
 fun ChatScreen(workspace: Workspace) {
@@ -98,6 +100,9 @@ fun ChatScreen(workspace: Workspace) {
             modifier = Modifier.width(minOf(280.dp, this.maxWidth * 0.85f)).fillMaxHeight().shadow(16.dp)
               .background(colors.bg))
         }
+        workspace.archivedToast?.let {
+          ArchivedToast(workspace, it, Modifier.align(Alignment.BottomStart).padding(12.dp))
+        }
         workspace.lightbox?.let { image ->
           Box(Modifier.fillMaxSize().background(Color.Black.copy(alpha = 0.75f)).padding(24.dp)
             .clickable(remember { MutableInteractionSource() }, null) { workspace.lightbox = null },
@@ -110,6 +115,28 @@ fun ChatScreen(workspace: Workspace) {
         }
       }
     }
+  }
+}
+
+/** Offers to undo an archive for a few seconds, while the thread is still archived. */
+@Composable
+private fun ArchivedToast(workspace: Workspace, archived: ArchivedThread, modifier: Modifier) {
+  LaunchedEffect(archived) {
+    delay(TOAST_MILLIS)
+    if (workspace.archivedToast === archived) {
+      workspace.archivedToast = null
+    }
+  }
+  if (workspace.threads[archived.thread]?.archived != true) {
+    return
+  }
+  val shape = RoundedCornerShape(12.dp)
+  Row(modifier.shadow(8.dp, shape).clip(shape).background(colors.card).border(1.dp, colors.softBorder, shape)
+    .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Ico(Icons.archive, size = 14.dp, tint = colors.muted)
+    Text(t("sidebar.archived.toast"), color = colors.fg, style = smallStyle)
+    OutlineButton(t("sidebar.archived.undo")) { workspace.undoArchive() }
   }
 }
 

@@ -54,6 +54,8 @@ class Workspace(val service: ChatService, val project: Project) {
 
   var sidebarOpen by mutableStateOf(PropertiesComponent.getInstance().getBoolean(SIDEBAR_KEY, true))
   var showArchived by mutableStateOf(false)
+  /** The thread last archived, while the toast offering to undo it shows. */
+  var archivedToast by mutableStateOf<ArchivedThread?>(null)
   /** Whether the thread list shows the search field. */
   var searching by mutableStateOf(false)
   val searchInput = TextFieldState()
@@ -127,6 +129,23 @@ class Workspace(val service: ChatService, val project: Project) {
   fun open(thread: ThreadState) {
     this.activate(thread)
     this.service.select(thread.id)
+  }
+
+  /** Archives the thread and shows a toast to undo it, replacing the one before. */
+  fun archive(thread: ThreadState) {
+    this.archivedToast = ArchivedThread(thread.id, thread === this.active)
+    this.service.setArchived(thread.id, true)
+  }
+
+  /** Lists the thread the toast names again, and shows it if it was shown when archived. */
+  fun undoArchive() {
+    val archived = this.archivedToast ?: return
+    this.archivedToast = null
+    if (archived.wasActive) {
+      this.service.setArchived(archived.thread, false)
+    } else {
+      this.service.restore(archived.thread)
+    }
   }
 
   /** Opens the menu of sessions to resume once the IDE found them. */

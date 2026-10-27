@@ -522,6 +522,14 @@ public final class ChatService implements Disposable {
     this.selectAnotherIfActive(record.id);
   }
 
+  /** Lists an archived thread again without selecting it. */
+  public void restore(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record != null) {
+      this.unarchive(record);
+    }
+  }
+
   private void selectAnotherIfActive(String id) {
     if (!id.equals(this.store.activeId())) {
       return;

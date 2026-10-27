@@ -580,7 +580,7 @@ private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modi
       }
     } else {
       IconBtn(Icons.archive, t("sidebar.archive", thread.agentName), iconSize = 14.dp) {
-        workspace.service.setArchived(thread.id, true)
+        workspace.archive(thread)
       }
     }
     IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {
