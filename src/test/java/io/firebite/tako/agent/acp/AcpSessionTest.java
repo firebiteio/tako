@@ -1,6 +1,7 @@
 package io.firebite.tako.agent.acp;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import io.firebite.tako.agent.AgentEvent;
@@ -40,6 +41,7 @@ public class AcpSessionTest {
       assertEquals("ask", info.mode());
       assertEquals("Edits freely", info.modes().get(1).description());
       assertTrue(info.capabilities().images());
+      assertFalse(session.takesTools());
 
       session.prompt("change a.txt", List.of(), 1);
       List<AgentEvent> streamed = listener.until(AgentEvent.ToolStarted.class);

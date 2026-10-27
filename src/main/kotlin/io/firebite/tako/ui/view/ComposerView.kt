@@ -409,12 +409,18 @@ private suspend fun updateMention(thread: ThreadState, suggestions: Suggestions,
   suggestions.index = suggestions.index.coerceAtMost(max(0, files.size + threads.size - 1))
 }
 
-/** The other unarchived threads of the composer's project whose title has the query, title starts first. */
+/**
+ * The other unarchived threads of the composer's project whose title has the query, title starts first. None when the
+ * thread's agent lacks Tako's tools, as it could not read them.
+ */
 private fun mentionThreads(thread: ThreadState, query: String): List<ThreadState> {
+  if (thread.controller?.hasTools() != true) {
+    return emptyList()
+  }
   val workspace = thread.workspace
   val project = workspace.projectOf(thread).path
   return workspace.threads.values.filter {
-    it !== thread && !it.archived && workspace.projectOf(it).path == project && it.title.contains(query, true)
+    it !== thread && !it.archived && it.title.contains(query, true) && workspace.projectOf(it).path == project
   }.sortedWith(compareBy<ThreadState> { !it.title.startsWith(query, true) }.thenByDescending { it.updatedAt })
     .take(MAX_THREAD_ITEMS)
 }

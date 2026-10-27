@@ -77,6 +77,7 @@ public final class ChatController implements Disposable {
 
   private volatile State state = State.STARTING;
   private volatile boolean isDisposed;
+  private volatile boolean hasTools;
   private volatile @Nullable String error;
   private volatile @Nullable String workingDirectory;
   private volatile @Nullable String scratchpadPath;
@@ -233,6 +234,11 @@ public final class ChatController implements Disposable {
     }
   }
 
+  /** Whether the running agent has Tako's MCP tools, such as {@code get_thread}. False until it started. */
+  public boolean hasTools() {
+    return this.hasTools;
+  }
+
   /** The prompts and answers of the whole thread, see {@link Conversation#text}. */
   public String conversation(int maxChars) {
     return this.conversation.text(maxChars);
@@ -324,6 +330,7 @@ public final class ChatController implements Disposable {
         this.postError(message);
         return;
       }
+      this.hasTools = launch.toolsUrl() != null && session.takesTools();
       String prompt = this.firstPrompt.getAndSet(null);
       this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
@@ -372,7 +379,7 @@ public final class ChatController implements Disposable {
     this.setState(State.WORKING);
     this.error = null;
     this.untakenTurns.add(turn);
-    this.conversation.prompt(typed);
+    this.conversation.send(turn, typed);
     session.prompt(prompt, images, turn);
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
@@ -533,6 +540,7 @@ public final class ChatController implements Disposable {
   /** A prompt that joins the running turn keeps its changes and answer under that turn. */
   private void onPromptTaken(AgentEvent.PromptTaken taken) {
     this.untakenTurns.remove(taken.key());
+    this.conversation.take(taken.key());
     if (taken.startsTurn()) {
       this.changes.startTurn(taken.key());
       synchronized (this.answer) {

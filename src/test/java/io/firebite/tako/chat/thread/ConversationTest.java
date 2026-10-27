@@ -19,7 +19,8 @@ public class ConversationTest {
       new AgentEvent.Text("m1", "Looking.", null),
       new AgentEvent.Text("m2", "subagent text", "task1"),
       new AgentEvent.Text("m3", "Fixed it.", null)));
-    conversation.prompt("thanks ");
+    conversation.send(1, "thanks ");
+    conversation.take(1);
     conversation.add(new AgentEvent.Text("m4", "You're welcome.", null));
 
     assertEquals("Person: fix the build\n\nAgent: Looking.\n\nFixed it.\n\nPerson: thanks\n\nAgent: You're welcome.",
@@ -27,9 +28,34 @@ public class ConversationTest {
   }
 
   @Test
+  public void aQueuedPromptCountsOnceTaken() {
+    Conversation conversation = new Conversation();
+    conversation.send(1, "first");
+    conversation.take(1);
+    conversation.add(new AgentEvent.Text("m1", "Working on it.", null));
+    conversation.send(2, "second");
+    conversation.add(new AgentEvent.Text("m2", "First is done.", null));
+    conversation.take(2);
+    conversation.add(new AgentEvent.Text("m3", "Second is done.", null));
+
+    assertEquals("Person: first\n\nAgent: Working on it.\n\nFirst is done.\n\nPerson: second\n\nAgent: Second is done.",
+      conversation.text(1000));
+  }
+
+  @Test
+  public void leavesOutSlashCommandsAndNamesImageOnlyPrompts() {
+    Conversation conversation = Conversation.of(List.of(prompt("/compact"), prompt("")));
+    conversation.send(1, "/clear");
+    conversation.take(1);
+
+    assertEquals("Person: [images]", conversation.text(1000));
+  }
+
+  @Test
   public void resetStartsOver() {
     Conversation conversation = new Conversation();
-    conversation.prompt("old");
+    conversation.send(1, "old");
+    conversation.take(1);
     conversation.reset(List.of(prompt("replayed")));
 
     assertEquals("Person: replayed", conversation.text(1000));
@@ -43,8 +69,8 @@ public class ConversationTest {
   }
 
   @Test
-  public void cutsATurnLongerThanTheLimit() {
-    assertEquals("Person: ab [cut]", Conversation.of(List.of(prompt("abcdef"))).text(10));
+  public void keepsTheEndOfATurnLongerThanTheLimit() {
+    assertEquals("[cut] n: abcdef", Conversation.of(List.of(prompt("abcdef"))).text(9));
   }
 
   private static AgentEvent prompt(String text) {

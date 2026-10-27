@@ -21,7 +21,8 @@ public record ContextItem(
 
   /** Another Tako thread, by reference: the agent reads its conversation over MCP when it needs it. */
   public static ContextItem thread(String threadId, String title) {
-    return create(Kind.THREAD, title, "Referenced Tako thread \"" + title + "\" (id " + threadId + "). Read its "
+    String quoted = "\"" + title.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    return create(Kind.THREAD, title, "Referenced Tako thread " + quoted + " (id " + threadId + "). Read its "
       + "conversation with Tako's get_thread tool, threadId \"" + threadId + "\" and conversation true.");
   }
 

@@ -2,12 +2,16 @@ package io.firebite.tako.chat.thread;
 
 import io.firebite.tako.agent.AgentEvent;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import org.jetbrains.annotations.Nullable;
 
 /** A thread's prompts and the agent's answers as plain text, without tool calls or thinking, for another agent to read. */
 public final class Conversation {
   private final List<Turn> turns = new ArrayList<>();
+  /** Prompts sent that the agent has not taken yet, by their key. */
+  private final Map<Integer, String> sent = new HashMap<>();
 
   public static Conversation of(List<AgentEvent> events) {
     Conversation conversation = new Conversation();
@@ -41,14 +45,30 @@ public final class Conversation {
     }
   }
 
-  /** A prompt as typed, without the IDE context sent along. */
-  public synchronized void prompt(String text) {
-    this.turns.add(new Turn(text.strip()));
+  /** A prompt as typed, without the IDE context sent along. It counts once the agent takes it, see {@link #take}. */
+  public synchronized void send(int key, String text) {
+    this.sent.put(key, text);
+  }
+
+  /** The agent took the prompt sent with {@code key}, so the answer text that follows belongs to it. */
+  public synchronized void take(int key) {
+    String text = this.sent.remove(key);
+    if (text != null) {
+      this.prompt(text);
+    }
+  }
+
+  /** Slash commands are left out; a prompt of only images shows as such. */
+  private void prompt(String text) {
+    String prompt = text.strip();
+    if (!prompt.startsWith("/")) {
+      this.turns.add(new Turn(prompt.isEmpty() ? "[images]" : prompt));
+    }
   }
 
   /**
    * The conversation, oldest turn first. When it is longer than {@code maxChars}, the oldest turns are left out and a
-   * note says how many.
+   * note says how many. A newest turn longer than that keeps its end.
    */
   public synchronized String text(int maxChars) {
     List<String> kept = new ArrayList<>();
@@ -58,7 +78,7 @@ public final class Conversation {
       if (!kept.isEmpty() && length + turn.length() > maxChars) {
         break;
       }
-      kept.add(turn.length() > maxChars ? turn.substring(0, maxChars) + " [cut]" : turn);
+      kept.add(turn.length() > maxChars ? "[cut] " + turn.substring(turn.length() - maxChars) : turn);
       length += turn.length();
     }
     StringBuilder text = new StringBuilder();
