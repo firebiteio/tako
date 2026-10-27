@@ -8,8 +8,8 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Stands in for {@code codex app-server}. It answers the handshake, then plays one turn that streams a message and asks
- * to run a command, echoing the decision it got.
+ * Stands in for {@code codex app-server}. It answers the handshake, starts or resumes its one thread, then plays one
+ * turn that streams a message and asks to run a command, echoing the decision it got.
  */
 public final class FakeCodex {
   private static final String THREAD = "019a0000-0000-7000-8000-000000000001";
@@ -32,8 +32,8 @@ public final class FakeCodex {
         case "model/list" -> respond(id, "{\"data\":[{\"id\":\"gpt-x\",\"model\":\"gpt-x\",\"displayName\":\"GPT X\","
           + "\"description\":\"Fast\",\"hidden\":false,\"supportedReasoningEfforts\":[{\"reasoningEffort\":\"low\"},"
           + "{\"reasoningEffort\":\"high\"}]}],\"nextCursor\":null}");
-        case "thread/start" -> respond(id, "{\"thread\":{\"id\":\"" + THREAD + "\",\"turns\":[]},\"model\":\"gpt-x\","
-          + "\"cwd\":\"/work\",\"reasoningEffort\":\"low\"}");
+        case "thread/start", "thread/resume" -> respond(id, "{\"thread\":{\"id\":\"" + THREAD + "\",\"turns\":[]},"
+          + "\"model\":\"gpt-x\",\"cwd\":\"/work\",\"reasoningEffort\":\"low\"}");
         case "turn/start" -> turn(id, reader);
         default -> {
         }

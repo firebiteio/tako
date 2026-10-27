@@ -356,6 +356,7 @@ fun ThreadState.onInit(info: AgentInfo, projectRoot: String?) {
     this.projectRoot = projectRoot
   }
   this.info = info
+  this.stopped = false
   this.commands = info.commands
   val wanted = info.model ?: ""
   val models = info.models
@@ -381,6 +382,7 @@ private fun ThreadState.selectResolvedModel(resolved: String) {
 
 /** The process ended; a crash offers a restart. */
 fun ThreadState.onExit(code: Int, stderr: String) {
+  this.stopped = true
   this.finishTurn(null)
   this.queued.clear()
   this.setBusy(false)

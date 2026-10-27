@@ -313,10 +313,12 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
     }
     this.emit(new AgentEvent.SessionStarted(this.sessionId, this.launch.workDirectory().toString(), model, mode,
       null));
-    JsonObject promptCapabilities = Json.object(Json.object(agent, "agentCapabilities"), "promptCapabilities");
+    JsonObject capabilities = Json.object(agent, "agentCapabilities");
+    JsonObject promptCapabilities = Json.object(capabilities, "promptCapabilities");
     return new AgentInfo(AcpBackend.ID_PREFIX + this.name, this.name, TakoBundle.message("auth.acp.login", this.name),
-      new AgentInfo.Capabilities(Json.bool(promptCapabilities, "image"), false, false, false), models, model, modes,
-      mode, effort, List.of());
+      new AgentInfo.Capabilities(Json.bool(promptCapabilities, "image"), false, false, false,
+        Json.bool(capabilities, "loadSession")),
+      models, model, modes, mode, effort, List.of());
   }
 
   /** Applies the thread's model, mode and effort where the agent's defaults differ. */

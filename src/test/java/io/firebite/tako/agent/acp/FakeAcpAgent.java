@@ -8,8 +8,8 @@ import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Stands in for an ACP agent. It offers a model and two modes, replays a session on load, and plays one prompt that
- * streams text, asks to edit a file and reports the edit as a diff, echoing the option it got.
+ * Stands in for an ACP agent. It offers a model and two modes, replays session s0 on load and fails to load any other,
+ * and plays one prompt that streams text, asks to edit a file and reports the edit as a diff, echoing the option it got.
  */
 public final class FakeAcpAgent {
   private FakeAcpAgent() {
@@ -28,6 +28,10 @@ public final class FakeAcpAgent {
           + "\"version\":\"1\"}}");
         case "session/new" -> respond(id, session("s1"));
         case "session/load" -> {
+          if (!"s0".equals(message.getAsJsonObject("params").get("sessionId").getAsString())) {
+            emit("{\"jsonrpc\":\"2.0\",\"id\":" + id + ",\"error\":{\"code\":-32002,\"message\":\"No such session\"}}");
+            continue;
+          }
           update("s0", "{\"sessionUpdate\":\"user_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"earlier "
             + "question\"}}");
           update("s0", "{\"sessionUpdate\":\"agent_message_chunk\",\"content\":{\"type\":\"text\",\"text\":\"earlier "
