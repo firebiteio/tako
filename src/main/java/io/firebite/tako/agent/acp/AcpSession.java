@@ -48,6 +48,7 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
   private final List<AgentEvent> history = new ArrayList<>();
   private volatile @Nullable String sessionId;
   private volatile boolean isLoading;
+  private volatile boolean takesTools;
   private volatile long turnStartedAt;
   private int requests;
 
@@ -150,6 +151,11 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
   }
 
   @Override
+  public boolean takesTools() {
+    return this.takesTools;
+  }
+
+  @Override
   public boolean isAlive() {
     return this.connection.isAlive();
   }
@@ -199,6 +205,7 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
       server.add("headers", new JsonArray());
       servers.add(server);
     }
+    this.takesTools = !servers.isEmpty();
     return servers;
   }
 
@@ -309,7 +316,7 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
     JsonObject capabilities = Json.object(agent, "agentCapabilities");
     JsonObject promptCapabilities = Json.object(capabilities, "promptCapabilities");
     return new AgentInfo(AcpBackend.ID_PREFIX + this.name, this.name, TakoBundle.message("auth.acp.login", this.name),
-      new AgentInfo.Capabilities(Json.bool(promptCapabilities, "image"), false, false,
+      new AgentInfo.Capabilities(Json.bool(promptCapabilities, "image"), false, false, false,
         Json.bool(capabilities, "loadSession")),
       models, model, modes, mode, effort, List.of());
   }

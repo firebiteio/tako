@@ -238,6 +238,7 @@ fun ImageThumb(image: ImageAttachment, size: Dp, onOpen: () -> Unit, onRemove: (
 private val CHIP_FILE = Color(0xFF3B9EDE)
 private val CHIP_PROBLEMS = Color(0xFFD9A343)
 private val CHIP_SELECTION = Color(0xFFA87FD6)
+private val CHIP_THREAD = Color(0xFF4FAE8A)
 
 /** A chip for attached IDE context. */
 @Composable
@@ -245,11 +246,13 @@ fun MentionChip(item: ContextItem, onRemove: (() -> Unit)?) {
   val chip = when (item.kind) {
     ContextItem.Kind.PROBLEMS -> CHIP_PROBLEMS
     ContextItem.Kind.SELECTION -> CHIP_SELECTION
+    ContextItem.Kind.THREAD -> CHIP_THREAD
     else -> CHIP_FILE
   }
   val icon = when (item.kind) {
     ContextItem.Kind.PROBLEMS -> Icons.warning
     ContextItem.Kind.SELECTION -> Icons.selection
+    ContextItem.Kind.THREAD -> Icons.thread
     else -> Icons.file
   }
   val color = lerpColor(chip, colors.fg, 0.22f)

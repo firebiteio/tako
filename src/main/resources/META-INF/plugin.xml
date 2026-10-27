@@ -13,6 +13,7 @@
 
   <depends>com.intellij.modules.platform</depends>
   <depends>com.intellij.modules.compose</depends>
+  <depends optional="true" config-file="tako-terminal.xml">org.jetbrains.plugins.terminal</depends>
   <dependencies>
     <module name="intellij.platform.compose.markdown"/>
   </dependencies>
@@ -39,6 +40,7 @@
     <group id="Tako.ContextGroup" popup="true" icon="/icons/tako.svg">
       <action id="Tako.AddToChat" class="io.firebite.tako.ide.actions.AddToChatAction">
         <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift K"/>
+        <add-to-group group-id="ConsoleEditorPopupMenu" anchor="last"/>
       </action>
       <action id="Tako.FixProblems" class="io.firebite.tako.ide.actions.FixProblemsAction"/>
       <add-to-group group-id="EditorPopupMenu" anchor="last"/>

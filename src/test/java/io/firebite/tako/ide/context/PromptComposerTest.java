@@ -1,6 +1,7 @@
 package io.firebite.tako.ide.context;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertTrue;
 
 import java.util.List;
 import org.junit.Test;
@@ -18,6 +19,19 @@ public class PromptComposerTest {
 
     assertEquals("explain\n\n<ide_context>\nSelected in A.java (lines 1-2):\n```java\nx\n```\n\n</ide_context>",
       prompt);
+  }
+
+  @Test
+  public void threadIsReferencedByTitleAndId() {
+    String prompt = PromptComposer.compose("continue", List.of(ContextItem.thread("t-1", "Login bug")));
+
+    assertEquals("continue\n\n<ide_context>\nReferenced Tako thread \"Login bug\" (id t-1). Read its conversation "
+      + "with Tako's get_thread tool, threadId \"t-1\" and conversation true.\n\n</ide_context>", prompt);
+  }
+
+  @Test
+  public void threadTitleQuotesAreEscaped() {
+    assertTrue(ContextItem.thread("t-1", "Say \"hi\"").text().startsWith("Referenced Tako thread \"Say \\\"hi\\\"\""));
   }
 
   @Test

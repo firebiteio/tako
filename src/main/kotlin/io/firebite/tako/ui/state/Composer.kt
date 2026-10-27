@@ -86,6 +86,56 @@ fun ThreadState.addContext(item: ContextItem, prefill: String?) {
   this.workspace.focusComposer++
 }
 
+/** The box takes quotes unless a waiting approval or question would take the text as its answer. */
+val ThreadState.canQuote: Boolean
+  get() = this.question == null && this.approvals.isEmpty()
+
+/** Quotes text from the timeline at the end of the box, with an empty line under it for the reply. */
+fun ThreadState.quote(text: String) {
+  if (!this.canQuote) {
+    return
+  }
+  this.input.setTextAndPlaceCursorAtEnd(withQuote(this.input.text.toString(), text))
+  this.workspace.focusComposer++
+}
+
+/**
+ * [typed] with [text] added as a Markdown blockquote, `> ` before each line, and an empty line after it. A code
+ * fence left open in [typed] is closed first, so the quote doesn't land inside the code.
+ */
+fun withQuote(typed: String, text: String): String {
+  val quote = text.trim('\r', '\n').lines().joinToString("\n") { if (it.isBlank()) ">" else "> " + it.trimEnd() }
+  val before = typed.trimEnd()
+  val fence = openFence(before)
+  val closed = if (fence == null) before else before + "\n" + fence
+  return (if (closed.isEmpty()) "" else closed + "\n\n") + quote + "\n\n"
+}
+
+/** The run of backticks or tildes of the code fence [text] leaves open, null if none is open. */
+private fun openFence(text: String): String? {
+  var open: String? = null
+  for (line in text.lines()) {
+    val trimmed = line.trimStart(' ')
+    val mark = trimmed.firstOrNull()
+    if (line.length - trimmed.length > 3 || (mark != '`' && mark != '~')) {
+      continue
+    }
+    val run = trimmed.takeWhile { it == mark }
+    val rest = trimmed.substring(run.length)
+    if (run.length < 3) {
+      continue
+    }
+    if (open == null) {
+      if (mark == '~' || !rest.contains('`')) {
+        open = run
+      }
+    } else if (mark == open[0] && run.length >= open.length && rest.isBlank()) {
+      open = null
+    }
+  }
+  return open
+}
+
 fun ThreadState.addImage(image: ImageAttachment) {
   this.images.add(PendingImage(image))
   if (this.isActive) {
@@ -129,9 +179,46 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
   this.removeApproval(approval.requestId)
 }
 
-/** Declines with the typed text as the reason, or the fallback without one. */
+/** Declines with the typed text as the reason, or the fallback without one. See [decline] for agents without a reason. */
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
-  this.answer(approval, false, this.takeFeedback().ifEmpty { fallback }, interrupt)
+  val decline = decline(approval.prompt, this.typed, fallback, interrupt,
+    this.info?.capabilities?.declineReason != false)
+  if (!decline.keepsFeedback) {
+    this.input.clearText()
+  }
+  this.answer(approval, false, decline.message, decline.interrupt)
+  val followUp = decline.followUp ?: return
+  this.startPrompt(followUp, this.contexts.toList(), this.images.map { it.image })
+  this.contexts.clear()
+  this.images.clear()
+}
+
+/**
+ * How a decline reaches the agent. @param followUp a prompt sent after it, @param keepsFeedback the typed text stays
+ * in the box
+ */
+data class Decline(val message: String, val interrupt: Boolean, val followUp: String?, val keepsFeedback: Boolean)
+
+/**
+ * An agent that cannot read a decline reason gets typed feedback as the next prompt, naming what was declined. Its turn
+ * is ended first, so it acts on the feedback instead of working on without it. Declining and stopping keeps the
+ * feedback in the box, since a prompt would start the agent again.
+ *
+ * @param readsReason the agent reads the decline message
+ */
+fun decline(prompt: PermissionPrompt, feedback: String, fallback: String, stop: Boolean, readsReason: Boolean): Decline =
+  when {
+    readsReason || feedback.isEmpty() -> Decline(feedback.ifEmpty { fallback }, stop, null, false)
+    stop -> Decline(fallback, true, null, true)
+    else -> Decline(fallback, true, declinedPrompt(prompt, feedback), false)
+  }
+
+/** The feedback, after what was declined: the tool and its command, file, URL or pattern. */
+private fun declinedPrompt(prompt: PermissionPrompt, feedback: String): String {
+  val input = prompt.input
+  val target = input.string("command") ?: input.string("file_path") ?: input.string("url") ?: input.string("pattern")
+  val tool = prompt.label ?: prompt.toolName
+  return "I declined " + tool + (if (target.isNullOrEmpty()) "." else ": $target") + "\n\n" + feedback
 }
 
 /** The typed text declines the waiting approval, or refines the plan. */
