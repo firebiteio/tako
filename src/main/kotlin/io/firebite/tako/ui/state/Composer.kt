@@ -129,9 +129,16 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
   this.removeApproval(approval.requestId)
 }
 
-/** Declines with the typed text as the reason, or the fallback without one. */
+/**
+ * Declines with the typed text as the reason, or the fallback without one. An agent whose protocol has no decline
+ * reason gets the typed text as the next prompt instead.
+ */
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
-  this.answer(approval, false, this.takeFeedback().ifEmpty { fallback }, interrupt)
+  val feedback = this.takeFeedback()
+  this.answer(approval, false, feedback.ifEmpty { fallback }, interrupt)
+  if (feedback.isNotEmpty() && this.info?.capabilities?.declineReason == false) {
+    this.startPrompt(feedback, emptyList(), emptyList())
+  }
 }
 
 /** The typed text declines the waiting approval, or refines the plan. */

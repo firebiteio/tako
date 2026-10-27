@@ -703,6 +703,7 @@ private fun SendButton(thread: ThreadState) {
   val enabled = isStop || hasText || (thread.question?.selected?.isNotEmpty() == true)
   val tip = when {
     isStop -> t("composer.stop")
+    thread.approvals.isNotEmpty() && thread.question == null -> t("composer.decline.title")
     thread.busy -> t("composer.queue.title")
     else -> t("composer.send.title")
   }
