@@ -118,7 +118,7 @@ fun ThreadState.restoreStash(entry: PromptStash.Entry): Job = this.workspace.sco
 
 /** Deletes the draft from the stash and from the open menu. */
 fun ThreadState.removeStashed(entry: PromptStash.Entry): Job = this.workspace.scope.launch {
-  this@removeStashed.withStash { it.take(entry.id) }
+  this@removeStashed.withStash { it.remove(entry.id) }
   this@removeStashed.stashMenu = this@removeStashed.stashMenu?.filter { it.id != entry.id }?.ifEmpty { null }
 }
 

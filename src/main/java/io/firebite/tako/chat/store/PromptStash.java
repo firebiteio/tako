@@ -6,13 +6,18 @@ import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
+import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.ide.context.IdeContext;
+import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.UUID;
 import org.jetbrains.annotations.Nullable;
@@ -29,6 +34,8 @@ public final class PromptStash {
   private static final Gson GSON = new Gson();
 
   private final Path file;
+  /** Where large pastes are kept as files, see {@link PastedText}. */
+  private final Path pastedFolder;
   private Data data;
   /** Where an unreadable stash file was moved, until {@link #takeSetAside()}. */
   private @Nullable Path setAside;
@@ -36,11 +43,13 @@ public final class PromptStash {
   private boolean isWritable = true;
 
   public PromptStash(Project project) {
-    this(Path.of(PathManager.getSystemPath(), "tako", "stash-" + project.getLocationHash() + ".json"));
+    this(Path.of(PathManager.getSystemPath(), "tako", "stash-" + project.getLocationHash() + ".json"),
+      PastedText.folder());
   }
 
-  PromptStash(Path file) {
+  PromptStash(Path file, Path pastedFolder) {
     this.file = file;
+    this.pastedFolder = pastedFolder;
     this.data = this.load();
   }
 
@@ -49,7 +58,7 @@ public final class PromptStash {
   }
 
   /**
-   * Saves a draft as the newest entry.
+   * Saves a draft as the newest entry, with the text of its pasted text chips, since old pasted files get deleted.
    *
    * @throws IOException when it could not be saved; the stash is then as before
    */
@@ -58,6 +67,13 @@ public final class PromptStash {
     entry.id = UUID.randomUUID().toString();
     entry.prompt = prompt;
     entry.savedAt = System.currentTimeMillis();
+    for (ContextItem item : prompt.context()) {
+      Path pasted = PastedText.fileOf(item, this.pastedFolder);
+      String text = pasted != null ? readOrNull(pasted) : null;
+      if (text != null) {
+        entry.pasted.put(item.id(), text);
+      }
+    }
     Data before = this.data;
     this.data = new Data();
     this.data.entries.add(entry);
@@ -80,8 +96,44 @@ public final class PromptStash {
     return new ArrayList<>(this.data.entries);
   }
 
-  /** Removes the entry. @return it, or null when it is gone already */
+  /**
+   * Removes the entry to put it back in the composer. Pasted text whose file was deleted meanwhile gets a new file.
+   *
+   * @return it, or null when it is gone already
+   */
   public synchronized @Nullable Entry take(String id) {
+    Entry entry = this.detach(id);
+    if (entry == null) {
+      return null;
+    }
+    List<ContextItem> context = new ArrayList<>();
+    for (ContextItem item : entry.prompt.context()) {
+      context.add(this.withPastedFile(item, entry.pasted.get(item.id())));
+    }
+    entry.prompt = new ChatMessage.Submit(entry.prompt.text(), context, entry.prompt.images());
+    return entry;
+  }
+
+  /** Deletes the entry and the files of its pasted text. */
+  public synchronized void remove(String id) {
+    Entry entry = this.detach(id);
+    if (entry == null) {
+      return;
+    }
+    for (ContextItem item : entry.prompt.context()) {
+      Path pasted = PastedText.fileOf(item, this.pastedFolder);
+      String text = entry.pasted.get(item.id());
+      if (pasted != null && text != null && text.equals(readOrNull(pasted))) {
+        try {
+          Files.deleteIfExists(pasted);
+        } catch (IOException e) {
+          LOG.debug("Could not delete " + pasted, e);
+        }
+      }
+    }
+  }
+
+  private @Nullable Entry detach(String id) {
     for (Entry entry : this.data.entries) {
       if (entry.id.equals(id)) {
         this.data.entries.remove(entry);
@@ -94,6 +146,28 @@ public final class PromptStash {
       }
     }
     return null;
+  }
+
+  /** The chip, or a chip for a new file when its pasted file is gone or now holds another paste. */
+  private ContextItem withPastedFile(ContextItem item, @Nullable String text) {
+    Path pasted = PastedText.fileOf(item, this.pastedFolder);
+    if (pasted == null || text == null || text.equals(readOrNull(pasted))) {
+      return item;
+    }
+    try {
+      return IdeContext.file(PastedText.write(this.pastedFolder, text));
+    } catch (IOException e) {
+      LOG.warn("Could not write the stashed pasted text again", e);
+      return item;
+    }
+  }
+
+  private static @Nullable String readOrNull(Path file) {
+    try {
+      return Files.isRegularFile(file) ? Files.readString(file, StandardCharsets.UTF_8) : null;
+    } catch (IOException e) {
+      return null;
+    }
   }
 
   /** Where an unreadable stash file was moved, to tell the person once; null afterwards. */
@@ -141,6 +215,9 @@ public final class PromptStash {
         ChatMessage.Submit prompt = entry.prompt;
         entry.prompt = new ChatMessage.Submit(Objects.requireNonNullElse(prompt.text(), ""), present(prompt.context()),
           present(prompt.images()));
+        if (entry.pasted == null) {
+          entry.pasted = new HashMap<>();
+        }
         clean.entries.add(entry);
       }
     }
@@ -164,6 +241,8 @@ public final class PromptStash {
     public String id = "";
     public ChatMessage.Submit prompt = new ChatMessage.Submit("", List.of(), List.of());
     public long savedAt;
+    /** The text of each pasted text chip, by chip id. */
+    public Map<String, String> pasted = new HashMap<>();
 
     /** The text's first non-blank line, else the first attachment's name. */
     public String label() {

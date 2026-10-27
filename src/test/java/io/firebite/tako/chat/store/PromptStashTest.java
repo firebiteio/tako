@@ -9,6 +9,8 @@ import static org.junit.Assert.assertTrue;
 
 import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.ide.context.IdeContext;
+import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -28,15 +30,55 @@ public class PromptStashTest {
     return Files.createTempDirectory("stash").resolve("stash.json");
   }
 
+  private static PromptStash open(Path file) {
+    return new PromptStash(file, file.resolveSibling("pasted"));
+  }
+
+  @Test
+  public void pastedTextComesBackWhenItsFileWasDeletedOrReused() throws Exception {
+    Path file = newFile();
+    Path folder = file.resolveSibling("pasted");
+    ContextItem deleted = IdeContext.file(PastedText.write(folder, "first paste"));
+    ContextItem reused = IdeContext.file(PastedText.write(folder, "second paste"));
+    ContextItem kept = IdeContext.file(PastedText.write(folder, "third paste"));
+    PromptStash stash = open(file);
+    PromptStash.Entry entry = stash.push(new ChatMessage.Submit("Look", List.of(deleted, reused, kept), List.of()));
+    Files.delete(PastedText.fileOf(deleted, folder));
+    Files.writeString(PastedText.fileOf(reused, folder), "a newer paste", StandardCharsets.UTF_8);
+
+    List<ContextItem> context = open(file).take(entry.id).prompt.context();
+
+    assertEquals("first paste", Files.readString(PastedText.fileOf(context.get(0), folder), StandardCharsets.UTF_8));
+    assertEquals("second paste", Files.readString(PastedText.fileOf(context.get(1), folder), StandardCharsets.UTF_8));
+    assertEquals("a newer paste", Files.readString(PastedText.fileOf(reused, folder), StandardCharsets.UTF_8));
+    assertEquals(kept, context.get(2));
+  }
+
+  @Test
+  public void removingADraftDeletesItsPastedFiles() throws Exception {
+    Path file = newFile();
+    Path folder = file.resolveSibling("pasted");
+    ContextItem paste = IdeContext.file(PastedText.write(folder, "pasted"));
+    ContextItem other = IdeContext.file(Files.writeString(file.resolveSibling("Parser.java"), "class Parser"));
+    PromptStash stash = open(file);
+    PromptStash.Entry entry = stash.push(new ChatMessage.Submit("", List.of(paste, other), List.of()));
+
+    stash.remove(entry.id);
+
+    assertFalse(Files.exists(PastedText.fileOf(paste, folder)));
+    assertTrue(Files.exists(file.resolveSibling("Parser.java")));
+    assertTrue(open(file).entries().isEmpty());
+  }
+
   @Test
   public void draftsSurviveAReloadNewestFirst() throws Exception {
     Path file = newFile();
-    PromptStash stash = new PromptStash(file);
+    PromptStash stash = open(file);
     ContextItem selection = ContextItem.create(ContextItem.Kind.SELECTION, "Parser.java:10-12", "int x;");
     stash.push(new ChatMessage.Submit("  indented()\nthen the tests", List.of(selection), List.of(IMAGE)));
     stash.push(prompt("Second idea"));
 
-    List<PromptStash.Entry> entries = new PromptStash(file).entries();
+    List<PromptStash.Entry> entries = open(file).entries();
 
     assertEquals(2, entries.size());
     assertEquals("Second idea", entries.get(0).prompt.text());
@@ -49,17 +91,17 @@ public class PromptStashTest {
   @Test
   public void takenDraftIsGoneAfterReload() throws Exception {
     Path file = newFile();
-    PromptStash stash = new PromptStash(file);
+    PromptStash stash = open(file);
     PromptStash.Entry entry = stash.push(prompt("Later"));
 
     assertEquals("Later", stash.take(entry.id).prompt.text());
     assertNull(stash.take(entry.id));
-    assertTrue(new PromptStash(file).entries().isEmpty());
+    assertTrue(open(file).entries().isEmpty());
   }
 
   @Test
   public void pushingPastTheLimitDropsTheOldest() throws Exception {
-    PromptStash stash = new PromptStash(newFile());
+    PromptStash stash = open(newFile());
     for (int i = 0; i <= PromptStash.MAX_ENTRIES; i++) {
       stash.push(prompt("Draft " + i));
     }
@@ -74,7 +116,7 @@ public class PromptStashTest {
   @Test
   public void failedSaveLeavesTheStashAsBefore() throws Exception {
     Path blocker = Files.createTempFile("stash", ".blocker");
-    PromptStash stash = new PromptStash(blocker.resolve("stash.json"));
+    PromptStash stash = open(blocker.resolve("stash.json"));
 
     assertThrows(IOException.class, () -> stash.push(prompt("Lost?")));
     assertTrue(stash.entries().isEmpty());
@@ -84,7 +126,7 @@ public class PromptStashTest {
   public void unreadableFileIsKeptAsideAndNotOverwritten() throws Exception {
     Path file = newFile();
     Files.writeString(file, "{not json", StandardCharsets.UTF_8);
-    PromptStash stash = new PromptStash(file);
+    PromptStash stash = open(file);
 
     Path setAside = stash.takeSetAside();
 
@@ -94,7 +136,7 @@ public class PromptStashTest {
     assertTrue(stash.entries().isEmpty());
     stash.push(prompt("New"));
     assertEquals("{not json", Files.readString(setAside, StandardCharsets.UTF_8));
-    assertEquals(1, new PromptStash(file).entries().size());
+    assertEquals(1, open(file).entries().size());
   }
 
   @Test
@@ -104,7 +146,7 @@ public class PromptStashTest {
       {"entries": [null, {"id": null, "prompt": {"text": "x"}}, {"id": "b", "prompt": null},
         {"id": "a", "prompt": {"text": null, "context": [null], "images": null}}]}
       """, StandardCharsets.UTF_8);
-    PromptStash stash = new PromptStash(file);
+    PromptStash stash = open(file);
 
     List<PromptStash.Entry> entries = stash.entries();
 
@@ -118,7 +160,7 @@ public class PromptStashTest {
 
   @Test
   public void labelIsTheFirstLineOrElseAnAttachment() throws Exception {
-    PromptStash stash = new PromptStash(newFile());
+    PromptStash stash = open(newFile());
 
     assertEquals("Fix the parser", stash.push(prompt("\n  Fix the parser  \nmore")).label());
     assertEquals("screenshot.png", stash.push(new ChatMessage.Submit("", List.of(), List.of(IMAGE))).label());
