@@ -17,6 +17,7 @@ import org.jetbrains.annotations.Nullable;
 
 /** Turns what the IDE shows into prompt context. Call on the EDT or in a read action. */
 public final class IdeContext {
+  static final int MAX_EXCERPT = 20_000;
   private static final int MAX_PROBLEMS = 50;
 
   private IdeContext() {
@@ -32,19 +33,41 @@ public final class IdeContext {
     int startLine = document.getLineNumber(selection.getSelectionStart()) + 1;
     int endLine = document.getLineNumber(Math.max(selection.getSelectionStart(), selection.getSelectionEnd() - 1)) + 1;
     String path = file.getPath();
-    String text = "Selected in " + path + " (lines " + startLine + "-" + endLine + "):\n```"
-      + fenceLanguage(file) + "\n" + selection.getSelectedText() + "\n```";
+    String selected = selection.getSelectedText();
+    String fence = fence(selected);
+    String text = "Selected in " + path + " (lines " + startLine + "-" + endLine + "):\n" + fence
+      + fenceLanguage(file) + "\n" + selected + "\n" + fence;
     return ContextItem.create(ContextItem.Kind.SELECTION, file.getName() + ":" + startLine + "-" + endLine, text);
   }
 
   /**
-   * Text selected outside a file, such as in the terminal or a run console.
+   * Text selected outside a file, such as in the terminal or a run console. Longer text keeps its last
+   * {@value #MAX_EXCERPT} characters, where the latest output is.
    *
    * @param label  what the chip shows
    * @param source where the agent reads the text came from, such as {@code the terminal}
    */
   public static ContextItem excerpt(String label, String source, String text) {
-    return ContextItem.create(ContextItem.Kind.SELECTION, label, "Selected in " + source + ":\n```\n" + text + "\n```");
+    String header = "Selected in " + source;
+    String excerpt = text;
+    if (text.length() > MAX_EXCERPT) {
+      header += " (last " + MAX_EXCERPT + " of " + text.length() + " characters)";
+      excerpt = text.substring(text.length() - MAX_EXCERPT);
+    }
+    String fence = fence(excerpt);
+    return ContextItem.create(ContextItem.Kind.SELECTION, label,
+      header + ":\n" + fence + "\n" + excerpt + "\n" + fence);
+  }
+
+  /** A code fence longer than any run of backticks in the text, so the text cannot close it. */
+  static String fence(String text) {
+    int longest = 0;
+    int run = 0;
+    for (int i = 0; i < text.length(); i++) {
+      run = text.charAt(i) == '`' ? run + 1 : 0;
+      longest = Math.max(longest, run);
+    }
+    return "`".repeat(Math.max(3, longest + 1));
   }
 
   public static ContextItem file(VirtualFile file) {
