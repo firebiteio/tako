@@ -698,7 +698,7 @@ private fun RunMenu(thread: ThreadState, index: Int, onDismiss: () -> Unit) {
 
 @Composable
 private fun SendButton(thread: ThreadState) {
-  val hasText = thread.typed.isNotEmpty() || thread.images.isNotEmpty()
+  val hasText = thread.typed.isNotEmpty() || (thread.images.isNotEmpty() && thread.approvals.isEmpty())
   val isStop = thread.busy && !hasText && thread.approvals.isEmpty()
   val enabled = isStop || hasText || (thread.question?.selected?.isNotEmpty() == true)
   val tip = when {
