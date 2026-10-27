@@ -155,6 +155,7 @@ object Icons {
   val success: IconKey = lucide("circle-check")
   val check: IconKey = lucide("check")
   val question: IconKey = lucide("message-circle")
+  val thread: IconKey = lucide("message-circle")
   val plan: IconKey = lucide("book-open")
   val approval: IconKey = lucide("shield")
   val group: IconKey = lucide("hammer")

@@ -14,6 +14,7 @@ import io.firebite.tako.agent.ContextUsage
 import com.intellij.openapi.diagnostic.logger
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.chat.thread.ChatController
+import io.firebite.tako.chat.thread.ThreadTitles
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ide.project.GitInfo
 import io.firebite.tako.ui.bridge.ChatMessage
@@ -26,6 +27,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The thread whose agent created this one, which the list nests it under. */
   val parentId: String? = item.parentId
   var title by mutableStateOf(item.title)
+  /** Whether the agent writes the thread a new title. */
+  var titling by mutableStateOf(false)
   var archived by mutableStateOf(item.archived)
   var updatedAt by mutableLongStateOf(if (item.updatedAt > 0) item.updatedAt else System.currentTimeMillis())
   var costUsd by mutableStateOf(item.costUsd)
@@ -82,6 +85,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var startingBench = false
   /** What the agent offers, once it started. */
   var info by mutableStateOf<AgentInfo?>(null)
+  /** The agent's process ended or was stopped. The next prompt starts it again. */
+  var stopped by mutableStateOf(false)
   var commands by mutableStateOf<List<AgentInfo.Command>>(emptyList())
   /** The folder the agent keeps its scratch files in, if it has one. */
   var scratchpad by mutableStateOf<String?>(null)
@@ -163,6 +168,22 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
         it is TurnItem.Text && it.text.text.contains(query, true) ||
           it is TurnItem.FollowUp && it.prompt.text.contains(query, true)
       }
+  }
+
+  /** The prompts and answers the chat holds, in order. */
+  fun conversation(): List<ThreadTitles.Message> {
+    val messages = ArrayList<ThreadTitles.Message>()
+    for (turn in this.turns) {
+      turn.prompt?.let { messages.add(ThreadTitles.Message(true, it.text)) }
+      for (item in turn.items) {
+        when (item) {
+          is TurnItem.Text -> messages.add(ThreadTitles.Message(false, item.text.text))
+          is TurnItem.FollowUp -> messages.add(ThreadTitles.Message(true, item.prompt.text))
+          else -> {}
+        }
+      }
+    }
+    return messages
   }
 
   fun showAlert(text: String, actionLabel: String? = null, action: (() -> Unit)? = null) {

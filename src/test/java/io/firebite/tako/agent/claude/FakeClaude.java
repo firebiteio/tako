@@ -5,12 +5,22 @@ import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
 
-/** Stands in for {@code claude -p} in stream-json mode, with one prompt, one permission prompt and one result. */
+/**
+ * Stands in for {@code claude -p} in stream-json mode, with one prompt, one permission prompt and one result. A prompt
+ * saying "fail" ends its turn with an error instead. A new session is named after the process, a resumed one keeps its
+ * id.
+ */
 public final class FakeClaude {
   private FakeClaude() {
   }
 
   public static void main(String[] args) throws IOException {
+    String session = "s" + ProcessHandle.current().pid();
+    for (int i = 0; i + 1 < args.length; i++) {
+      if (args[i].equals("--resume")) {
+        session = args[i + 1];
+      }
+    }
     BufferedReader reader = new BufferedReader(new InputStreamReader(System.in, StandardCharsets.UTF_8));
     String line;
     while ((line = reader.readLine()) != null) {
@@ -25,14 +35,18 @@ public final class FakeClaude {
         || line.contains("\"subtype\":\"apply_flag_settings\"")) {
         emit("{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"" + requestId(line)
           + "\",\"response\":{\"applied\":{\"effort\":\"medium\"}}}}");
+      } else if (line.startsWith("{\"type\":\"user\"") && line.contains("fail")) {
+        emit("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + session + "\"}");
+        emit("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"session_id\":\"" + session + "\"}");
       } else if (line.startsWith("{\"type\":\"user\"")) {
-        emit("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"s1\"}");
+        emit("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + session + "\"}");
         emit("{\"type\":\"control_request\",\"request_id\":\"perm_1\",\"request\":{\"subtype\":\"can_use_tool\","
           + "\"tool_name\":\"Write\",\"input\":{\"file_path\":\"a.txt\",\"content\":\"ok\"}}}");
       } else if (line.contains("\"request_id\":\"perm_1\"")) {
         String verdict = line.contains("\"behavior\":\"allow\"") ? "allowed" : "denied";
         emit("{\"type\":\"assistant\",\"message\":{\"content\":[{\"type\":\"text\",\"text\":\"" + verdict + "\"}]}}");
-        emit("{\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"s1\",\"result\":\"" + verdict + "\"}");
+        emit("{\"type\":\"result\",\"subtype\":\"success\",\"session_id\":\"" + session + "\",\"result\":\"" + verdict
+          + "\"}");
       }
     }
     System.err.println("fake claude done");

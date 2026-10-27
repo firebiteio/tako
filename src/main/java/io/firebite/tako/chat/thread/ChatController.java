@@ -26,7 +26,9 @@ import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.ide.context.IdeContext;
 import io.firebite.tako.ide.context.Images;
+import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.context.PromptComposer;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.FileIndex;
@@ -35,6 +37,7 @@ import io.firebite.tako.ui.bridge.ChatMessage;
 import java.awt.Image;
 import java.awt.datatransfer.DataFlavor;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -68,6 +71,7 @@ public final class ChatController implements Disposable {
   private final CompletableFuture<Void> opened = new CompletableFuture<>();
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
+  private final Conversation conversation = new Conversation();
   /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
   private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
 
@@ -76,11 +80,14 @@ public final class ChatController implements Disposable {
 
   private volatile State state = State.STARTING;
   private volatile boolean isDisposed;
+  private volatile boolean hasTools;
   private volatile @Nullable String error;
   private volatile @Nullable String workingDirectory;
   private volatile @Nullable String scratchpadPath;
   private volatile long lastPullRequestCheck;
   private volatile boolean isTitled;
+  /** Set by {@link #restartSession} until the next launch, whose session's past the chat already shows. */
+  private volatile boolean keepsTimeline;
 
   public ChatController(Project project, ChatView view, ChatHost host, ThreadStore.Record record,
     AgentBackend backend) {
@@ -110,7 +117,7 @@ public final class ChatController implements Disposable {
         String projectPath = this.projectPath();
         if (resume != null && projectPath != null) {
           switch (this.backend.history(projectPath, resume)) {
-            case AgentHistory.Loaded loaded -> this.view.post(new ChatMessage.Replay(loaded.events()));
+            case AgentHistory.Loaded loaded -> this.replay(loaded.events());
             case AgentHistory.Missing missing -> {
               resume = null;
               this.record.sessionId = null;
@@ -182,6 +189,25 @@ public final class ChatController implements Disposable {
   }
 
   /**
+   * Stops the agent so the next prompt resumes its session in a new process, which loads skills, plugins, MCP servers
+   * and instructions again. Only while the agent is idle. The chat keeps its timeline and the last turn's error.
+   */
+  public void restartSession() {
+    if (this.state != State.IDLE) {
+      return;
+    }
+    Async.inBackground(() -> {
+      if (this.state != State.IDLE) {
+        return;
+      }
+      this.keepsTimeline = true;
+      this.connection.stop();
+      this.stopped(this.error);
+      this.view.post(new ChatMessage.Exit(0, ""));
+    });
+  }
+
+  /**
    * Re-reads branch and worktree, which is local and cheap. Asks for the pull request only when the branch changed or
    * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. Call off the EDT.
    */
@@ -230,6 +256,16 @@ public final class ChatController implements Disposable {
     synchronized (this.answer) {
       return this.answer.toString();
     }
+  }
+
+  /** Whether the running agent has Tako's MCP tools, such as {@code get_thread}. False until it started. */
+  public boolean hasTools() {
+    return this.hasTools;
+  }
+
+  /** The prompts and answers of the whole thread, see {@link Conversation#text}. */
+  public String conversation(int maxChars) {
+    return this.conversation.text(maxChars);
   }
 
   /** Why the agent did not start or the last turn failed, if it did. */
@@ -296,6 +332,16 @@ public final class ChatController implements Disposable {
   }
 
   private void launch(@Nullable String resumeSessionId) {
+    this.launch(resumeSessionId, false);
+  }
+
+  /**
+   * Starts the agent.
+   *
+   * @param forPrompt a prompt follows once the agent is ready, so the thread stays busy
+   * @return completes once the agent is ready or failed to start
+   */
+  private CompletableFuture<?> launch(@Nullable String resumeSessionId, boolean forPrompt) {
     String basePath = this.projectPath();
     Path workDirectory = Path.of(basePath != null ? basePath : System.getProperty("user.home"));
     AgentLaunch launch = new AgentLaunch(workDirectory, resumeSessionId, this.record.model, this.record.mode,
@@ -304,13 +350,15 @@ public final class ChatController implements Disposable {
     this.setState(State.STARTING);
     AgentSession session;
     try {
-      session = this.connection.replace(this.backend, launch, new Listener());
+      session = this.connection.replace(this.backend, launch,
+        this.keepsTimeline ? new Listener(false, resumeSessionId) : new Listener(true, null));
     } catch (AgentException e) {
       this.stopped(e.getMessage());
       this.postError(e.getMessage());
-      return;
+      return CompletableFuture.completedFuture(null);
     }
-    session.initialize().whenComplete((info, error) -> {
+    this.keepsTimeline = false;
+    return session.initialize().whenComplete((info, error) -> {
       if (error != null) {
         String message = TakoBundle.message("error.agent.not.started", this.backend.displayName(),
           AgentException.messageOf(error));
@@ -318,12 +366,13 @@ public final class ChatController implements Disposable {
         this.postError(message);
         return;
       }
+      this.hasTools = launch.toolsUrl() != null && session.takesTools();
       String prompt = this.firstPrompt.getAndSet(null);
       this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
       if (prompt != null) {
         this.submit(prompt);
-      } else {
+      } else if (!forPrompt) {
         this.setState(State.IDLE);
       }
     });
@@ -357,15 +406,26 @@ public final class ChatController implements Disposable {
     this.opened.join();
     AgentSession session = this.connection.live();
     if (session == null) {
-      this.launch(this.record.sessionId);
-      session = this.connection.live();
-      if (session == null) {
-        return;
-      }
+      this.launch(this.record.sessionId, true).whenComplete((ready, error) -> this.promptStarted(typed, prompt, images,
+        turn));
+      return;
     }
+    this.prompt(session, typed, prompt, images, turn);
+  }
+
+  /** Sends the prompt to the agent it launched, once that is ready, unless it did not start. */
+  private void promptStarted(String typed, String prompt, List<ImageAttachment> images, int turn) {
+    AgentSession session = this.connection.live();
+    if (session != null && this.state != State.STOPPED) {
+      this.prompt(session, typed, prompt, images, turn);
+    }
+  }
+
+  private void prompt(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn) {
     this.setState(State.WORKING);
     this.error = null;
     this.untakenTurns.add(turn);
+    this.conversation.send(turn, typed);
     session.prompt(prompt, images, turn);
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
@@ -377,8 +437,19 @@ public final class ChatController implements Disposable {
 
   /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
   public static String titleOf(String prompt) {
-    String line = prompt.replace('\n', ' ').trim();
-    return line.length() <= TITLE_LENGTH ? line : line.substring(0, TITLE_LENGTH - 1) + "…";
+    return cut(prompt.replace('\n', ' ').trim(), TITLE_LENGTH);
+  }
+
+  /** The text, or its start and an ellipsis in {@code length} characters. Does not split a surrogate pair. */
+  public static String cut(String text, int length) {
+    if (text.length() <= length) {
+      return text;
+    }
+    int end = length - 1;
+    if (Character.isHighSurrogate(text.charAt(end - 1))) {
+      end--;
+    }
+    return text.substring(0, end) + "…";
   }
 
   /** Shows what the tool call a permission prompt is about would change. */
@@ -430,6 +501,37 @@ public final class ChatController implements Disposable {
         this.view.post(new ChatMessage.Image(Images.fromImage(clipboardImage, PASTED_IMAGE_NAME)));
       } catch (IOException e) {
         this.postError(TakoBundle.message("error.clipboard.image", e.getMessage()));
+      }
+    });
+  }
+
+  /**
+   * Writes a large paste to a file in {@link PastedText#folder()}, which every launch passes as an additional
+   * directory, so the agent reads it instead of the prompt carrying it. Writes right away, so the file is attached
+   * before the next key is handled.
+   *
+   * @return the file as context, or null after showing why it could not be written
+   */
+  public @Nullable ContextItem pasteText(String text) {
+    try {
+      return IdeContext.file(PastedText.write(PastedText.folder(), text));
+    } catch (IOException e) {
+      this.postError(TakoBundle.message("error.paste.text", e.getMessage()));
+      return null;
+    }
+  }
+
+  /** Deletes the file of a pasted text chip removed before sending. Other chips are left alone. */
+  public void discardPaste(ContextItem item) {
+    Path file = PastedText.fileOf(item, PastedText.folder());
+    if (file == null) {
+      return;
+    }
+    Async.inBackground(() -> {
+      try {
+        Files.deleteIfExists(file);
+      } catch (IOException e) {
+        LOG.debug("Could not delete " + file, e);
       }
     });
   }
@@ -486,6 +588,11 @@ public final class ChatController implements Disposable {
     });
   }
 
+  private void replay(List<AgentEvent> events) {
+    this.conversation.reset(events);
+    this.view.post(new ChatMessage.Replay(events));
+  }
+
   private void onEvent(AgentEvent event) {
     switch (event) {
       case AgentEvent.SessionStarted started -> {
@@ -506,6 +613,7 @@ public final class ChatController implements Disposable {
             this.answer.append(this.answer.isEmpty() ? "" : "\n\n").append(text.text());
           }
         }
+        this.conversation.add(text);
       }
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
@@ -520,6 +628,7 @@ public final class ChatController implements Disposable {
   /** A prompt that joins the running turn keeps its changes and answer under that turn. */
   private void onPromptTaken(AgentEvent.PromptTaken taken) {
     this.untakenTurns.remove(taken.key());
+    this.conversation.take(taken.key());
     if (taken.startsTurn()) {
       this.changes.startTurn(taken.key());
       synchronized (this.answer) {
@@ -588,14 +697,34 @@ public final class ChatController implements Disposable {
   }
 
   private final class Listener implements AgentListener {
+    /** Whether the session's past replaces the chat's timeline. */
+    private final boolean replays;
+    /** The session the chat's timeline continues, until the agent names the one it started. */
+    private volatile @Nullable String resumes;
+
+    private Listener(boolean replays, @Nullable String resumes) {
+      this.replays = replays;
+      this.resumes = resumes;
+    }
+
     @Override
     public void onEvent(AgentEvent event) {
+      String resumed = this.resumes;
+      if (resumed != null && event instanceof AgentEvent.SessionStarted started && started.sessionId() != null) {
+        this.resumes = null;
+        if (!resumed.equals(started.sessionId())) {
+          ChatController.this.view.post(new ChatMessage.Notice(
+            TakoBundle.message("error.session.not.resumed", ChatController.this.backend.displayName())));
+        }
+      }
       ChatController.this.onEvent(event);
     }
 
     @Override
     public void onHistory(List<AgentEvent> events) {
-      ChatController.this.view.post(new ChatMessage.Replay(events));
+      if (this.replays) {
+        ChatController.this.replay(events);
+      }
     }
 
     @Override

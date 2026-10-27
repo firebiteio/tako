@@ -26,6 +26,7 @@ import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
@@ -202,6 +203,7 @@ class MenuEntry(
   val description: String? = null,
   val icon: IconKey? = null,
   val checked: Boolean = false,
+  val enabled: Boolean = true,
   /** Shows a remove button that runs this and keeps the menu open. */
   val remove: (() -> Unit)? = null,
   val run: () -> Unit,
@@ -228,11 +230,16 @@ fun MenuPopup(entries: List<MenuEntry>, title: String? = null, alignment: Alignm
         Text(t("menu.empty"), Modifier.padding(8.dp), color = colors.muted, style = smallStyle)
       }
       for (entry in entries) {
-        Row(Modifier.fillMaxWidth().hoverClick {
-          onDismiss()
-          entry.run()
-        }.padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
-          horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        val clickable = if (entry.enabled) {
+          Modifier.hoverClick {
+            onDismiss()
+            entry.run()
+          }
+        } else {
+          Modifier.alpha(0.5f)
+        }
+        Row(Modifier.fillMaxWidth().then(clickable).padding(horizontal = 8.dp, vertical = 6.dp),
+          verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           if (entry.icon != null) {
             Ico(entry.icon, size = 14.dp, tint = colors.muted)
           }

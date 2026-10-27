@@ -1,6 +1,7 @@
 package io.firebite.tako.ui.view
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.Arrangement
@@ -21,7 +22,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,7 +35,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -41,6 +47,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.intellij.openapi.ui.MessageDialogBuilder
 import io.firebite.tako.agent.PermissionPrompt
+import io.firebite.tako.chat.ChatService
 import io.firebite.tako.ui.ago
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.dateTime
@@ -55,7 +62,9 @@ import io.firebite.tako.ui.state.runName
 import io.firebite.tako.ui.state.runningTasks
 import io.firebite.tako.ui.state.threadTree
 import io.firebite.tako.ui.t
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.TextField
 import org.jetbrains.jewel.ui.component.VerticallyScrollableContainer
@@ -149,6 +158,7 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         }
       }
     }
+    workspace.archivedToast?.let { ArchivedToast(workspace, it) }
     val archived = sorted.filter { it.archived }
     if (archived.isNotEmpty()) {
       Rule()
@@ -188,6 +198,23 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         workspace.usage?.let { Text(money(it.totalCost), color = color, style = smallStyle) }
       }
     }
+  }
+}
+
+/** Offers to undo the last archive, below the list so it covers nothing, while the thread is still archived. */
+@Composable
+private fun ArchivedToast(workspace: Workspace, archived: ChatService.Archived) {
+  if (workspace.threads[archived.thread]?.archived != true) {
+    return
+  }
+  val shape = RoundedCornerShape(10.dp)
+  Row(Modifier.fillMaxWidth().padding(6.dp).clip(shape).background(colors.card).border(1.dp, colors.softBorder, shape)
+    .padding(start = 10.dp, end = 6.dp, top = 6.dp, bottom = 6.dp), verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+    Ico(Icons.archive, size = 14.dp, tint = colors.muted)
+    Text(t("sidebar.archived.toast"), Modifier.weight(1f), color = colors.fg, style = smallStyle, maxLines = 1,
+      overflow = TextOverflow.Ellipsis)
+    OutlineButton(t("sidebar.archived.undo")) { workspace.undoArchive() }
   }
 }
 
@@ -526,7 +553,20 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     StatusKind.ERROR -> colors.del
     else -> colors.muted
   }
-  Box(Modifier.fillMaxWidth().hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
+  var menuOpen by remember(thread) { mutableStateOf(false) }
+  var canTitle by remember(thread) { mutableStateOf(false) }
+  LaunchedEffect(menuOpen) {
+    if (menuOpen) {
+      canTitle = false
+      val shown = thread.turns.isNotEmpty()
+      canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(thread.id, shown) }
+    }
+  }
+  Box(Modifier.fillMaxWidth().onPointerEvent(PointerEventType.Press) {
+    if (it.buttons.isSecondaryPressed) {
+      menuOpen = true
+    }
+  }.hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
     if (thread.archived) {
       workspace.service.setArchived(thread.id, false)
     } else {
@@ -566,6 +606,11 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     if (hovered) {
       RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 6.dp))
     }
+    if (menuOpen) {
+      MenuPopup(listOf(MenuEntry(t("sidebar.regenerate.title"),
+        if (thread.titling) t("sidebar.regenerate.title.running") else null, Icons.refresh,
+        enabled = canTitle && !thread.titling) { workspace.regenerateTitle(thread) })) { menuOpen = false }
+    }
   }
 }
 
@@ -580,7 +625,7 @@ private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modi
       }
     } else {
       IconBtn(Icons.archive, t("sidebar.archive", thread.agentName), iconSize = 14.dp) {
-        workspace.service.setArchived(thread.id, true)
+        workspace.archive(thread)
       }
     }
     IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {

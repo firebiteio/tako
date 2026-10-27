@@ -19,9 +19,17 @@ public record ContextItem(
     return new ContextItem(UUID.randomUUID().toString(), kind, label, text);
   }
 
+  /** Another Tako thread, by reference: the agent reads its conversation over MCP when it needs it. */
+  public static ContextItem thread(String threadId, String title) {
+    String quoted = "\"" + title.replace("\\", "\\\\").replace("\"", "\\\"") + "\"";
+    return create(Kind.THREAD, title, "Referenced Tako thread " + quoted + " (id " + threadId + "). Read its "
+      + "conversation with Tako's get_thread tool, threadId \"" + threadId + "\" and conversation true.");
+  }
+
   public enum Kind {
     @SerializedName("selection") SELECTION,
     @SerializedName("file") FILE,
-    @SerializedName("problems") PROBLEMS
+    @SerializedName("problems") PROBLEMS,
+    @SerializedName("thread") THREAD
   }
 }

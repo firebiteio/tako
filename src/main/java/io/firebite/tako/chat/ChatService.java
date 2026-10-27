@@ -24,6 +24,7 @@ import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentBackend;
 import io.firebite.tako.agent.AgentException;
+import io.firebite.tako.agent.AgentHistory;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
@@ -32,8 +33,10 @@ import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.chat.thread.ChatHost;
 import io.firebite.tako.chat.thread.ChatView;
+import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
@@ -41,6 +44,7 @@ import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.file.Path;
+import java.time.Instant;
 import java.time.LocalDate;
 import java.util.ArrayList;
 import java.util.Comparator;
@@ -48,6 +52,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -98,6 +103,7 @@ public final class ChatService implements Disposable {
     window.getContentManager().addContent(content);
     this.panel = chatPanel;
     Async.inBackground(this::warmUsage);
+    Async.inBackground(ChatService::deleteOldPastes);
     ScheduledFuture<?> gitRefresh = AppExecutorUtil.getAppScheduledExecutorService()
       .scheduleWithFixedDelay(this::refreshActiveGit, GIT_REFRESH_SECONDS, GIT_REFRESH_SECONDS, TimeUnit.SECONDS);
     Disposer.register(content, () -> {
@@ -379,6 +385,81 @@ public final class ChatService implements Disposable {
     });
   }
 
+  /**
+   * Whether the thread's agent can name it now: it has a conversation to read and a one-shot call. Looks for the
+   * agent's CLI, so call off the EDT.
+   *
+   * @param shown whether the chat holds messages of the thread
+   */
+  public boolean canRegenerateTitle(String id, boolean shown) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null) {
+      return false;
+    }
+    AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
+    return (shown || record.sessionId != null && backend.hasStoredHistory()) && backend.canAsk();
+  }
+
+  /**
+   * Has the thread's agent name it from its first request and latest messages, and saves the title. Takes the
+   * conversation the chat holds, else reads the session's history when the agent keeps it in files. Shows failures.
+   * Keeps the thread as it is if it was removed or got another title meanwhile.
+   *
+   * @return completes on the EDT when done
+   */
+  public CompletableFuture<Void> regenerateTitle(String id, List<ThreadTitles.Message> shown) {
+    CompletableFuture<Void> done = new CompletableFuture<>();
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null) {
+      done.complete(null);
+      return done;
+    }
+    String folder = this.workFolder(record);
+    String sessionId = record.sessionId;
+    String oldTitle = record.title;
+    AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
+    Async.inBackground(() -> {
+      try {
+        String title = askTitle(backend, folder, sessionId, shown);
+        Async.onEdt(() -> {
+          if (this.store.find(id) == record && oldTitle.equals(record.title)) {
+            record.title = title;
+            this.postUpdate(record);
+          }
+          done.complete(null);
+        });
+      } catch (AgentException | RuntimeException e) {
+        if (e instanceof RuntimeException) {
+          LOG.warn("Could not regenerate the title of thread " + id, e);
+        }
+        Async.onEdt(() -> {
+          this.post(
+            new ChatMessage.Error(TakoBundle.message("error.title", Objects.toString(e.getMessage(), e.toString()))));
+          done.complete(null);
+        });
+      }
+    });
+    return done;
+  }
+
+  private static String askTitle(AgentBackend backend, String folder, @Nullable String sessionId,
+    List<ThreadTitles.Message> shown) throws AgentException {
+    List<ThreadTitles.Message> conversation = shown;
+    if (conversation.isEmpty() && sessionId != null
+      && backend.history(folder, sessionId) instanceof AgentHistory.Loaded loaded) {
+      conversation = ThreadTitles.fromEvents(loaded.events());
+    }
+    String prompt = ThreadTitles.prompt(conversation);
+    if (prompt == null) {
+      throw new AgentException(TakoBundle.message("error.title.no.conversation"));
+    }
+    String title = ThreadTitles.title(backend.ask(Path.of(folder), prompt));
+    if (title == null) {
+      throw new AgentException(TakoBundle.message("error.title.blank"));
+    }
+    return title;
+  }
+
   /** The threads whose sessions mention {@code query}, as far as their agents can tell. Reads files, so call off the EDT. */
   public Set<String> search(String query) {
     Map<String, AgentBackend> backends = new HashMap<>();
@@ -508,18 +589,44 @@ public final class ChatService implements Disposable {
   }
 
   public void setArchived(String id, boolean archived) {
+    if (archived) {
+      this.archive(id);
+    } else {
+      this.select(id);
+    }
+  }
+
+  /**
+   * Archives the thread and stops its agent. Selects the first open thread in place of the active one, or a new
+   * thread when none is open.
+   * @return what undoing it needs, or null when there is no such thread
+   */
+  public @Nullable Archived archive(String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
-      return;
-    }
-    if (!archived) {
-      this.select(record.id);
-      return;
+      return null;
     }
     record.archived = true;
     this.disposeController(record.id);
     this.postUpdate(record);
-    this.selectAnotherIfActive(record.id);
+    if (!record.id.equals(this.store.activeId())) {
+      return new Archived(record.id, null, false);
+    }
+    ThreadStore.Record next = this.firstOpenThread(record.id);
+    if (next != null) {
+      this.select(next.id);
+      return new Archived(record.id, next.id, false);
+    }
+    this.newThread(null, null, null, null);
+    return new Archived(record.id, this.store.activeId(), true);
+  }
+
+  /** Lists an archived thread again without selecting it. */
+  public void restore(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record != null) {
+      this.unarchive(record);
+    }
   }
 
   private void selectAnotherIfActive(String id) {
@@ -659,6 +766,14 @@ public final class ChatService implements Disposable {
     }
   }
 
+  private static void deleteOldPastes() {
+    try {
+      PastedText.deleteOlderThan(PastedText.folder(), Instant.now().minus(PastedText.MAX_AGE));
+    } catch (IOException e) {
+      LOG.debug("Could not delete old pasted text files", e);
+    }
+  }
+
   private void warmUsage() {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     for (ThreadStore.ProjectFolder folder : this.projects()) {
@@ -714,6 +829,18 @@ public final class ChatService implements Disposable {
   ) {
   }
 
+  /**
+   * A thread just archived.
+   * @param replacement      the thread selected in its place, or null when it was not the active one
+   * @param isNewReplacement whether the replacement is a new thread, made because no other was open
+   */
+  public record Archived(
+    String thread,
+    @Nullable String replacement,
+    boolean isNewReplacement
+  ) {
+  }
+
   private final class ThreadView implements ChatView {
     private final String threadId;
 
@@ -764,6 +891,11 @@ public final class ChatService implements Disposable {
         if (!folder.path.isEmpty() && !ThreadStore.samePath(folder.path, own)) {
           directories.add(folder.path);
         }
+      }
+      try {
+        directories.add(PastedText.createFolder(PastedText.folder()).toString());
+      } catch (IOException e) {
+        LOG.warn("Could not create the folder for pasted text", e);
       }
       return directories;
     }

@@ -36,6 +36,11 @@ public interface AgentSession {
   @Nullable
   EditPreview proposedEdit(String requestId);
 
+  /** Whether the agent took the {@link AgentLaunch#toolsUrl} it was launched with, once {@link #initialize} is done. */
+  default boolean takesTools() {
+    return true;
+  }
+
   boolean isAlive();
 
   void stop();
