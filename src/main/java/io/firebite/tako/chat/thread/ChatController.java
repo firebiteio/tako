@@ -71,6 +71,7 @@ public final class ChatController implements Disposable {
   private final CompletableFuture<Void> opened = new CompletableFuture<>();
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
+  private final Conversation conversation = new Conversation();
   /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
   private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
 
@@ -79,6 +80,7 @@ public final class ChatController implements Disposable {
 
   private volatile State state = State.STARTING;
   private volatile boolean isDisposed;
+  private volatile boolean hasTools;
   private volatile @Nullable String error;
   private volatile @Nullable String workingDirectory;
   private volatile @Nullable String scratchpadPath;
@@ -113,7 +115,7 @@ public final class ChatController implements Disposable {
         String projectPath = this.projectPath();
         if (resume != null && projectPath != null) {
           switch (this.backend.history(projectPath, resume)) {
-            case AgentHistory.Loaded loaded -> this.view.post(new ChatMessage.Replay(loaded.events()));
+            case AgentHistory.Loaded loaded -> this.replay(loaded.events());
             case AgentHistory.Missing missing -> {
               resume = null;
               this.record.sessionId = null;
@@ -235,6 +237,16 @@ public final class ChatController implements Disposable {
     }
   }
 
+  /** Whether the running agent has Tako's MCP tools, such as {@code get_thread}. False until it started. */
+  public boolean hasTools() {
+    return this.hasTools;
+  }
+
+  /** The prompts and answers of the whole thread, see {@link Conversation#text}. */
+  public String conversation(int maxChars) {
+    return this.conversation.text(maxChars);
+  }
+
   /** Why the agent did not start or the last turn failed, if it did. */
   public @Nullable String error() {
     return this.error;
@@ -321,6 +333,7 @@ public final class ChatController implements Disposable {
         this.postError(message);
         return;
       }
+      this.hasTools = launch.toolsUrl() != null && session.takesTools();
       String prompt = this.firstPrompt.getAndSet(null);
       this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
@@ -369,6 +382,7 @@ public final class ChatController implements Disposable {
     this.setState(State.WORKING);
     this.error = null;
     this.untakenTurns.add(turn);
+    this.conversation.send(turn, typed);
     session.prompt(prompt, images, turn);
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
@@ -520,6 +534,11 @@ public final class ChatController implements Disposable {
     });
   }
 
+  private void replay(List<AgentEvent> events) {
+    this.conversation.reset(events);
+    this.view.post(new ChatMessage.Replay(events));
+  }
+
   private void onEvent(AgentEvent event) {
     switch (event) {
       case AgentEvent.SessionStarted started -> {
@@ -540,6 +559,7 @@ public final class ChatController implements Disposable {
             this.answer.append(this.answer.isEmpty() ? "" : "\n\n").append(text.text());
           }
         }
+        this.conversation.add(text);
       }
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
@@ -554,6 +574,7 @@ public final class ChatController implements Disposable {
   /** A prompt that joins the running turn keeps its changes and answer under that turn. */
   private void onPromptTaken(AgentEvent.PromptTaken taken) {
     this.untakenTurns.remove(taken.key());
+    this.conversation.take(taken.key());
     if (taken.startsTurn()) {
       this.changes.startTurn(taken.key());
       synchronized (this.answer) {
@@ -629,7 +650,7 @@ public final class ChatController implements Disposable {
 
     @Override
     public void onHistory(List<AgentEvent> events) {
-      ChatController.this.view.post(new ChatMessage.Replay(events));
+      ChatController.this.replay(events);
     }
 
     @Override

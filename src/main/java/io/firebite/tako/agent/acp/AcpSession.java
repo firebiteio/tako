@@ -48,6 +48,7 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
   private final List<AgentEvent> history = new ArrayList<>();
   private volatile @Nullable String sessionId;
   private volatile boolean isLoading;
+  private volatile boolean takesTools;
   private volatile long turnStartedAt;
   private int requests;
 
@@ -150,6 +151,11 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
   }
 
   @Override
+  public boolean takesTools() {
+    return this.takesTools;
+  }
+
+  @Override
   public boolean isAlive() {
     return this.connection.isAlive();
   }
@@ -199,6 +205,7 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
       server.add("headers", new JsonArray());
       servers.add(server);
     }
+    this.takesTools = !servers.isEmpty();
     return servers;
   }
 
