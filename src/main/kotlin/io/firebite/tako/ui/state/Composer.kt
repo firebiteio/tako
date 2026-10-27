@@ -86,6 +86,19 @@ fun ThreadState.addContext(item: ContextItem, prefill: String?) {
   this.workspace.focusComposer++
 }
 
+/** Quotes text from the timeline at the end of the box, with an empty line under it for the reply. */
+fun ThreadState.quote(text: String) {
+  this.input.setTextAndPlaceCursorAtEnd(withQuote(this.input.text.toString(), text))
+  this.workspace.focusComposer++
+}
+
+/** [typed] with [text] added as a Markdown blockquote, `> ` before each line, and an empty line after it. */
+fun withQuote(typed: String, text: String): String {
+  val quote = text.trim('\r', '\n').lines().joinToString("\n") { if (it.isBlank()) ">" else "> " + it.trimEnd() }
+  val before = typed.trimEnd()
+  return (if (before.isEmpty()) "" else before + "\n\n") + quote + "\n\n"
+}
+
 fun ThreadState.addImage(image: ImageAttachment) {
   this.images.add(PendingImage(image))
   if (this.isActive) {

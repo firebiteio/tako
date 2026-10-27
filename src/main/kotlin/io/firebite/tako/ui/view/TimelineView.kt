@@ -4,6 +4,9 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.ContextMenuDataProvider
+import androidx.compose.foundation.ContextMenuItem
+import androidx.compose.foundation.ContextMenuState
 import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -24,14 +27,18 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.LocalTextContextMenu
+import androidx.compose.foundation.text.TextContextMenu
 import androidx.compose.foundation.text.selection.SelectionContainer
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
@@ -56,6 +63,7 @@ import io.firebite.tako.ui.state.AssistantText
 import io.firebite.tako.ui.state.Fold
 import io.firebite.tako.ui.state.Prompt
 import io.firebite.tako.ui.state.QueuedPrompt
+import io.firebite.tako.ui.state.quote
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
@@ -235,7 +243,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
 private fun TurnItemView(thread: ThreadState, item: TurnItem, forkPrompts: Int?, markdown: ChatMarkdown,
   actions: CodeActions) {
   when (item) {
-    is TurnItem.Text -> AssistantRow(item.text, markdown, actions,
+    is TurnItem.Text -> AssistantRow(item.text, markdown, actions, { thread.quote(it) },
       forkPrompts?.let { prompts -> { thread.workspace.service.fork(thread.id, prompts) } })
     is TurnItem.Thinking -> Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).padding(2.dp),
       verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
@@ -332,16 +340,22 @@ private fun HoverMeta(hovered: Boolean, content: @Composable () -> Unit) {
   }
 }
 
-/** @param onFork forks the thread after this text, null where no fork goes */
+/**
+ * @param onQuote quotes the selected text in the composer
+ * @param onFork  forks the thread after this text, null where no fork goes
+ */
 @Composable
-private fun AssistantRow(text: AssistantText, markdown: ChatMarkdown, actions: CodeActions, onFork: (() -> Unit)?) {
+private fun AssistantRow(text: AssistantText, markdown: ChatMarkdown, actions: CodeActions, onQuote: (String) -> Unit,
+  onFork: (() -> Unit)?) {
   val (interaction, hovered) = rememberHover()
   val fade = remember { Animatable(if (text.done) 1f else 0f) }
   LaunchedEffect(Unit) {
     fade.animateTo(1f, tween(600, easing = LinearOutSlowInEasing))
   }
   Column(Modifier.fillMaxWidth().hoverable(interaction).padding(start = 4.dp, end = 4.dp, top = 2.dp, bottom = 8.dp)) {
-    MarkdownText(markdown, text.text, text.done, actions, Modifier.graphicsLayer { this.alpha = fade.value })
+    QuoteMenu(onQuote) {
+      MarkdownText(markdown, text.text, text.done, actions, Modifier.graphicsLayer { this.alpha = fade.value })
+    }
     HoverMeta(hovered) {
       IconBtn(Icons.copy, t("common.copy"), iconSize = 14.dp) { actions.copy(text.text) }
       if (onFork != null) {
@@ -349,6 +363,29 @@ private fun AssistantRow(text: AssistantText, markdown: ChatMarkdown, actions: C
       }
     }
   }
+}
+
+/** Adds "Quote in composer" to the context menu of selected text in [content]. */
+@Composable
+private fun QuoteMenu(onQuote: (String) -> Unit, content: @Composable () -> Unit) {
+  val base = LocalTextContextMenu.current
+  val label = t("timeline.quote")
+  val quote by rememberUpdatedState(onQuote)
+  val menu = remember(base, label) {
+    object : TextContextMenu {
+      @Composable
+      override fun Area(textManager: TextContextMenu.TextManager, state: ContextMenuState,
+        content: @Composable () -> Unit) {
+        ContextMenuDataProvider({
+          val selected = textManager.selectedText.text
+          if (selected.isBlank()) emptyList() else listOf(ContextMenuItem(label) { quote(selected) })
+        }) {
+          base.Area(textManager, state, content)
+        }
+      }
+    }
+  }
+  CompositionLocalProvider(LocalTextContextMenu provides menu, content = content)
 }
 
 @Composable
