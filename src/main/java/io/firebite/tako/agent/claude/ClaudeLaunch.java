@@ -14,6 +14,7 @@ public record ClaudeLaunch(
   Map<String, String> environment
 ) {
   static final String API_KEY_VARIABLE = "ANTHROPIC_API_KEY";
+  private static final String ASK_MODEL = "haiku";
 
   /** Values of {@code --permission-mode}. The empty string keeps the CLI default. */
   public static final List<String> PERMISSION_MODES = List.of("", "manual", "acceptEdits", "plan", "auto", "dontAsk",
@@ -40,7 +41,23 @@ public record ClaudeLaunch(
     }
     addFlag(command, "--mcp-config", options.mcpConfig());
     addFlag(command, "--resume", options.resumeSessionId());
+    return new ClaudeLaunch(List.copyOf(command), environment(authMode, apiKey, baseEnvironment));
+  }
 
+  /**
+   * A call that answers the prompt on stdin as plain text with a small model, no tools, no MCP servers and no saved
+   * session.
+   *
+   * @throws IllegalStateException in API key mode without a key
+   */
+  public static ClaudeLaunch ask(String executable, AuthMode authMode, @Nullable String apiKey,
+    Map<String, String> baseEnvironment) {
+    return new ClaudeLaunch(List.of(executable, "-p", "--model", ASK_MODEL, "--tools", "", "--strict-mcp-config",
+      "--no-session-persistence", "--output-format", "text"), environment(authMode, apiKey, baseEnvironment));
+  }
+
+  private static Map<String, String> environment(AuthMode authMode, @Nullable String apiKey,
+    Map<String, String> baseEnvironment) {
     Map<String, String> environment = new HashMap<>(baseEnvironment);
     if (authMode == AuthMode.API_KEY) {
       if (apiKey == null || apiKey.isBlank()) {
@@ -50,7 +67,7 @@ public record ClaudeLaunch(
     } else {
       environment.remove(API_KEY_VARIABLE);
     }
-    return new ClaudeLaunch(List.copyOf(command), Map.copyOf(environment));
+    return Map.copyOf(environment);
   }
 
   private static void addFlag(List<String> command, String flag, @Nullable String value) {

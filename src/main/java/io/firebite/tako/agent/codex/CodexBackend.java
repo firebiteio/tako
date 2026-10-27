@@ -15,6 +15,7 @@ import io.firebite.tako.agent.AgentListener;
 import io.firebite.tako.agent.AgentSession;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
+import io.firebite.tako.agent.Processes;
 import io.firebite.tako.agent.rpc.JsonRpcConnection;
 import io.firebite.tako.json.Json;
 import java.io.IOException;
@@ -32,6 +33,7 @@ public final class CodexBackend implements AgentBackend {
   static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, false, false);
   private static final Logger LOG = Logger.getInstance(CodexBackend.class);
   private static final long LIST_TIMEOUT_SECONDS = 15;
+  private static final long ASK_TIMEOUT_SECONDS = 90;
 
   private final String configuredPath;
   private final AgentDefaults defaults;
@@ -100,13 +102,34 @@ public final class CodexBackend implements AgentBackend {
     return sessions;
   }
 
+  @Override
+  public boolean canAsk() {
+    return true;
+  }
+
+  /** Runs {@code codex exec} read-only, at low effort and without saving the session. It prints only the answer. */
+  @Override
+  public String ask(Path workDirectory, String prompt) throws AgentException {
+    List<String> command = List.of(this.executable(this.environment), "exec", "--ephemeral", "--skip-git-repo-check",
+      "--sandbox", "read-only", "--color", "never", "-c", "model_reasoning_effort=low", "-");
+    try {
+      return Processes.run(command, workDirectory, this.environment, prompt, ASK_TIMEOUT_SECONDS);
+    } catch (IOException e) {
+      throw new AgentException(e.getMessage(), e);
+    }
+  }
+
   private List<String> command(Map<String, String> environment) throws AgentException {
+    return List.of(this.executable(environment), "app-server");
+  }
+
+  private String executable(Map<String, String> environment) throws AgentException {
     String executable = ExecutableLocator.locate(this.configuredPath, "codex", List.of(), environment,
       SystemInfo.isWindows);
     if (executable == null) {
       throw new AgentException(TakoBundle.message("error.codex.not.found"));
     }
-    return List.of(executable, "app-server");
+    return executable;
   }
 
 }

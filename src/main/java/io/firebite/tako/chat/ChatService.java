@@ -24,6 +24,7 @@ import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentBackend;
 import io.firebite.tako.agent.AgentException;
+import io.firebite.tako.agent.AgentHistory;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
@@ -32,6 +33,7 @@ import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.chat.thread.ChatHost;
 import io.firebite.tako.chat.thread.ChatView;
+import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.project.ProjectIcons;
@@ -377,6 +379,62 @@ public final class ChatService implements Disposable {
         this.select(record.id);
       });
     });
+  }
+
+  /** Whether the agent can name a thread in a one-shot call. */
+  public boolean canRegenerateTitle(String agent) {
+    return AgentRegistry.find(agent, EnvironmentUtil.getEnvironmentMap()).canAsk();
+  }
+
+  /**
+   * Has the thread's agent name it from its first request and latest messages, and saves the title. Takes the
+   * conversation the chat holds, else reads the session's history when the agent keeps it in files. Shows failures.
+   *
+   * @return completes on the EDT when done
+   */
+  public CompletableFuture<Void> regenerateTitle(String id, List<ThreadTitles.Message> shown) {
+    CompletableFuture<Void> done = new CompletableFuture<>();
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null) {
+      done.complete(null);
+      return done;
+    }
+    String folder = this.workFolder(record);
+    String sessionId = record.sessionId;
+    AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
+    Async.inBackground(() -> {
+      try {
+        String title = askTitle(backend, folder, sessionId, shown);
+        Async.onEdt(() -> {
+          record.title = title;
+          this.postUpdate(record);
+          done.complete(null);
+        });
+      } catch (AgentException e) {
+        Async.onEdt(() -> {
+          this.post(new ChatMessage.Error(TakoBundle.message("error.title", e.getMessage())));
+          done.complete(null);
+        });
+      }
+    });
+    return done;
+  }
+
+  private static String askTitle(AgentBackend backend, String folder, @Nullable String sessionId,
+    List<ThreadTitles.Message> shown) throws AgentException {
+    List<ThreadTitles.Message> conversation = shown;
+    if (conversation.isEmpty() && sessionId != null
+      && backend.history(folder, sessionId) instanceof AgentHistory.Loaded loaded) {
+      conversation = ThreadTitles.fromEvents(loaded.events());
+    }
+    if (conversation.isEmpty()) {
+      throw new AgentException(TakoBundle.message("error.title.no.conversation"));
+    }
+    String title = ThreadTitles.title(backend.ask(Path.of(folder), ThreadTitles.prompt(conversation)));
+    if (title == null) {
+      throw new AgentException(TakoBundle.message("error.title.blank"));
+    }
+    return title;
   }
 
   /** The threads whose sessions mention {@code query}, as far as their agents can tell. Reads files, so call off the EDT. */

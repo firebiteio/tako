@@ -21,7 +21,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.derivedStateOf
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.runtime.structuralEqualityPolicy
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -32,7 +34,10 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.PointerIcon
+import androidx.compose.ui.input.pointer.isSecondaryPressed
+import androidx.compose.ui.input.pointer.onPointerEvent
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -526,7 +531,12 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     StatusKind.ERROR -> colors.del
     else -> colors.muted
   }
-  Box(Modifier.fillMaxWidth().hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
+  var menuOpen by remember(thread) { mutableStateOf(false) }
+  Box(Modifier.fillMaxWidth().onPointerEvent(PointerEventType.Press) {
+    if (it.buttons.isSecondaryPressed) {
+      menuOpen = true
+    }
+  }.hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
     if (thread.archived) {
       workspace.service.setArchived(thread.id, false)
     } else {
@@ -565,6 +575,11 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     }
     if (hovered) {
       RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 6.dp))
+    }
+    if (menuOpen) {
+      MenuPopup(listOf(MenuEntry(t("sidebar.regenerate.title"),
+        if (thread.titling) t("sidebar.regenerate.title.running") else null, Icons.refresh,
+        enabled = workspace.canRegenerateTitle(thread)) { workspace.regenerateTitle(thread) })) { menuOpen = false }
     }
   }
 }

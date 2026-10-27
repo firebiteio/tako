@@ -57,6 +57,15 @@ public class ClaudeLaunchTest {
     assertTrue(String.join(" ", launch.command()).contains("--mcp-config C:/tmp/tako-mcp.json"));
   }
 
+  @Test
+  public void askUsesASmallModelWithoutToolsOrSavedSession() {
+    ClaudeLaunch launch = ClaudeLaunch.ask("claude", AuthMode.API_KEY, "sk-test", Map.of());
+
+    assertEquals(List.of("claude", "-p", "--model", "haiku", "--tools", "", "--strict-mcp-config",
+      "--no-session-persistence", "--output-format", "text"), launch.command());
+    assertEquals("sk-test", launch.environment().get("ANTHROPIC_API_KEY"));
+  }
+
   @Test(expected = IllegalStateException.class)
   public void apiKeyModeWithoutKeyFails() {
     ClaudeLaunch.build("claude", AuthMode.API_KEY, " ", ClaudeLaunch.Options.defaults(), Map.of());
