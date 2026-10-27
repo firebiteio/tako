@@ -15,6 +15,7 @@ import io.firebite.tako.agent.AgentListener;
 import io.firebite.tako.agent.AgentSession;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
+import io.firebite.tako.agent.Processes;
 import io.firebite.tako.agent.rpc.JsonRpcConnection;
 import io.firebite.tako.json.Json;
 import java.io.IOException;
@@ -22,6 +23,7 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.jetbrains.annotations.Nullable;
 
 /** OpenAI Codex through {@code codex app-server}. It signs in with the Codex CLI's own login. */
 public final class CodexBackend implements AgentBackend {
@@ -32,6 +34,10 @@ public final class CodexBackend implements AgentBackend {
   static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, false, false, false, true);
   private static final Logger LOG = Logger.getInstance(CodexBackend.class);
   private static final long LIST_TIMEOUT_SECONDS = 15;
+  private static final long ASK_TIMEOUT_SECONDS = 90;
+  private static final String ASK_MODEL = "gpt-5.4-mini";
+  private static final List<String> ASK_DISABLED_FEATURES = List.of("shell_tool", "unified_exec", "view_image",
+    "apps", "plugins", "multi_agent", "hooks");
 
   private final String configuredPath;
   private final AgentDefaults defaults;
@@ -100,13 +106,53 @@ public final class CodexBackend implements AgentBackend {
     return sessions;
   }
 
+  /** The CLI is found. */
+  @Override
+  public boolean canAsk() {
+    return this.locate(this.environment) != null;
+  }
+
+  @Override
+  public String ask(Path workDirectory, String prompt) throws AgentException {
+    try {
+      return Processes.run(askCommand(this.executable(this.environment)), workDirectory, this.environment, prompt,
+        ASK_TIMEOUT_SECONDS);
+    } catch (IOException e) {
+      throw new AgentException(e.getMessage(), e);
+    }
+  }
+
+  /**
+   * {@code codex exec} with a small model at low effort, read-only, without saving the session. It skips the user's
+   * config.toml, so no MCP servers start, and turns off shell, web search, images, apps, plugins, subagents and hooks.
+   * It prints only the answer.
+   */
+  static List<String> askCommand(String executable) {
+    List<String> command = new ArrayList<>(List.of(executable, "exec", "--ephemeral", "--skip-git-repo-check",
+      "--ignore-user-config", "--ignore-rules", "--sandbox", "read-only", "--color", "never", "-m", ASK_MODEL,
+      "-c", "model_reasoning_effort=low", "-c", "web_search=disabled"));
+    for (String feature : ASK_DISABLED_FEATURES) {
+      command.add("-c");
+      command.add("features." + feature + "=false");
+    }
+    command.add("-");
+    return command;
+  }
+
   private List<String> command(Map<String, String> environment) throws AgentException {
-    String executable = ExecutableLocator.locate(this.configuredPath, "codex", List.of(), environment,
-      SystemInfo.isWindows);
+    return List.of(this.executable(environment), "app-server");
+  }
+
+  private String executable(Map<String, String> environment) throws AgentException {
+    String executable = this.locate(environment);
     if (executable == null) {
       throw new AgentException(TakoBundle.message("error.codex.not.found"));
     }
-    return List.of(executable, "app-server");
+    return executable;
+  }
+
+  private @Nullable String locate(Map<String, String> environment) {
+    return ExecutableLocator.locate(this.configuredPath, "codex", List.of(), environment, SystemInfo.isWindows);
   }
 
 }

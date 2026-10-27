@@ -1,5 +1,6 @@
 package io.firebite.tako.agent;
 
+import java.nio.file.Path;
 import java.util.List;
 import org.jetbrains.annotations.Nullable;
 
@@ -38,5 +39,23 @@ public interface AgentBackend {
   /** Whether the session's prompts or answers contain {@code query}, ignoring case. False when unknown. May read files. */
   default boolean sessionMentions(String projectPath, String sessionId, String query) {
     return false;
+  }
+
+  /** Whether {@link #history} reads a session from files, without the agent running. */
+  default boolean hasStoredHistory() {
+    return false;
+  }
+
+  /** Whether {@link #ask} can run now, e.g. the agent's CLI is installed. Looks for files, so call off the EDT. */
+  default boolean canAsk() {
+    return false;
+  }
+
+  /**
+   * Answers one prompt with a cheap model, without tools and without saving a session, e.g. to name a thread. Starts
+   * a process, so call off the EDT.
+   */
+  default String ask(Path workDirectory, String prompt) throws AgentException {
+    throw new UnsupportedOperationException(this.displayName() + " cannot answer one-shot prompts");
   }
 }

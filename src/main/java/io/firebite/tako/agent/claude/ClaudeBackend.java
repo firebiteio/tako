@@ -16,6 +16,7 @@ import io.firebite.tako.agent.AgentListener;
 import io.firebite.tako.agent.AgentSession;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
+import io.firebite.tako.agent.Processes;
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
@@ -40,6 +41,7 @@ public final class ClaudeBackend implements AgentBackend {
   public static final String NAME = "Claude Code";
   private static final Logger LOG = Logger.getInstance(ClaudeBackend.class);
   private static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, true, true, true, true);
+  private static final long ASK_TIMEOUT_SECONDS = 60;
 
   private final Map<String, String> environment;
 
@@ -78,12 +80,7 @@ public final class ClaudeBackend implements AgentBackend {
   public AgentSession start(AgentLaunch threadLaunch, AgentListener listener) throws AgentException {
     ChatSettings.Data settings = ChatSettings.state();
     AgentLaunch launch = threadLaunch.withDefaults(settings.claudeDefaults());
-    String home = System.getProperty("user.home");
-    String executable = ExecutableLocator.locate(settings.claudePath, "claude",
-      List.of(Path.of(home, ".claude", "local")), launch.environment(), SystemInfo.isWindows);
-    if (executable == null) {
-      throw new AgentException(TakoBundle.message("error.claude.not.found"));
-    }
+    String executable = executable(settings, launch.environment());
     String apiKey = settings.authMode == AuthMode.API_KEY ? ApiKeyStore.load() : null;
     ClaudeLaunch command;
     try {
@@ -177,6 +174,68 @@ public final class ClaudeBackend implements AgentBackend {
       LOG.debug("Could not search session " + sessionId, e);
     }
     return false;
+  }
+
+  @Override
+  public boolean hasStoredHistory() {
+    return true;
+  }
+
+  /** The CLI is found and, in API key mode, a key is set. */
+  @Override
+  public boolean canAsk() {
+    ChatSettings.Data settings = ChatSettings.state();
+    if (locate(settings, this.environment) == null) {
+      return false;
+    }
+    if (settings.authMode != AuthMode.API_KEY) {
+      return true;
+    }
+    String apiKey = ApiKeyStore.load();
+    return apiKey != null && !apiKey.isBlank();
+  }
+
+  @Override
+  public String ask(Path workDirectory, String prompt) throws AgentException {
+    ChatSettings.Data settings = ChatSettings.state();
+    String executable = executable(settings, this.environment);
+    try {
+      ClaudeLaunch command = ClaudeLaunch.ask(executable, settings.authMode,
+        settings.authMode == AuthMode.API_KEY ? ApiKeyStore.load() : null, askSettings(), this.environment);
+      return Processes.run(command.command(), workDirectory, command.environment(), prompt, ASK_TIMEOUT_SECONDS);
+    } catch (IllegalStateException | IOException e) {
+      throw new AgentException(e.getMessage(), e);
+    }
+  }
+
+  /**
+   * Writes settings that turn off hooks, so a one-shot call runs none of the user's, project's or plugins' hooks.
+   * {@code --bare} would too, but it also stops reading the CLI login.
+   */
+  private static String askSettings() throws IOException {
+    Path file = Path.of(System.getProperty("java.io.tmpdir"), "tako-ask-settings.json");
+    if (!Files.exists(file)) {
+      file.toFile().deleteOnExit();
+    }
+    JsonObject settings = new JsonObject();
+    settings.addProperty("disableAllHooks", true);
+    Files.writeString(file, settings.toString(), StandardCharsets.UTF_8);
+    return file.toString();
+  }
+
+  private static String executable(ChatSettings.Data settings, Map<String, String> environment)
+    throws AgentException {
+    String executable = locate(settings, environment);
+    if (executable == null) {
+      throw new AgentException(TakoBundle.message("error.claude.not.found"));
+    }
+    return executable;
+  }
+
+  private static @Nullable String locate(ChatSettings.Data settings, Map<String, String> environment) {
+    String home = System.getProperty("user.home");
+    return ExecutableLocator.locate(settings.claudePath, "claude", List.of(Path.of(home, ".claude", "local")),
+      environment, SystemInfo.isWindows);
   }
 
   /**

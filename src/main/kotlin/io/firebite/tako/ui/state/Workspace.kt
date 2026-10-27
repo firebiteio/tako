@@ -200,6 +200,12 @@ class Workspace(val service: ChatService, val project: Project) {
     this.service.newThread(this.active?.projectPath, null)
   }
 
+  /** Has the thread's agent write a title from the conversation the chat holds. */
+  fun regenerateTitle(thread: ThreadState) {
+    thread.titling = true
+    this.service.regenerateTitle(thread.id, thread.conversation()).thenRun { thread.titling = false }
+  }
+
   fun receive(message: ChatMessage.WorkspaceMessage) {
     when (message) {
       is ChatMessage.Project -> {

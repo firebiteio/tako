@@ -437,8 +437,19 @@ public final class ChatController implements Disposable {
 
   /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
   public static String titleOf(String prompt) {
-    String line = prompt.replace('\n', ' ').trim();
-    return line.length() <= TITLE_LENGTH ? line : line.substring(0, TITLE_LENGTH - 1) + "…";
+    return cut(prompt.replace('\n', ' ').trim(), TITLE_LENGTH);
+  }
+
+  /** The text, or its start and an ellipsis in {@code length} characters. Does not split a surrogate pair. */
+  public static String cut(String text, int length) {
+    if (text.length() <= length) {
+      return text;
+    }
+    int end = length - 1;
+    if (Character.isHighSurrogate(text.charAt(end - 1))) {
+      end--;
+    }
+    return text.substring(0, end) + "…";
   }
 
   /** Shows what the tool call a permission prompt is about would change. */
