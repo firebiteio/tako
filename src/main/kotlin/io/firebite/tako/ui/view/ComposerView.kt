@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
@@ -101,6 +102,7 @@ import io.firebite.tako.ui.state.CACHE_TTL_1H
 import io.firebite.tako.ui.state.CacheKind
 import io.firebite.tako.ui.state.CacheState
 import io.firebite.tako.ui.state.PromptCache
+import io.firebite.tako.ui.state.PromptRecall
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.canPlanRuns
 import io.firebite.tako.ui.state.cacheState
@@ -109,6 +111,7 @@ import io.firebite.tako.ui.state.advanceQuestion
 import io.firebite.tako.ui.state.contextNumbers
 import io.firebite.tako.ui.state.RunPlan
 import io.firebite.tako.ui.state.runLabel
+import io.firebite.tako.ui.state.sentPrompts
 import io.firebite.tako.ui.state.specOf
 import io.firebite.tako.ui.state.setRunCount
 import io.firebite.tako.ui.state.modelLabel
@@ -241,6 +244,7 @@ fun Dock(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
 private fun Composer(thread: ThreadState) {
   val workspace = thread.workspace
   val suggestions = remember(thread) { Suggestions() }
+  val recall = remember(thread) { PromptRecall() }
   val focus = remember { FocusRequester() }
   var focused by remember { mutableStateOf(false) }
   var dragging by remember { mutableStateOf(false) }
@@ -327,7 +331,7 @@ private fun Composer(thread: ThreadState) {
       TextArea(thread.input, Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 208.dp).focusRequester(focus)
         .onFocusChanged { focused = it.isFocused }
         .provideData { this.set(PlatformDataKeys.PASTE_PROVIDER.name, paste) }
-        .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && onKey(thread, suggestions, event) },
+        .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && onKey(thread, suggestions, recall, event) },
         undecorated = true, textStyle = inputStyle, lineLimits = TextFieldLineLimits.MultiLine(),
         placeholder = { Text(placeholder(thread), color = colors.muted.copy(alpha = 0.75f), style = inputStyle) },
         decorationBoxModifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp))
@@ -423,10 +427,20 @@ private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, inde
   suggestions.hide()
 }
 
-private fun onKey(thread: ThreadState, suggestions: Suggestions, event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptRecall,
+  event: androidx.compose.ui.input.key.KeyEvent): Boolean {
   val count = suggestions.size
-  if (count > 0 && (event.key == Key.DirectionDown || event.key == Key.DirectionUp)) {
+  val isArrow = event.key == Key.DirectionDown || event.key == Key.DirectionUp
+  if (count > 0 && isArrow) {
     suggestions.index = (suggestions.index + (if (event.key == Key.DirectionDown) 1 else -1) + count) % count
+    return true
+  }
+  if (isArrow && !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed) {
+    val back = event.key == Key.DirectionUp
+    val selection = thread.input.selection
+    val text = recall.step(thread.sentPrompts(), thread.input.text.toString(),
+      if (back) selection.min else selection.max, back) ?: return false
+    thread.input.setTextAndPlaceCursorAtEnd(text)
     return true
   }
   if (count > 0 && (event.key == Key.Tab || (event.key == Key.Enter && !event.isShiftPressed))) {
