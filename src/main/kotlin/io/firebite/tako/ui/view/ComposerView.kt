@@ -61,6 +61,7 @@ import androidx.compose.ui.graphics.StrokeCap
 import androidx.compose.ui.graphics.StrokeJoin
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.isAltPressed
 import androidx.compose.ui.input.key.isCtrlPressed
 import androidx.compose.ui.input.key.isMetaPressed
 import androidx.compose.ui.input.key.isShiftPressed
@@ -72,6 +73,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -95,6 +97,7 @@ import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.PriceRatios
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ide.context.Images
+import io.firebite.tako.ide.context.PastedText
 import io.firebite.tako.ide.project.FileIndex
 import io.firebite.tako.ui.countdown
 import io.firebite.tako.ui.money
@@ -102,14 +105,17 @@ import io.firebite.tako.ui.state.CACHE_TTL_1H
 import io.firebite.tako.ui.state.CacheKind
 import io.firebite.tako.ui.state.CacheState
 import io.firebite.tako.ui.state.PromptCache
+import io.firebite.tako.ui.state.PromptRecall
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.canPlanRuns
 import io.firebite.tako.ui.state.cacheState
 import io.firebite.tako.ui.state.chooseOption
+import io.firebite.tako.ui.state.addContext
 import io.firebite.tako.ui.state.advanceQuestion
 import io.firebite.tako.ui.state.contextNumbers
 import io.firebite.tako.ui.state.RunPlan
 import io.firebite.tako.ui.state.runLabel
+import io.firebite.tako.ui.state.sentPrompts
 import io.firebite.tako.ui.state.specOf
 import io.firebite.tako.ui.state.setRunCount
 import io.firebite.tako.ui.state.modelLabel
@@ -194,7 +200,7 @@ private class AboveAnchor(private val gap: Int, private val inset: Int) : PopupP
   }
 }
 
-/** Pastes images and image files as attachments, everything else as text. */
+/** Pastes images, image files and large text as attachments, everything else as text. */
 private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
   override fun performPaste(dataContext: DataContext) {
     val clipboard = CopyPasteManager.getInstance()
@@ -213,11 +219,14 @@ private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
       return
     }
     val text = clipboard.getContents<String>(DataFlavor.stringFlavor) ?: return
-    this.thread.input.edit {
-      val start = this.selection.min
-      this.replace(start, this.selection.max, text)
-      this.selection = TextRange(start + text.length)
+    val controller = this.thread.controller
+    if (controller != null && PastedText.isLarge(text)) {
+      val item = controller.pasteText(text) ?: return
+      insertText(this.thread, "")
+      this.thread.addContext(item, null)
+      return
     }
+    insertText(this.thread, text)
   }
 
   override fun isPastePossible(dataContext: DataContext): Boolean = true
@@ -225,6 +234,14 @@ private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
   override fun isPasteEnabled(dataContext: DataContext): Boolean = true
 
   override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+}
+
+private fun insertText(thread: ThreadState, text: String) {
+  thread.input.edit {
+    val start = this.selection.min
+    this.replace(start, this.selection.max, text)
+    this.selection = TextRange(start + text.length)
+  }
 }
 
 /** What sits under the conversation: running tasks, the waiting prompt's drawer and the composer. */
@@ -245,6 +262,8 @@ fun Dock(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
 private fun Composer(thread: ThreadState) {
   val workspace = thread.workspace
   val suggestions = remember(thread) { Suggestions() }
+  val recall = remember(thread) { PromptRecall() }
+  val layout = remember(thread) { mutableStateOf<(() -> TextLayoutResult?)?>(null) }
   val focus = remember { FocusRequester() }
   var focused by remember { mutableStateOf(false) }
   var dragging by remember { mutableStateOf(false) }
@@ -260,6 +279,12 @@ private fun Composer(thread: ThreadState) {
   }
   LaunchedEffect(thread) {
     snapshotFlow { thread.input.text.toString() to thread.input.selection }.collectLatest { (text, selection) ->
+      if (recall.shows(text)) {
+        suggestions.hide()
+        suggestions.isMention = false
+        suggestions.mention = null
+        return@collectLatest
+      }
       updateSlash(thread, suggestions, text)
       updateMention(thread, suggestions, text, selection)
     }
@@ -323,7 +348,10 @@ private fun Composer(thread: ThreadState) {
         FlowRow(Modifier.padding(start = 14.dp, end = 14.dp, top = if (thread.images.isEmpty()) 12.dp else 8.dp),
           horizontalArrangement = Arrangement.spacedBy(4.dp), verticalArrangement = Arrangement.spacedBy(4.dp)) {
           for (item in thread.contexts.toList()) {
-            MentionChip(item) { thread.contexts.remove(item) }
+            MentionChip(item) {
+              thread.contexts.remove(item)
+              thread.controller?.discardPaste(item)
+            }
           }
         }
       }
@@ -331,8 +359,9 @@ private fun Composer(thread: ThreadState) {
       TextArea(thread.input, Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 208.dp).focusRequester(focus)
         .onFocusChanged { focused = it.isFocused }
         .provideData { this.set(PlatformDataKeys.PASTE_PROVIDER.name, paste) }
-        .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && onKey(thread, suggestions, event) },
+        .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && onKey(thread, suggestions, recall, layout.value?.invoke(), event) },
         undecorated = true, textStyle = inputStyle, lineLimits = TextFieldLineLimits.MultiLine(),
+        onTextLayout = { layout.value = it },
         placeholder = { Text(placeholder(thread), color = colors.muted.copy(alpha = 0.75f), style = inputStyle) },
         decorationBoxModifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp))
       Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
@@ -460,10 +489,25 @@ private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, inde
   suggestions.hide()
 }
 
-private fun onKey(thread: ThreadState, suggestions: Suggestions, event: androidx.compose.ui.input.key.KeyEvent): Boolean {
+/** @param layout the composer's text as laid out, for the caret's line */
+private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptRecall, layout: TextLayoutResult?,
+  event: androidx.compose.ui.input.key.KeyEvent): Boolean {
   val count = suggestions.size
-  if (count > 0 && (event.key == Key.DirectionDown || event.key == Key.DirectionUp)) {
+  val isArrow = event.key == Key.DirectionDown || event.key == Key.DirectionUp
+  if (count > 0 && isArrow) {
     suggestions.index = (suggestions.index + (if (event.key == Key.DirectionDown) 1 else -1) + count) % count
+    return true
+  }
+  if (isArrow && !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed &&
+    thread.approvals.isEmpty()) {
+    val back = event.key == Key.DirectionUp
+    val text = thread.input.text.toString()
+    if (!recall.takes(text) || !onEdgeLine(layout, text, thread.input.selection, back)) {
+      return false
+    }
+    val prompts = thread.sentPrompts()
+    val next = (if (back) recall.back(prompts) else recall.forward(prompts)) ?: return false
+    thread.input.setTextAndPlaceCursorAtEnd(next)
     return true
   }
   if (count > 0 && (event.key == Key.Tab || (event.key == Key.Enter && !event.isShiftPressed))) {
@@ -487,6 +531,10 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, event: androidx
     thread.submit()
     return true
   }
+  if (event.key == Key.V && event.isShiftPressed && (event.isCtrlPressed || event.isMetaPressed)) {
+    CopyPasteManager.getInstance().getContents<String>(DataFlavor.stringFlavor)?.let { insertText(thread, it) }
+    return true
+  }
   if (event.key == Key.Escape) {
     if (count > 0) {
       suggestions.hide()
@@ -498,6 +546,18 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, event: androidx
     }
   }
   return false
+}
+
+/** Whether the caret is on the first line (Up) or last line (Down) as shown, wrapped lines included. */
+private fun onEdgeLine(layout: TextLayoutResult?, text: String, selection: TextRange, back: Boolean): Boolean {
+  if (text.isEmpty()) {
+    return true
+  }
+  if (layout == null || layout.layoutInput.text.text != text) {
+    return false
+  }
+  val line = layout.getLineForOffset(if (back) selection.min else selection.max)
+  return if (back) line == 0 else line == layout.lineCount - 1
 }
 
 @Composable
@@ -749,11 +809,12 @@ private fun RunMenu(thread: ThreadState, index: Int, onDismiss: () -> Unit) {
 
 @Composable
 private fun SendButton(thread: ThreadState) {
-  val hasText = thread.typed.isNotEmpty() || thread.images.isNotEmpty()
+  val hasText = thread.typed.isNotEmpty() || (thread.images.isNotEmpty() && thread.approvals.isEmpty())
   val isStop = thread.busy && !hasText && thread.approvals.isEmpty()
   val enabled = isStop || hasText || (thread.question?.selected?.isNotEmpty() == true)
   val tip = when {
     isStop -> t("composer.stop")
+    thread.approvals.isNotEmpty() && thread.question == null -> t("composer.decline.title")
     thread.busy -> t("composer.queue.title")
     else -> t("composer.send.title")
   }

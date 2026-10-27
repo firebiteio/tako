@@ -41,6 +41,7 @@ public class AcpSessionTest {
       assertEquals("ask", info.mode());
       assertEquals("Edits freely", info.modes().get(1).description());
       assertTrue(info.capabilities().images());
+      assertFalse(info.capabilities().declineReason());
       assertFalse(session.takesTools());
 
       session.prompt("change a.txt", List.of(), 1);
