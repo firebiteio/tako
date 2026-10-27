@@ -37,6 +37,7 @@ import io.firebite.tako.ui.bridge.ChatMessage;
 import java.awt.Image;
 import java.awt.datatransfer.DataFlavor;
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -57,7 +58,6 @@ public final class ChatController implements Disposable {
   private static final int FILE_MATCHES = 30;
   private static final long PULL_REQUEST_INTERVAL_MILLIS = 120_000;
   private static final String PASTED_IMAGE_NAME = "pasted-image.png";
-  private static final String PASTED_TEXT_FOLDER = "tako-pasted";
   private static final int SCRATCHPAD_FILES = 50;
 
   private final Project project;
@@ -438,19 +438,32 @@ public final class ChatController implements Disposable {
   }
 
   /**
-   * Writes a large paste to a file and attaches it, so the agent reads it instead of the prompt carrying it. The file
-   * goes to the agent's scratchpad, or to Tako's folder in the system temp folder without one.
+   * Writes a large paste to a file in {@link PastedText#folder()}, which every launch passes as an additional
+   * directory, so the agent reads it instead of the prompt carrying it. Writes right away, so the file is attached
+   * before the next key is handled.
+   *
+   * @return the file as context, or null after showing why it could not be written
    */
-  public void pasteText(String text) {
-    String scratchpad = this.scratchpadPath;
-    Path directory = scratchpad != null
-      ? Path.of(scratchpad)
-      : Path.of(System.getProperty("java.io.tmpdir"), PASTED_TEXT_FOLDER);
+  public @Nullable ContextItem pasteText(String text) {
+    try {
+      return IdeContext.file(PastedText.write(PastedText.folder(), text));
+    } catch (IOException e) {
+      this.postError(TakoBundle.message("error.paste.text", e.getMessage()));
+      return null;
+    }
+  }
+
+  /** Deletes the file of a pasted text chip removed before sending. Other chips are left alone. */
+  public void discardPaste(ContextItem item) {
+    Path file = PastedText.fileOf(item, PastedText.folder());
+    if (file == null) {
+      return;
+    }
     Async.inBackground(() -> {
       try {
-        this.addContext(IdeContext.file(PastedText.write(directory, text)), null);
+        Files.deleteIfExists(file);
       } catch (IOException e) {
-        this.postError(TakoBundle.message("error.paste.text", e.getMessage()));
+        LOG.debug("Could not delete " + file, e);
       }
     });
   }
