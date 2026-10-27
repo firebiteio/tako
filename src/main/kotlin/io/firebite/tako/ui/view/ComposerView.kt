@@ -73,6 +73,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.layout.positionInWindow
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextRange
+import androidx.compose.ui.text.TextLayoutResult
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.rememberTextMeasurer
@@ -245,6 +246,7 @@ private fun Composer(thread: ThreadState) {
   val workspace = thread.workspace
   val suggestions = remember(thread) { Suggestions() }
   val recall = remember(thread) { PromptRecall() }
+  val layout = remember(thread) { mutableStateOf<(() -> TextLayoutResult?)?>(null) }
   val focus = remember { FocusRequester() }
   var focused by remember { mutableStateOf(false) }
   var dragging by remember { mutableStateOf(false) }
@@ -260,6 +262,12 @@ private fun Composer(thread: ThreadState) {
   }
   LaunchedEffect(thread) {
     snapshotFlow { thread.input.text.toString() to thread.input.selection }.collectLatest { (text, selection) ->
+      if (recall.shows(text)) {
+        suggestions.hide()
+        suggestions.isMention = false
+        suggestions.mention = null
+        return@collectLatest
+      }
       updateSlash(thread, suggestions, text)
       updateMention(thread, suggestions, text, selection)
     }
@@ -331,8 +339,9 @@ private fun Composer(thread: ThreadState) {
       TextArea(thread.input, Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 208.dp).focusRequester(focus)
         .onFocusChanged { focused = it.isFocused }
         .provideData { this.set(PlatformDataKeys.PASTE_PROVIDER.name, paste) }
-        .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && onKey(thread, suggestions, recall, event) },
+        .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && onKey(thread, suggestions, recall, layout.value?.invoke(), event) },
         undecorated = true, textStyle = inputStyle, lineLimits = TextFieldLineLimits.MultiLine(),
+        onTextLayout = { layout.value = it },
         placeholder = { Text(placeholder(thread), color = colors.muted.copy(alpha = 0.75f), style = inputStyle) },
         decorationBoxModifier = Modifier.padding(start = 16.dp, end = 16.dp, top = 14.dp, bottom = 6.dp))
       Row(Modifier.fillMaxWidth().padding(start = 10.dp, end = 10.dp, bottom = 10.dp),
@@ -427,7 +436,8 @@ private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, inde
   suggestions.hide()
 }
 
-private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptRecall,
+/** @param layout the composer's text as laid out, for the caret's line */
+private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptRecall, layout: TextLayoutResult?,
   event: androidx.compose.ui.input.key.KeyEvent): Boolean {
   val count = suggestions.size
   val isArrow = event.key == Key.DirectionDown || event.key == Key.DirectionUp
@@ -435,12 +445,16 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptR
     suggestions.index = (suggestions.index + (if (event.key == Key.DirectionDown) 1 else -1) + count) % count
     return true
   }
-  if (isArrow && !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed) {
+  if (isArrow && !event.isShiftPressed && !event.isCtrlPressed && !event.isAltPressed && !event.isMetaPressed &&
+    thread.approvals.isEmpty()) {
     val back = event.key == Key.DirectionUp
-    val selection = thread.input.selection
-    val text = recall.step(thread.sentPrompts(), thread.input.text.toString(),
-      if (back) selection.min else selection.max, back) ?: return false
-    thread.input.setTextAndPlaceCursorAtEnd(text)
+    val text = thread.input.text.toString()
+    if (!recall.takes(text) || !onEdgeLine(layout, text, thread.input.selection, back)) {
+      return false
+    }
+    val prompts = thread.sentPrompts()
+    val next = (if (back) recall.back(prompts) else recall.forward(prompts)) ?: return false
+    thread.input.setTextAndPlaceCursorAtEnd(next)
     return true
   }
   if (count > 0 && (event.key == Key.Tab || (event.key == Key.Enter && !event.isShiftPressed))) {
@@ -475,6 +489,18 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptR
     }
   }
   return false
+}
+
+/** Whether the caret is on the first line (Up) or last line (Down) as shown, wrapped lines included. */
+private fun onEdgeLine(layout: TextLayoutResult?, text: String, selection: TextRange, back: Boolean): Boolean {
+  if (text.isEmpty()) {
+    return true
+  }
+  if (layout == null || layout.layoutInput.text.text != text) {
+    return false
+  }
+  val line = layout.getLineForOffset(if (back) selection.min else selection.max)
+  return if (back) line == 0 else line == layout.lineCount - 1
 }
 
 @Composable
