@@ -86,6 +86,56 @@ fun ThreadState.addContext(item: ContextItem, prefill: String?) {
   this.workspace.focusComposer++
 }
 
+/** The box takes quotes unless a waiting approval or question would take the text as its answer. */
+val ThreadState.canQuote: Boolean
+  get() = this.question == null && this.approvals.isEmpty()
+
+/** Quotes text from the timeline at the end of the box, with an empty line under it for the reply. */
+fun ThreadState.quote(text: String) {
+  if (!this.canQuote) {
+    return
+  }
+  this.input.setTextAndPlaceCursorAtEnd(withQuote(this.input.text.toString(), text))
+  this.workspace.focusComposer++
+}
+
+/**
+ * [typed] with [text] added as a Markdown blockquote, `> ` before each line, and an empty line after it. A code
+ * fence left open in [typed] is closed first, so the quote doesn't land inside the code.
+ */
+fun withQuote(typed: String, text: String): String {
+  val quote = text.trim('\r', '\n').lines().joinToString("\n") { if (it.isBlank()) ">" else "> " + it.trimEnd() }
+  val before = typed.trimEnd()
+  val fence = openFence(before)
+  val closed = if (fence == null) before else before + "\n" + fence
+  return (if (closed.isEmpty()) "" else closed + "\n\n") + quote + "\n\n"
+}
+
+/** The run of backticks or tildes of the code fence [text] leaves open, null if none is open. */
+private fun openFence(text: String): String? {
+  var open: String? = null
+  for (line in text.lines()) {
+    val trimmed = line.trimStart(' ')
+    val mark = trimmed.firstOrNull()
+    if (line.length - trimmed.length > 3 || (mark != '`' && mark != '~')) {
+      continue
+    }
+    val run = trimmed.takeWhile { it == mark }
+    val rest = trimmed.substring(run.length)
+    if (run.length < 3) {
+      continue
+    }
+    if (open == null) {
+      if (mark == '~' || !rest.contains('`')) {
+        open = run
+      }
+    } else if (mark == open[0] && run.length >= open.length && rest.isBlank()) {
+      open = null
+    }
+  }
+  return open
+}
+
 fun ThreadState.addImage(image: ImageAttachment) {
   this.images.add(PendingImage(image))
   if (this.isActive) {
