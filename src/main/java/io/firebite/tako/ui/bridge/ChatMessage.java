@@ -261,8 +261,7 @@ public sealed interface ChatMessage {
   record Submit(
     String text,
     List<ContextItem> context,
-    List<ImageAttachment> images,
-    boolean includeActiveFile
+    List<ImageAttachment> images
   ) implements ThreadMessage {
   }
 

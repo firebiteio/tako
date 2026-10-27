@@ -52,7 +52,7 @@ fun ThreadState.submit() {
       return
     }
   } else {
-    this.startPrompt(text, this.contexts.toList(), images, this.workspace.includeFile)
+    this.startPrompt(text, this.contexts.toList(), images)
   }
   this.contexts.clear()
   this.images.clear()
@@ -257,8 +257,7 @@ private fun ThreadState.startBench(text: String): Boolean {
     return false
   }
   this.startingBench = true
-  val prompt = ChatMessage.Submit(text, this.contexts.toList(), this.images.map { it.image },
-    this.workspace.includeFile)
+  val prompt = ChatMessage.Submit(text, this.contexts.toList(), this.images.map { it.image })
   this.workspace.service.createBench(BenchRequest(prompt, this.projectPath, this.id, this.runs.map { this.specOf(it) }))
   this.setBusy(true)
   return true

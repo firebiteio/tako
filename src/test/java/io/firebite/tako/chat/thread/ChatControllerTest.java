@@ -124,7 +124,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
     this.controller.setEffort("high");
 
-    this.controller.send("write a.txt", List.of(), List.of(), false, 1);
+    this.controller.send("write a.txt", List.of(), List.of(), 1);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals("Write", permission.prompt().toolName());
     assertEquals(ToolKind.EDIT, permission.prompt().category());
@@ -152,7 +152,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertEquals("a waiter never sees it idle before the prompt", ChatController.State.WORKING,
       this.controller.state());
 
-    this.controller.send(submit.text(), List.of(), List.of(), false, 1);
+    this.controller.send(submit.text(), List.of(), List.of(), 1);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals(ChatController.State.WAITING, this.controller.state());
     assertNull("a given title stays", this.title);

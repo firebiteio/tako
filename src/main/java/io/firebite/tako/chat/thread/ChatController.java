@@ -26,7 +26,6 @@ import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
-import io.firebite.tako.ide.context.IdeContext;
 import io.firebite.tako.ide.context.Images;
 import io.firebite.tako.ide.context.PromptComposer;
 import io.firebite.tako.ide.editor.IdeFiles;
@@ -139,7 +138,7 @@ public final class ChatController implements Disposable {
   public void submit(String prompt) {
     this.setState(State.WORKING);
     this.error = null;
-    this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of(), false));
+    this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of()));
   }
 
   public void interrupt() {
@@ -335,8 +334,7 @@ public final class ChatController implements Disposable {
    *
    * @param turn the chat's number for this prompt's turn, which {@link #showTurnDiff} names later
    */
-  public void send(String text, List<ContextItem> context, List<ImageAttachment> attached, boolean includeActiveFile,
-    int turn) {
+  public void send(String text, List<ContextItem> context, List<ImageAttachment> attached, int turn) {
     List<ImageAttachment> images = new ArrayList<>();
     for (ImageAttachment image : attached) {
       if (image.isValid()) {
@@ -344,10 +342,9 @@ public final class ChatController implements Disposable {
       }
     }
     Async.onEdt(() -> {
-      String activeFile = includeActiveFile ? IdeContext.activeFile(this.project) : null;
       String composed = text.isBlank() && !images.isEmpty()
         ? ""
-        : PromptComposer.compose(text, context, activeFile);
+        : PromptComposer.compose(text, context);
       String folder = this.projectFolder();
       String prompt = this.record.workPath != null && folder != null
         ? PromptComposer.rebase(composed, folder, this.record.workPath)

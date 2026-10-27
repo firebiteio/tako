@@ -39,7 +39,6 @@ class Workspace(val service: ChatService, val project: Project) {
   var agents by mutableStateOf<List<ChatMessage.AgentOption>>(emptyList())
   val threads = mutableStateMapOf<String, ThreadState>()
   var active by mutableStateOf<ThreadState?>(null)
-  var includeFile by mutableStateOf(true)
   /** How much of the agent's rate-limit windows is used, e.g. "5h 42% · 7d 10%". */
   var limits by mutableStateOf("")
   /** Whether the settings allow parallel runs. */
@@ -198,8 +197,7 @@ class Workspace(val service: ChatService, val project: Project) {
       is ChatMessage.Image -> thread.addImage(message.image)
       is ChatMessage.ContextUsage -> thread.contextUsage = message.data
       is ChatMessage.Exit -> thread.onExit(message.code, message.stderr)
-      is ChatMessage.Submit -> thread.startPrompt(message.text, message.context, message.images,
-        message.includeActiveFile)
+      is ChatMessage.Submit -> thread.startPrompt(message.text, message.context, message.images)
       is ChatMessage.BenchFailed -> thread.onBenchFailed(message.prompt, message.error)
       is ChatMessage.Error -> thread.onError(message.text)
     }

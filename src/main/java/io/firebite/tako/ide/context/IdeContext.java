@@ -7,7 +7,6 @@ import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.SelectionModel;
 import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 import io.firebite.tako.TakoBundle;
@@ -65,11 +64,6 @@ public final class IdeContext {
     String text = "IDE inspections in " + path + ":\n" + String.join("\n", lines);
     return ContextItem.create(ContextItem.Kind.PROBLEMS,
       TakoBundle.message("context.problems", lines.size(), file.getName()), text);
-  }
-
-  public static @Nullable String activeFile(Project project) {
-    VirtualFile[] files = FileEditorManager.getInstance(project).getSelectedFiles();
-    return files.length == 0 ? null : files[0].getPath();
   }
 
   private static String fenceLanguage(VirtualFile file) {

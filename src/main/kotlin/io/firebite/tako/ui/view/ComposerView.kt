@@ -507,11 +507,10 @@ private fun SuggestionPopup(thread: ThreadState, suggestions: Suggestions, width
 
 /** One of the composer's pickers. */
 private class Control(val key: String, val icon: IconKey, val label: String, val tooltip: String,
-  val chevron: Boolean, val highlighted: Boolean = false, val dimmed: Boolean = false, val menu: (() -> List<MenuEntry>)?,
-  val menuTitle: String? = null, val onClick: (() -> Unit)? = null)
+  val chevron: Boolean, val highlighted: Boolean = false, val menu: () -> List<MenuEntry>, val menuTitle: String? = null)
 
 /** Controls whose label gives way to just the icon when the composer is too narrow, least needed first. */
-private val SHRINKING = listOf("file", CACHE_TIMER, "effort", "mode", "model", "agent", "runs")
+private val SHRINKING = listOf(CACHE_TIMER, "effort", "mode", "model", "agent", "runs")
 
 /** The cache timer's key among the shrinking controls; it sits beside the send button but gives way in turn. */
 private const val CACHE_TIMER = "cache"
@@ -581,8 +580,6 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
         }
       }, menuTitle = t("composer.permissions")))
   }
-  controls.add(Control("file", Icons.file, t("composer.current.file"), t("composer.include.file"), false,
-    dimmed = !workspace.includeFile, menu = null) { workspace.includeFile = !workspace.includeFile })
 
   val measurer = rememberTextMeasurer()
   val style = smallStyle.copy(fontWeight = FontWeight.Medium)
@@ -640,20 +637,13 @@ private fun ControlButton(control: Control, iconOnly: Boolean, narrow: Boolean, 
   val (interaction, hovered) = rememberHover()
   val color = when {
     control.highlighted -> colors.primary
-    hovered || (control.menu == null && !control.dimmed) -> colors.fg
+    hovered -> colors.fg
     else -> colors.muted
   }
   Box {
     Tip(control.tooltip) {
-      Row(Modifier.height(28.dp).alpha(if (control.dimmed) 0.6f else 1f)
-        .hoverClick(RoundedCornerShape(10.dp), interaction = interaction) {
-          val run = control.onClick
-          if (run != null) {
-            run()
-          } else {
-            open = true
-          }
-        }.padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+      Row(Modifier.height(28.dp).hoverClick(RoundedCornerShape(10.dp), interaction = interaction) { open = true }
+        .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically) {
         Ico(control.icon, size = 14.dp, tint = color)
         if (!iconOnly) {
           if (!narrow) {
@@ -665,9 +655,8 @@ private fun ControlButton(control: Control, iconOnly: Boolean, narrow: Boolean, 
         }
       }
     }
-    val menu = control.menu
-    if (open && menu != null) {
-      MenuPopup(menu(), control.menuTitle) { open = false }
+    if (open) {
+      MenuPopup(control.menu(), control.menuTitle) { open = false }
     }
     popups()
   }

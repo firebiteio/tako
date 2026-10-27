@@ -416,8 +416,7 @@ fun ThreadState.onError(text: String) {
 }
 
 /** Shows the prompt as the thread's next turn and sends it; while the agent works it waits until the agent takes it. */
-fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: List<ImageAttachment>,
-  includeActiveFile: Boolean) {
+fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: List<ImageAttachment>) {
   val prompt = Prompt(text, contexts, images)
   this.turnNo++
   this.finished = false
@@ -427,7 +426,7 @@ fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: L
   } else {
     this.startTurn(prompt, false)
   }
-  this.controller?.send(text, contexts, images, includeActiveFile, this.turnNo)
+  this.controller?.send(text, contexts, images, this.turnNo)
   this.updatedAt = System.currentTimeMillis()
   this.setBusy(true)
   this.scrollToEnd++
