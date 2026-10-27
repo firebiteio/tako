@@ -81,6 +81,8 @@ public final class ChatController implements Disposable {
   private volatile @Nullable String scratchpadPath;
   private volatile long lastPullRequestCheck;
   private volatile boolean isTitled;
+  /** Set by {@link #restartSession} until the next launch, whose session's past the chat already shows. */
+  private volatile boolean keepsTimeline;
 
   public ChatController(Project project, ChatView view, ChatHost host, ThreadStore.Record record,
     AgentBackend backend) {
@@ -179,6 +181,19 @@ public final class ChatController implements Disposable {
   /** Starts the agent again, e.g. after its process ended. */
   public void restart() {
     Async.inBackground(() -> this.launch(this.record.sessionId));
+  }
+
+  /**
+   * Stops the agent so the next prompt resumes its session in a new process, which loads skills, plugins, MCP servers
+   * and instructions again. Only while the agent is idle. The chat keeps its timeline.
+   */
+  public void restartSession() {
+    if (this.state != State.IDLE) {
+      return;
+    }
+    this.keepsTimeline = true;
+    this.connection.stop();
+    this.stopped(null);
   }
 
   /**
@@ -296,6 +311,16 @@ public final class ChatController implements Disposable {
   }
 
   private void launch(@Nullable String resumeSessionId) {
+    this.launch(resumeSessionId, false);
+  }
+
+  /**
+   * Starts the agent.
+   *
+   * @param forPrompt a prompt follows once the agent is ready, so the thread stays busy
+   * @return completes once the agent is ready or failed to start
+   */
+  private CompletableFuture<?> launch(@Nullable String resumeSessionId, boolean forPrompt) {
     String basePath = this.projectPath();
     Path workDirectory = Path.of(basePath != null ? basePath : System.getProperty("user.home"));
     AgentLaunch launch = new AgentLaunch(workDirectory, resumeSessionId, this.record.model, this.record.mode,
@@ -304,13 +329,14 @@ public final class ChatController implements Disposable {
     this.setState(State.STARTING);
     AgentSession session;
     try {
-      session = this.connection.replace(this.backend, launch, new Listener());
+      session = this.connection.replace(this.backend, launch, new Listener(!this.keepsTimeline));
     } catch (AgentException e) {
       this.stopped(e.getMessage());
       this.postError(e.getMessage());
-      return;
+      return CompletableFuture.completedFuture(null);
     }
-    session.initialize().whenComplete((info, error) -> {
+    this.keepsTimeline = false;
+    return session.initialize().whenComplete((info, error) -> {
       if (error != null) {
         String message = TakoBundle.message("error.agent.not.started", this.backend.displayName(),
           AgentException.messageOf(error));
@@ -323,7 +349,7 @@ public final class ChatController implements Disposable {
       this.refreshContext();
       if (prompt != null) {
         this.submit(prompt);
-      } else {
+      } else if (!forPrompt) {
         this.setState(State.IDLE);
       }
     });
@@ -357,9 +383,9 @@ public final class ChatController implements Disposable {
     this.opened.join();
     AgentSession session = this.connection.live();
     if (session == null) {
-      this.launch(this.record.sessionId);
+      this.launch(this.record.sessionId, true).handle((ready, error) -> null).join();
       session = this.connection.live();
-      if (session == null) {
+      if (session == null || this.state == State.STOPPED) {
         return;
       }
     }
@@ -588,6 +614,13 @@ public final class ChatController implements Disposable {
   }
 
   private final class Listener implements AgentListener {
+    /** Whether the session's past replaces the chat's timeline. */
+    private final boolean replays;
+
+    private Listener(boolean replays) {
+      this.replays = replays;
+    }
+
     @Override
     public void onEvent(AgentEvent event) {
       ChatController.this.onEvent(event);
@@ -595,7 +628,9 @@ public final class ChatController implements Disposable {
 
     @Override
     public void onHistory(List<AgentEvent> events) {
-      ChatController.this.view.post(new ChatMessage.Replay(events));
+      if (this.replays) {
+        ChatController.this.view.post(new ChatMessage.Replay(events));
+      }
     }
 
     @Override

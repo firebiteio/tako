@@ -70,19 +70,26 @@ fun Ico(key: IconKey, modifier: Modifier = Modifier, size: Dp = 16.dp, tint: Col
   Icon(key, null, modifier.size(size), tint = tint)
 }
 
-/** A borderless icon button that lights up under the mouse, with a tooltip; small icons get the compact size. */
+/**
+ * A borderless icon button that lights up under the mouse, with a tooltip; small icons get the compact size. A disabled
+ * one is faint and keeps its tooltip.
+ */
 @Composable
 fun IconBtn(key: IconKey, tooltip: String, modifier: Modifier = Modifier, iconSize: Dp = 16.dp,
-  color: Color = colors.muted, onClick: () -> Unit) {
+  color: Color = colors.muted, enabled: Boolean = true, onClick: () -> Unit) {
   val isSmall = iconSize < 16.dp
   val shape = RoundedCornerShape(if (isSmall) 6.dp else 8.dp)
   val (interaction, hovered) = rememberHover()
+  val lit = hovered && enabled
   Tip(tooltip, modifier) {
     Box(Modifier.size(if (isSmall) 22.dp else 28.dp).clip(shape)
-      .background(if (hovered) colors.hover else Color.Transparent).hoverable(interaction)
-      .clickable(interaction, indication = null, onClick = onClick).pointerHoverIcon(PointerIcon.Hand),
+      .background(if (lit) colors.hover else Color.Transparent).hoverable(interaction)
+      .let {
+        if (enabled) it.clickable(interaction, indication = null, onClick = onClick).pointerHoverIcon(PointerIcon.Hand)
+        else it
+      },
       contentAlignment = Alignment.Center) {
-      Ico(key, size = iconSize, tint = if (hovered) colors.fg else color)
+      Ico(key, size = iconSize, tint = if (!enabled) colors.faint else if (lit) colors.fg else color)
     }
   }
 }

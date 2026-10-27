@@ -32,6 +32,7 @@ import androidx.compose.ui.unit.dp
 import com.intellij.ide.actions.RevealFileAction
 import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.money
+import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
@@ -134,10 +135,26 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
           }
         }
       }
+      if (thread?.info != null) {
+        RestartButton(thread)
+      }
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     Rule()
   }
+}
+
+/** Stops the agent so the next prompt resumes the session in a new process. Only while idle, for agents that resume. */
+@Composable
+private fun RestartButton(thread: ThreadState) {
+  val canResume = thread.info?.capabilities?.resume == true
+  val isIdle = !thread.busy && thread.approvals.isEmpty()
+  val tip = when {
+    !canResume -> t("header.restart.unsupported", thread.agentName)
+    !isIdle -> t("header.restart.busy", thread.agentName)
+    else -> t("header.restart", thread.agentName)
+  }
+  IconBtn(Icons.refresh, tip, enabled = canResume && isIdle) { thread.controller?.restartSession() }
 }
 
 @Composable

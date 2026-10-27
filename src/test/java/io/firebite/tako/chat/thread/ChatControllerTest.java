@@ -6,6 +6,8 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.firebite.tako.agent.AgentEvent;
 import io.firebite.tako.agent.FakeExecutable;
 import io.firebite.tako.agent.ToolKind;
+import io.firebite.tako.agent.acp.AcpBackend;
+import io.firebite.tako.agent.acp.FakeAcpAgent;
 import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.agent.claude.FakeClaude;
 import io.firebite.tako.chat.store.ThreadStore;
@@ -15,6 +17,7 @@ import io.firebite.tako.ui.bridge.ChatMessage;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
@@ -27,6 +30,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   private final BlockingQueue<ChatMessage.ThreadMessage> posted = new LinkedBlockingQueue<>();
   private final ThreadStore.Record record = new ThreadStore.Record();
   private ChatSettings.Data savedSettings;
+  private ChatHost host;
   private ChatController controller;
   private String title;
 
@@ -39,7 +43,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.savedSettings.authMode = settings.authMode;
     settings.claudePath = writeFakeExecutable().toString();
     settings.authMode = AuthMode.CLI_LOGIN;
-    this.controller = new ChatController(this.getProject(), this.posted::add, new ChatHost() {
+    this.host = new ChatHost() {
       @Override
       public void setTitle(String title) {
         ChatControllerTest.this.title = title;
@@ -70,7 +74,9 @@ public class ChatControllerTest extends BasePlatformTestCase {
       public String toolsUrl() {
         return null;
       }
-    }, this.record, new ClaudeBackend(Map.of()));
+    };
+    this.controller = new ChatController(this.getProject(), this.posted::add, this.host, this.record,
+      new ClaudeBackend(Map.of()));
   }
 
   @Override
@@ -103,12 +109,22 @@ public class ChatControllerTest extends BasePlatformTestCase {
   }
 
   private <T extends ChatMessage.ThreadMessage> T awaitPost(Class<T> type) throws InterruptedException {
+    return type.cast(this.postsUntil(type).getLast());
+  }
+
+  /** What the chat was sent up to and including the first message of {@code type}. */
+  private List<ChatMessage.ThreadMessage> postsUntil(Class<?> type) throws InterruptedException {
+    List<ChatMessage.ThreadMessage> messages = new ArrayList<>();
     long deadline = System.currentTimeMillis() + TIMEOUT_MILLIS;
     while (System.currentTimeMillis() < deadline) {
       PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
       ChatMessage.ThreadMessage message = this.posted.poll(50, TimeUnit.MILLISECONDS);
+      if (message == null) {
+        continue;
+      }
+      messages.add(message);
       if (type.isInstance(message)) {
-        return type.cast(message);
+        return messages;
       }
       if (message instanceof ChatMessage.Error error) {
         throw new AssertionError("Chat error: " + error.text());
@@ -162,5 +178,35 @@ public class ChatControllerTest extends BasePlatformTestCase {
     }
     assertEquals(ChatController.State.IDLE, this.controller.state());
     assertEquals("denied", this.controller.lastAnswer());
+  }
+
+  public void testRestartedSessionResumesOnTheNextPromptWithoutReplayingItsPast() throws Exception {
+    Path agent = FakeExecutable.write("fake-acp", FakeAcpAgent.class);
+    this.record.projectPath = Files.createTempDirectory("tako-work").toString();
+    this.record.sessionId = "s0";
+    ChatController acp = new ChatController(this.getProject(), this.posted::add, this.host, this.record,
+      new AcpBackend("Fake", List.of(agent.toString()), Map.of()));
+    try {
+      acp.open();
+      this.awaitPost(ChatMessage.Replay.class);
+      assertTrue(this.awaitPost(ChatMessage.Init.class).info().capabilities().resume());
+      assertEquals(ChatController.State.IDLE, acp.awaitSettled(TIMEOUT_MILLIS));
+
+      acp.restartSession();
+      assertEquals(ChatController.State.STOPPED, acp.state());
+
+      acp.send("change a.txt", List.of(), List.of(), 1);
+      List<ChatMessage.ThreadMessage> resumed = this.postsUntil(ChatMessage.Permission.class);
+      assertTrue("the resumed session starts before the prompt",
+        resumed.stream().anyMatch(ChatMessage.Init.class::isInstance));
+      assertFalse("the chat keeps its timeline", resumed.stream().anyMatch(ChatMessage.Replay.class::isInstance));
+      assertEquals("s0", this.record.sessionId);
+      assertEquals(ChatController.State.WAITING, acp.state());
+
+      acp.restartSession();
+      assertEquals("no restart while the agent waits", ChatController.State.WAITING, acp.state());
+    } finally {
+      acp.dispose();
+    }
   }
 }
