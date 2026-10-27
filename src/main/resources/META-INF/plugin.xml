@@ -31,6 +31,7 @@
                              key="configurable.acp" instance="io.firebite.tako.settings.AcpAgentsConfigurable"/>
     <notificationGroup id="Tako" displayType="BALLOON" key="notification.group.tako"/>
     <statusBarWidgetFactory id="Tako.Status" implementation="io.firebite.tako.ide.status.TakoStatusWidgetFactory"/>
+    <actionPromoter implementation="io.firebite.tako.ui.view.StashActionPromoter"/>
   </extensions>
 
   <actions>
@@ -46,5 +47,11 @@
       <add-to-group group-id="EditorPopupMenu" anchor="last"/>
       <add-to-group group-id="ProjectViewPopupMenu" anchor="last"/>
     </group>
+    <action id="Tako.StashPrompt" class="io.firebite.tako.ui.view.StashAction">
+      <keyboard-shortcut keymap="$default" first-keystroke="ctrl S"/>
+      <keyboard-shortcut keymap="Mac OS X" first-keystroke="meta S" replace-all="true"/>
+      <keyboard-shortcut keymap="Mac OS X 10.5+" first-keystroke="meta S" replace-all="true"/>
+      <keyboard-shortcut keymap="Emacs" first-keystroke="ctrl S" remove="true"/>
+    </action>
   </actions>
 </idea-plugin>

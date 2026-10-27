@@ -88,10 +88,15 @@ import androidx.compose.ui.unit.em
 import androidx.compose.ui.window.PopupPositionProvider
 import androidx.compose.ui.window.PopupProperties
 import com.intellij.ide.PasteProvider
+import com.intellij.openapi.actionSystem.ActionPromoter
 import com.intellij.openapi.actionSystem.ActionUpdateThread
+import com.intellij.openapi.actionSystem.AnAction
+import com.intellij.openapi.actionSystem.AnActionEvent
 import com.intellij.openapi.actionSystem.DataContext
+import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.ide.CopyPasteManager
+import com.intellij.openapi.project.DumbAwareAction
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.PriceRatios
@@ -120,8 +125,11 @@ import io.firebite.tako.ui.state.specOf
 import io.firebite.tako.ui.state.setRunCount
 import io.firebite.tako.ui.state.modelLabel
 import io.firebite.tako.ui.state.modelsOf
+import io.firebite.tako.ui.state.removeStashed
+import io.firebite.tako.ui.state.restoreStash
 import io.firebite.tako.ui.state.submit
 import io.firebite.tako.ui.state.submitAndBranch
+import io.firebite.tako.ui.state.toggleStash
 import io.firebite.tako.ui.state.typed
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
@@ -244,6 +252,35 @@ private fun insertText(thread: ThreadState, text: String) {
   }
 }
 
+/** The thread whose composer has focus. */
+internal val COMPOSER: DataKey<ThreadState> = DataKey.create("tako.composer")
+
+/**
+ * Stashes the composer's draft or brings one back. Bound to Ctrl+S (Cmd+S on macOS) in plugin.xml, and only enabled
+ * while the composer has focus.
+ */
+class StashAction : DumbAwareAction() {
+  override fun update(event: AnActionEvent) {
+    event.presentation.isEnabled = event.getData(COMPOSER) != null
+  }
+
+  override fun actionPerformed(event: AnActionEvent) {
+    event.getData(COMPOSER)?.toggleStash()
+  }
+
+  override fun getActionUpdateThread(): ActionUpdateThread = ActionUpdateThread.EDT
+}
+
+/** Puts [StashAction] ahead of Save All, which shares its shortcut, while the composer has focus. */
+class StashActionPromoter : ActionPromoter {
+  override fun promote(actions: List<AnAction>, context: DataContext): List<AnAction> {
+    if (context.getData(COMPOSER) == null) {
+      return emptyList()
+    }
+    return actions.filterIsInstance<StashAction>()
+  }
+}
+
 /** What sits under the conversation: running tasks, the waiting prompt's drawer and the composer. */
 @Composable
 fun Dock(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
@@ -358,7 +395,10 @@ private fun Composer(thread: ThreadState) {
       val inputStyle = textStyle.copy(lineHeight = 1.6.em)
       TextArea(thread.input, Modifier.fillMaxWidth().heightIn(min = 72.dp, max = 208.dp).focusRequester(focus)
         .onFocusChanged { focused = it.isFocused }
-        .provideData { this.set(PlatformDataKeys.PASTE_PROVIDER.name, paste) }
+        .provideData {
+          this.set(PlatformDataKeys.PASTE_PROVIDER.name, paste)
+          this.set(COMPOSER.name, thread)
+        }
         .onPreviewKeyEvent { event -> event.type == KeyEventType.KeyDown && onKey(thread, suggestions, recall, layout.value?.invoke(), event) },
         undecorated = true, textStyle = inputStyle, lineLimits = TextFieldLineLimits.MultiLine(),
         onTextLayout = { layout.value = it },
@@ -384,6 +424,15 @@ private fun Composer(thread: ThreadState) {
     }
     if (workspace.contextPanelOpen) {
       ContextPanel(thread, maxHeight)
+    }
+    thread.stashMenu?.let { entries ->
+      val items = entries.map { entry ->
+        MenuEntry(entry.label(), remove = { thread.removeStashed(entry) }) { thread.restoreStash(entry) }
+      }
+      MenuPopup(items, t("stash.menu")) {
+        thread.stashMenu = null
+        workspace.focusComposer++
+      }
     }
   }
 }

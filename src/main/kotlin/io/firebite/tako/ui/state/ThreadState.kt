@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ContextUsage
 import com.intellij.openapi.diagnostic.logger
+import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.chat.thread.ThreadTitles
 import io.firebite.tako.ide.context.ContextItem
@@ -90,6 +91,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The folder the agent keeps its scratch files in, if it has one. */
   var scratchpad by mutableStateOf<String?>(null)
   val alerts = mutableStateListOf<Alert>()
+  /** The stashed drafts to pick from, while their menu is open. */
+  var stashMenu by mutableStateOf<List<PromptStash.Entry>?>(null)
 
   val input = TextFieldState()
   val scrollState = ScrollState(0)
