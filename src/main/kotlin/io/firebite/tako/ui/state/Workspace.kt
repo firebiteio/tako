@@ -200,6 +200,7 @@ class Workspace(val service: ChatService, val project: Project) {
       is ChatMessage.Submit -> thread.startPrompt(message.text, message.context, message.images)
       is ChatMessage.BenchFailed -> thread.onBenchFailed(message.prompt, message.error)
       is ChatMessage.Error -> thread.onError(message.text)
+      is ChatMessage.Notice -> thread.showAlert(message.text)
     }
   }
 

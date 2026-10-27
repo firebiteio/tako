@@ -185,15 +185,21 @@ public final class ChatController implements Disposable {
 
   /**
    * Stops the agent so the next prompt resumes its session in a new process, which loads skills, plugins, MCP servers
-   * and instructions again. Only while the agent is idle. The chat keeps its timeline.
+   * and instructions again. Only while the agent is idle. The chat keeps its timeline and the last turn's error.
    */
   public void restartSession() {
     if (this.state != State.IDLE) {
       return;
     }
-    this.keepsTimeline = true;
-    this.connection.stop();
-    this.stopped(null);
+    Async.inBackground(() -> {
+      if (this.state != State.IDLE) {
+        return;
+      }
+      this.keepsTimeline = true;
+      this.connection.stop();
+      this.stopped(this.error);
+      this.view.post(new ChatMessage.Exit(0, ""));
+    });
   }
 
   /**
@@ -329,7 +335,8 @@ public final class ChatController implements Disposable {
     this.setState(State.STARTING);
     AgentSession session;
     try {
-      session = this.connection.replace(this.backend, launch, new Listener(!this.keepsTimeline));
+      session = this.connection.replace(this.backend, launch,
+        this.keepsTimeline ? new Listener(false, resumeSessionId) : new Listener(true, null));
     } catch (AgentException e) {
       this.stopped(e.getMessage());
       this.postError(e.getMessage());
@@ -383,12 +390,22 @@ public final class ChatController implements Disposable {
     this.opened.join();
     AgentSession session = this.connection.live();
     if (session == null) {
-      this.launch(this.record.sessionId, true).handle((ready, error) -> null).join();
-      session = this.connection.live();
-      if (session == null || this.state == State.STOPPED) {
-        return;
-      }
+      this.launch(this.record.sessionId, true).whenComplete((ready, error) -> this.promptStarted(typed, prompt, images,
+        turn));
+      return;
     }
+    this.prompt(session, typed, prompt, images, turn);
+  }
+
+  /** Sends the prompt to the agent it launched, once that is ready, unless it did not start. */
+  private void promptStarted(String typed, String prompt, List<ImageAttachment> images, int turn) {
+    AgentSession session = this.connection.live();
+    if (session != null && this.state != State.STOPPED) {
+      this.prompt(session, typed, prompt, images, turn);
+    }
+  }
+
+  private void prompt(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn) {
     this.setState(State.WORKING);
     this.error = null;
     this.untakenTurns.add(turn);
@@ -616,13 +633,24 @@ public final class ChatController implements Disposable {
   private final class Listener implements AgentListener {
     /** Whether the session's past replaces the chat's timeline. */
     private final boolean replays;
+    /** The session the chat's timeline continues, until the agent names the one it started. */
+    private volatile @Nullable String resumes;
 
-    private Listener(boolean replays) {
+    private Listener(boolean replays, @Nullable String resumes) {
       this.replays = replays;
+      this.resumes = resumes;
     }
 
     @Override
     public void onEvent(AgentEvent event) {
+      String resumed = this.resumes;
+      if (resumed != null && event instanceof AgentEvent.SessionStarted started && started.sessionId() != null) {
+        this.resumes = null;
+        if (!resumed.equals(started.sessionId())) {
+          ChatController.this.view.post(new ChatMessage.Notice(
+            TakoBundle.message("error.session.not.resumed", ChatController.this.backend.displayName())));
+        }
+      }
       ChatController.this.onEvent(event);
     }
 

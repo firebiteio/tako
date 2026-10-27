@@ -152,9 +152,10 @@ private fun RestartButton(thread: ThreadState) {
   val tip = when {
     !canResume -> t("header.restart.unsupported", thread.agentName)
     !isIdle -> t("header.restart.busy", thread.agentName)
+    thread.stopped -> t("header.restart.stopped", thread.agentName)
     else -> t("header.restart", thread.agentName)
   }
-  IconBtn(Icons.refresh, tip, enabled = canResume && isIdle) { thread.controller?.restartSession() }
+  IconBtn(Icons.refresh, tip, enabled = canResume && isIdle && !thread.stopped) { thread.controller?.restartSession() }
 }
 
 @Composable

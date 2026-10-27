@@ -209,6 +209,12 @@ public sealed interface ChatMessage {
   ) implements WorkspaceMessage, ThreadMessage {
   }
 
+  /** Something the person should know that does not fail the turn. */
+  record Notice(
+    String text
+  ) implements ThreadMessage {
+  }
+
   /** The thread's agent is ready, with what it offers the composer. */
   record Init(
     AgentInfo info,
