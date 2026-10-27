@@ -60,7 +60,9 @@ import io.firebite.tako.ui.state.runName
 import io.firebite.tako.ui.state.runningTasks
 import io.firebite.tako.ui.state.threadTree
 import io.firebite.tako.ui.t
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withContext
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.TextField
 import org.jetbrains.jewel.ui.component.VerticallyScrollableContainer
@@ -532,6 +534,14 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     else -> colors.muted
   }
   var menuOpen by remember(thread) { mutableStateOf(false) }
+  var canTitle by remember(thread) { mutableStateOf(false) }
+  LaunchedEffect(menuOpen) {
+    if (menuOpen) {
+      canTitle = false
+      val shown = thread.turns.isNotEmpty()
+      canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(thread.id, shown) }
+    }
+  }
   Box(Modifier.fillMaxWidth().onPointerEvent(PointerEventType.Press) {
     if (it.buttons.isSecondaryPressed) {
       menuOpen = true
@@ -579,7 +589,7 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     if (menuOpen) {
       MenuPopup(listOf(MenuEntry(t("sidebar.regenerate.title"),
         if (thread.titling) t("sidebar.regenerate.title.running") else null, Icons.refresh,
-        enabled = workspace.canRegenerateTitle(thread)) { workspace.regenerateTitle(thread) })) { menuOpen = false }
+        enabled = canTitle && !thread.titling) { workspace.regenerateTitle(thread) })) { menuOpen = false }
     }
   }
 }

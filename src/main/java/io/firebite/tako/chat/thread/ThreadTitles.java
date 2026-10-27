@@ -15,17 +15,21 @@ public final class ThreadTitles {
   private ThreadTitles() {
   }
 
-  /** The conversation's first request and its last few messages, with each message cut short. */
-  public static String prompt(List<Message> conversation) {
+  /**
+   * The conversation's first request and its last few messages, with each message cut short. Null without a request,
+   * since a title would be made up.
+   */
+  public static @Nullable String prompt(List<Message> conversation) {
     int first = 0;
     while (first < conversation.size() && !conversation.get(first).isUser()) {
       first++;
     }
+    if (first == conversation.size()) {
+      return null;
+    }
     StringBuilder prompt = new StringBuilder("Write a title of at most six words for this conversation between a "
       + "developer and a coding agent. Answer with the title only, without quotes.\n");
-    if (first < conversation.size()) {
-      prompt.append("\nFirst request:\n").append(cut(conversation.get(first).text())).append('\n');
-    }
+    prompt.append("\nFirst request:\n").append(cut(conversation.get(first).text())).append('\n');
     int recent = Math.max(first + 1, conversation.size() - RECENT_MESSAGES);
     if (recent < conversation.size()) {
       prompt.append("\nLatest messages:\n");
@@ -65,8 +69,7 @@ public final class ThreadTitles {
   }
 
   private static String cut(String text) {
-    String trimmed = text.strip();
-    return trimmed.length() <= MESSAGE_LENGTH ? trimmed : trimmed.substring(0, MESSAGE_LENGTH - 1) + "…";
+    return ChatController.cut(text.strip(), MESSAGE_LENGTH);
   }
 
   private static String strip(String text, String characters) {

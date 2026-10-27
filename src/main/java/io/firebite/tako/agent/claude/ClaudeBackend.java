@@ -177,8 +177,22 @@ public final class ClaudeBackend implements AgentBackend {
   }
 
   @Override
-  public boolean canAsk() {
+  public boolean hasStoredHistory() {
     return true;
+  }
+
+  /** The CLI is found and, in API key mode, a key is set. */
+  @Override
+  public boolean canAsk() {
+    ChatSettings.Data settings = ChatSettings.state();
+    if (locate(settings, this.environment) == null) {
+      return false;
+    }
+    if (settings.authMode != AuthMode.API_KEY) {
+      return true;
+    }
+    String apiKey = ApiKeyStore.load();
+    return apiKey != null && !apiKey.isBlank();
   }
 
   @Override
@@ -187,22 +201,41 @@ public final class ClaudeBackend implements AgentBackend {
     String executable = executable(settings, this.environment);
     try {
       ClaudeLaunch command = ClaudeLaunch.ask(executable, settings.authMode,
-        settings.authMode == AuthMode.API_KEY ? ApiKeyStore.load() : null, this.environment);
+        settings.authMode == AuthMode.API_KEY ? ApiKeyStore.load() : null, askSettings(), this.environment);
       return Processes.run(command.command(), workDirectory, command.environment(), prompt, ASK_TIMEOUT_SECONDS);
     } catch (IllegalStateException | IOException e) {
       throw new AgentException(e.getMessage(), e);
     }
   }
 
+  /**
+   * Writes settings that turn off hooks, so a one-shot call runs none of the user's, project's or plugins' hooks.
+   * {@code --bare} would too, but it also stops reading the CLI login.
+   */
+  private static String askSettings() throws IOException {
+    Path file = Path.of(System.getProperty("java.io.tmpdir"), "tako-ask-settings.json");
+    if (!Files.exists(file)) {
+      file.toFile().deleteOnExit();
+    }
+    JsonObject settings = new JsonObject();
+    settings.addProperty("disableAllHooks", true);
+    Files.writeString(file, settings.toString(), StandardCharsets.UTF_8);
+    return file.toString();
+  }
+
   private static String executable(ChatSettings.Data settings, Map<String, String> environment)
     throws AgentException {
-    String home = System.getProperty("user.home");
-    String executable = ExecutableLocator.locate(settings.claudePath, "claude",
-      List.of(Path.of(home, ".claude", "local")), environment, SystemInfo.isWindows);
+    String executable = locate(settings, environment);
     if (executable == null) {
       throw new AgentException(TakoBundle.message("error.claude.not.found"));
     }
     return executable;
+  }
+
+  private static @Nullable String locate(ChatSettings.Data settings, Map<String, String> environment) {
+    String home = System.getProperty("user.home");
+    return ExecutableLocator.locate(settings.claudePath, "claude", List.of(Path.of(home, ".claude", "local")),
+      environment, SystemInfo.isWindows);
   }
 
   /**

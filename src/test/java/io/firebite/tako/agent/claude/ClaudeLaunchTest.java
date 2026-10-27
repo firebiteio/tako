@@ -59,10 +59,10 @@ public class ClaudeLaunchTest {
 
   @Test
   public void askUsesASmallModelWithoutToolsOrSavedSession() {
-    ClaudeLaunch launch = ClaudeLaunch.ask("claude", AuthMode.API_KEY, "sk-test", Map.of());
+    ClaudeLaunch launch = ClaudeLaunch.ask("claude", AuthMode.API_KEY, "sk-test", "C:/tmp/ask.json", Map.of());
 
     assertEquals(List.of("claude", "-p", "--model", "haiku", "--tools", "", "--strict-mcp-config",
-      "--no-session-persistence", "--output-format", "text"), launch.command());
+      "--no-session-persistence", "--settings", "C:/tmp/ask.json", "--output-format", "text"), launch.command());
     assertEquals("sk-test", launch.environment().get("ANTHROPIC_API_KEY"));
   }
 

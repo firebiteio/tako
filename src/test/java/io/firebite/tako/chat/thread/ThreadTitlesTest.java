@@ -46,6 +46,19 @@ public class ThreadTitlesTest {
   }
 
   @Test
+  public void promptCutsBeforeASurrogatePair() {
+    String prompt = ThreadTitles.prompt(List.of(new ThreadTitles.Message(true, "x".repeat(798) + "😀".repeat(10))));
+
+    assertTrue(prompt.contains("First request:\n" + "x".repeat(798) + "…\n"));
+  }
+
+  @Test
+  public void noPromptWithoutARequest() {
+    assertNull(ThreadTitles.prompt(List.of(new ThreadTitles.Message(false, "Hello, how can I help?"))));
+    assertNull(ThreadTitles.prompt(List.of()));
+  }
+
+  @Test
   public void titleDropsLabelQuotesAndPeriod() {
     assertEquals("Fix login redirect", ThreadTitles.title("Title: \"Fix login redirect.\"\n"));
     assertEquals("Dark mode toggle", ThreadTitles.title("\n**Dark mode toggle**\nmore text"));

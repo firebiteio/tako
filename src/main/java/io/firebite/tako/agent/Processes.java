@@ -11,10 +11,18 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /** Starting and stopping agent processes. */
 public final class Processes {
+  /** How long {@link #run} waits for the output after the process exited. */
+  private static final long STREAM_GRACE_SECONDS = 5;
+  private static final ExecutorService READERS = Executors.newCachedThreadPool(
+    Thread.ofPlatform().daemon().name("tako-process-output-", 0).factory());
+
   private Processes() {
   }
 
@@ -40,17 +48,21 @@ public final class Processes {
     CompletableFuture<String> errors = readAll(process.getErrorStream());
     try (OutputStream stdin = process.getOutputStream()) {
       stdin.write(input.getBytes(StandardCharsets.UTF_8));
+    } catch (IOException e) {
+      // It exited before reading all of it. Its exit code and error output tell why.
     }
     try {
       if (!process.waitFor(timeoutSeconds, TimeUnit.SECONDS)) {
-        destroyTree(process);
-        throw new IOException("No answer after " + timeoutSeconds + " s");
+        throw new TimeoutException();
       }
       if (process.exitValue() != 0) {
-        String error = errors.get().strip();
+        String error = errors.get(STREAM_GRACE_SECONDS, TimeUnit.SECONDS).strip();
         throw new IOException(error.isEmpty() ? "Exit code " + process.exitValue() : error);
       }
-      return output.get();
+      return output.get(STREAM_GRACE_SECONDS, TimeUnit.SECONDS);
+    } catch (TimeoutException e) {
+      destroyTree(process);
+      throw new IOException("No answer after " + timeoutSeconds + " s", e);
     } catch (InterruptedException e) {
       destroyTree(process);
       Thread.currentThread().interrupt();
@@ -69,7 +81,10 @@ public final class Processes {
     process.destroy();
   }
 
-  /** Reads the stream to its end on another thread, so a full pipe cannot block the process. */
+  /**
+   * Reads the stream to its end on its own thread, so a full pipe cannot block the process. A process it started may
+   * keep the pipe open after it exits, which leaves the thread reading until that one exits too.
+   */
   private static CompletableFuture<String> readAll(InputStream stream) {
     return CompletableFuture.supplyAsync(() -> {
       try (stream) {
@@ -77,6 +92,6 @@ public final class Processes {
       } catch (IOException e) {
         throw new UncheckedIOException(e);
       }
-    });
+    }, READERS);
   }
 }

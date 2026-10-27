@@ -41,7 +41,12 @@ public interface AgentBackend {
     return false;
   }
 
-  /** Whether {@link #ask} works. */
+  /** Whether {@link #history} reads a session from files, without the agent running. */
+  default boolean hasStoredHistory() {
+    return false;
+  }
+
+  /** Whether {@link #ask} can run now, e.g. the agent's CLI is installed. Looks for files, so call off the EDT. */
   default boolean canAsk() {
     return false;
   }

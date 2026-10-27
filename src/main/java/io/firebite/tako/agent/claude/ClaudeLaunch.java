@@ -48,12 +48,14 @@ public record ClaudeLaunch(
    * A call that answers the prompt on stdin as plain text with a small model, no tools, no MCP servers and no saved
    * session.
    *
+   * @param settingsFile extra settings for the call, e.g. ones that turn off hooks
    * @throws IllegalStateException in API key mode without a key
    */
-  public static ClaudeLaunch ask(String executable, AuthMode authMode, @Nullable String apiKey,
+  public static ClaudeLaunch ask(String executable, AuthMode authMode, @Nullable String apiKey, String settingsFile,
     Map<String, String> baseEnvironment) {
     return new ClaudeLaunch(List.of(executable, "-p", "--model", ASK_MODEL, "--tools", "", "--strict-mcp-config",
-      "--no-session-persistence", "--output-format", "text"), environment(authMode, apiKey, baseEnvironment));
+      "--no-session-persistence", "--settings", settingsFile, "--output-format", "text"),
+      environment(authMode, apiKey, baseEnvironment));
   }
 
   private static Map<String, String> environment(AuthMode authMode, @Nullable String apiKey,

@@ -50,6 +50,7 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -381,14 +382,25 @@ public final class ChatService implements Disposable {
     });
   }
 
-  /** Whether the agent can name a thread in a one-shot call. */
-  public boolean canRegenerateTitle(String agent) {
-    return AgentRegistry.find(agent, EnvironmentUtil.getEnvironmentMap()).canAsk();
+  /**
+   * Whether the thread's agent can name it now: it has a conversation to read and a one-shot call. Looks for the
+   * agent's CLI, so call off the EDT.
+   *
+   * @param shown whether the chat holds messages of the thread
+   */
+  public boolean canRegenerateTitle(String id, boolean shown) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null) {
+      return false;
+    }
+    AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
+    return (shown || record.sessionId != null && backend.hasStoredHistory()) && backend.canAsk();
   }
 
   /**
    * Has the thread's agent name it from its first request and latest messages, and saves the title. Takes the
    * conversation the chat holds, else reads the session's history when the agent keeps it in files. Shows failures.
+   * Keeps the thread as it is if it was removed or got another title meanwhile.
    *
    * @return completes on the EDT when done
    */
@@ -401,18 +413,25 @@ public final class ChatService implements Disposable {
     }
     String folder = this.workFolder(record);
     String sessionId = record.sessionId;
+    String oldTitle = record.title;
     AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
     Async.inBackground(() -> {
       try {
         String title = askTitle(backend, folder, sessionId, shown);
         Async.onEdt(() -> {
-          record.title = title;
-          this.postUpdate(record);
+          if (this.store.find(id) == record && oldTitle.equals(record.title)) {
+            record.title = title;
+            this.postUpdate(record);
+          }
           done.complete(null);
         });
-      } catch (AgentException e) {
+      } catch (AgentException | RuntimeException e) {
+        if (e instanceof RuntimeException) {
+          LOG.warn("Could not regenerate the title of thread " + id, e);
+        }
         Async.onEdt(() -> {
-          this.post(new ChatMessage.Error(TakoBundle.message("error.title", e.getMessage())));
+          this.post(
+            new ChatMessage.Error(TakoBundle.message("error.title", Objects.toString(e.getMessage(), e.toString()))));
           done.complete(null);
         });
       }
@@ -427,10 +446,11 @@ public final class ChatService implements Disposable {
       && backend.history(folder, sessionId) instanceof AgentHistory.Loaded loaded) {
       conversation = ThreadTitles.fromEvents(loaded.events());
     }
-    if (conversation.isEmpty()) {
+    String prompt = ThreadTitles.prompt(conversation);
+    if (prompt == null) {
       throw new AgentException(TakoBundle.message("error.title.no.conversation"));
     }
-    String title = ThreadTitles.title(backend.ask(Path.of(folder), ThreadTitles.prompt(conversation)));
+    String title = ThreadTitles.title(backend.ask(Path.of(folder), prompt));
     if (title == null) {
       throw new AgentException(TakoBundle.message("error.title.blank"));
     }
