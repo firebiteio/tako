@@ -174,8 +174,5 @@ class PendingImage(val image: ImageAttachment)
 /** A dismissible alert above a thread, or above the whole chat. */
 class Alert(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
 
-/** A thread just archived, whose toast offers to undo it; each archive is a new one, so its toast starts anew. */
-class ArchivedThread(val thread: String, val wasActive: Boolean)
-
 /** A run of a bench to start; absent fields follow the thread's own agent and model. */
 data class RunPlan(val agent: String? = null, val model: String? = null)

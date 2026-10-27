@@ -508,18 +508,36 @@ public final class ChatService implements Disposable {
   }
 
   public void setArchived(String id, boolean archived) {
+    if (archived) {
+      this.archive(id);
+    } else {
+      this.select(id);
+    }
+  }
+
+  /**
+   * Archives the thread and stops its agent. Selects the first open thread in place of the active one, or a new
+   * thread when none is open.
+   * @return what undoing it needs, or null when there is no such thread
+   */
+  public @Nullable Archived archive(String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
-      return;
-    }
-    if (!archived) {
-      this.select(record.id);
-      return;
+      return null;
     }
     record.archived = true;
     this.disposeController(record.id);
     this.postUpdate(record);
-    this.selectAnotherIfActive(record.id);
+    if (!record.id.equals(this.store.activeId())) {
+      return new Archived(record.id, null, false);
+    }
+    ThreadStore.Record next = this.firstOpenThread(record.id);
+    if (next != null) {
+      this.select(next.id);
+      return new Archived(record.id, next.id, false);
+    }
+    this.newThread(null, null, null, null);
+    return new Archived(record.id, this.store.activeId(), true);
   }
 
   /** Lists an archived thread again without selecting it. */
@@ -719,6 +737,18 @@ public final class ChatService implements Disposable {
     String id,
     String title,
     ChatController.State state
+  ) {
+  }
+
+  /**
+   * A thread just archived.
+   * @param replacement      the thread selected in its place, or null when it was not the active one
+   * @param isNewReplacement whether the replacement is a new thread, made because no other was open
+   */
+  public record Archived(
+    String thread,
+    @Nullable String replacement,
+    boolean isNewReplacement
   ) {
   }
 
