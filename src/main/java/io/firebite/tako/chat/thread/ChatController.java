@@ -26,7 +26,9 @@ import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.ide.context.IdeContext;
 import io.firebite.tako.ide.context.Images;
+import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.context.PromptComposer;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.FileIndex;
@@ -55,6 +57,7 @@ public final class ChatController implements Disposable {
   private static final int FILE_MATCHES = 30;
   private static final long PULL_REQUEST_INTERVAL_MILLIS = 120_000;
   private static final String PASTED_IMAGE_NAME = "pasted-image.png";
+  private static final String PASTED_TEXT_FOLDER = "tako-pasted";
   private static final int SCRATCHPAD_FILES = 50;
 
   private final Project project;
@@ -430,6 +433,24 @@ public final class ChatController implements Disposable {
         this.view.post(new ChatMessage.Image(Images.fromImage(clipboardImage, PASTED_IMAGE_NAME)));
       } catch (IOException e) {
         this.postError(TakoBundle.message("error.clipboard.image", e.getMessage()));
+      }
+    });
+  }
+
+  /**
+   * Writes a large paste to a file and attaches it, so the agent reads it instead of the prompt carrying it. The file
+   * goes to the agent's scratchpad, or to Tako's folder in the system temp folder without one.
+   */
+  public void pasteText(String text) {
+    String scratchpad = this.scratchpadPath;
+    Path directory = scratchpad != null
+      ? Path.of(scratchpad)
+      : Path.of(System.getProperty("java.io.tmpdir"), PASTED_TEXT_FOLDER);
+    Async.inBackground(() -> {
+      try {
+        this.addContext(IdeContext.file(PastedText.write(directory, text)), null);
+      } catch (IOException e) {
+        this.postError(TakoBundle.message("error.paste.text", e.getMessage()));
       }
     });
   }
