@@ -6,6 +6,8 @@ import com.intellij.diff.DiffManager;
 import com.intellij.diff.chains.SimpleDiffRequestChain;
 import com.intellij.diff.requests.DiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
+import com.intellij.openapi.application.ModalityState;
+import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
@@ -16,6 +18,9 @@ import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.psi.search.FilenameIndex;
+import com.intellij.psi.search.GlobalSearchScope;
+import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.EditPreview;
 import java.io.IOException;
@@ -97,6 +102,41 @@ public final class IdeFiles {
     }
     new OpenFileDescriptor(project, file, Math.max(line - 1, 0), 0).navigate(true);
     return true;
+  }
+
+  /** Like {@link #open}, but also finds a project file by its name or a tail of its path, like {@code Foo.java}. */
+  public static void openMentioned(Project project, String path, int line) {
+    if (open(project, path, line)) {
+      return;
+    }
+    String tail = path.replace('\\', '/');
+    if (tail.startsWith("./")) {
+      tail = tail.substring(2);
+    }
+    String suffix = tail;
+    ReadAction.nonBlocking(() -> findByTail(project, suffix))
+      .inSmartMode(project)
+      .expireWith(project)
+      .finishOnUiThread(ModalityState.defaultModalityState(), file -> {
+        if (file != null) {
+          new OpenFileDescriptor(project, file, Math.max(line - 1, 0), 0).navigate(true);
+        }
+      })
+      .submit(AppExecutorUtil.getAppExecutorService());
+  }
+
+  /** The project file whose path ends with {@code tail}, the shortest when several do. Needs a read action. */
+  private static @Nullable VirtualFile findByTail(Project project, String tail) {
+    String name = tail.substring(tail.lastIndexOf('/') + 1);
+    VirtualFile best = null;
+    for (VirtualFile file : FilenameIndex.getVirtualFilesByName(name, GlobalSearchScope.projectScope(project))) {
+      String filePath = file.getPath();
+      boolean matches = filePath.equals(tail) || filePath.endsWith("/" + tail);
+      if (matches && (best == null || filePath.length() < best.getPath().length())) {
+        best = file;
+      }
+    }
+    return best;
   }
 
   /** Must run on the EDT. */

@@ -177,7 +177,7 @@ private class WorkspaceCodeActions(private val workspace: Workspace) : CodeActio
   }
 
   override fun open(path: String, line: Int) {
-    IdeFiles.open(this.workspace.project, path, line)
+    IdeFiles.openMentioned(this.workspace.project, path, line)
   }
 
   override fun openUrl(url: String) {
