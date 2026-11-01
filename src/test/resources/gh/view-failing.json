@@ -1,0 +1,79 @@
+{
+  "baseRefName": "master",
+  "headRefOid": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d",
+  "mergeable": "MERGEABLE",
+  "number": 12,
+  "reviews": [
+    {
+      "id": "PRR_kwDOAAABBB4",
+      "author": {"login": "alice"},
+      "authorAssociation": "MEMBER",
+      "body": "Please split this method <!-- bot marker -->\r\n\r\nand  rename it ✨",
+      "submittedAt": "2026-10-30T09:12:44Z",
+      "includesCreatedEdit": false,
+      "reactionGroups": [],
+      "state": "CHANGES_REQUESTED",
+      "commit": {"oid": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"}
+    },
+    {
+      "id": "PRR_kwDOAAABBB5",
+      "author": {"login": "bob"},
+      "authorAssociation": "CONTRIBUTOR",
+      "body": "",
+      "submittedAt": "2026-10-30T09:20:01Z",
+      "includesCreatedEdit": false,
+      "reactionGroups": [],
+      "state": "COMMENTED",
+      "commit": {"oid": "1a2b3c4d5e6f708192a3b4c5d6e7f8091a2b3c4d"}
+    }
+  ],
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-30T09:05:10Z",
+      "conclusion": "FAILURE",
+      "detailsUrl": "https://github.com/firebiteio/tako/actions/runs/111/job/222",
+      "name": "build",
+      "startedAt": "2026-10-30T09:01:00Z",
+      "status": "COMPLETED",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/firebiteio/tako/actions/runs/111/job/223",
+      "name": "test",
+      "startedAt": "2026-10-30T09:01:00Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "CI"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-30T09:02:00Z",
+      "conclusion": "SKIPPED",
+      "detailsUrl": "https://github.com/firebiteio/tako/actions/runs/112/job/300",
+      "name": "deploy",
+      "startedAt": "2026-10-30T09:02:00Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "ci/lint",
+      "startedAt": "2026-10-30T09:03:00Z",
+      "state": "ERROR",
+      "targetUrl": "https://ci.example.com/builds/9"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "license/cla",
+      "startedAt": "2026-10-30T09:00:00Z",
+      "state": "SUCCESS",
+      "targetUrl": null
+    }
+  ],
+  "title": "Watch pull requests 🐙",
+  "url": "https://github.com/firebiteio/tako/pull/12"
+}
