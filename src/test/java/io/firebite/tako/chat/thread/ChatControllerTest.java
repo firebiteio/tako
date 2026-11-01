@@ -15,6 +15,7 @@ import io.firebite.tako.agent.claude.FakeClaude;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.codex.CodexBackend;
 import io.firebite.tako.agent.codex.FakeCodex;
+import io.firebite.tako.chat.store.PromptStash;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.settings.AuthMode;
@@ -169,7 +170,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
     this.controller.setEffort("high");
 
-    this.controller.send("write a.txt", List.of(), List.of(), 1, 0);
+    this.controller.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals("Write", permission.prompt().toolName());
     assertEquals(ToolKind.EDIT, permission.prompt().category());
@@ -234,7 +235,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertEquals("a waiter never sees it idle before the prompt", ChatController.State.WORKING,
       this.controller.state());
 
-    this.controller.send(submit.text(), List.of(), List.of(), 1, 0);
+    this.controller.send(submit.text(), List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals(ChatController.State.WAITING, this.controller.state());
     assertNull("a given title stays", this.title);
@@ -249,7 +250,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   public void testClaudeRestartKeepsTheLastErrorAndResumesTheSessionOnTheNextPrompt() throws Exception {
     this.controller.open();
     this.awaitPost(ChatMessage.Init.class);
-    this.controller.send("fail", List.of(), List.of(), 1, 0);
+    this.controller.send("fail", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
     while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
     }
     assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
@@ -261,7 +262,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.restart(this.controller);
     assertEquals("no new turn ran", error, this.controller.error());
 
-    this.controller.send("write a.txt", List.of(), List.of(), 2, 1);
+    this.controller.send("write a.txt", List.of(), List.of(), 2, 1, QueuedPrompts.Delivery.QUEUE);
     List<ChatMessage.ThreadMessage> resumed = this.postsUntil(ChatMessage.Permission.class);
     assertNotNull("the resumed session starts before the prompt", find(resumed, ChatMessage.Init.class));
     assertNull("the session was resumed", find(resumed, ChatMessage.Notice.class));
@@ -284,7 +285,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
       this.restart(thread);
 
-      thread.send("list files", List.of(), List.of(), 1, 0);
+      thread.send("list files", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
       List<ChatMessage.ThreadMessage> resumed = this.postsUntil(ChatMessage.Permission.class);
       ChatMessage.Init init = find(resumed, ChatMessage.Init.class);
       assertNotNull("the resumed thread starts before the prompt", init);
@@ -310,7 +311,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
       this.restart(acp);
 
-      acp.send("change a.txt", List.of(), List.of(), 1, 0);
+      acp.send("change a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
       List<ChatMessage.ThreadMessage> resumed = this.postsUntil(ChatMessage.Permission.class);
       ChatMessage.Init init = find(resumed, ChatMessage.Init.class);
       assertNotNull("the resumed session starts before the prompt", init);
@@ -342,7 +343,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
       this.restart(acp);
       this.record.sessionId = "gone";
 
-      acp.send("change a.txt", List.of(), List.of(), 1, 0);
+      acp.send("change a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
       List<ChatMessage.ThreadMessage> started = this.postsUntil(ChatMessage.Permission.class);
       assertNotNull(find(started, ChatMessage.Notice.class));
       assertNull(find(started, ChatMessage.Replay.class));
@@ -409,7 +410,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   public void testRewindWhileTheAgentWaitsIsRefused() throws Exception {
     this.controller.open();
     this.awaitPost(ChatMessage.Init.class);
-    this.controller.send("write a.txt", List.of(), List.of(), 1, 0);
+    this.controller.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     String session = this.record.sessionId;
 
@@ -481,7 +482,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   private void finishFailingTurn() throws Exception {
     this.controller.open();
     this.awaitPost(ChatMessage.Init.class);
-    this.controller.send("fail", List.of(), List.of(), 1, 0);
+    this.controller.send("fail", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
     while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
     }
     assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
@@ -499,6 +500,179 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertEquals(0, process.waitFor());
   }
 
+  /** What the chat was sent up to and including the next event of {@code type}. */
+  private List<ChatMessage.ThreadMessage> postsUntilEvent(Class<? extends AgentEvent> type)
+    throws InterruptedException {
+    List<ChatMessage.ThreadMessage> messages = new ArrayList<>();
+    while (true) {
+      List<ChatMessage.ThreadMessage> batch = this.postsUntil(ChatMessage.Event.class);
+      messages.addAll(batch);
+      if (type.isInstance(((ChatMessage.Event) batch.getLast()).event())) {
+        return messages;
+      }
+    }
+  }
+
+  private static boolean hasEvent(List<ChatMessage.ThreadMessage> messages, AgentEvent event) {
+    return indexOfEvent(messages, event) >= 0;
+  }
+
+  private static int indexOfEvent(List<ChatMessage.ThreadMessage> messages, AgentEvent event) {
+    for (int i = 0; i < messages.size(); i++) {
+      if (messages.get(i) instanceof ChatMessage.Event posted && posted.event().equals(event)) {
+        return i;
+      }
+    }
+    return -1;
+  }
+
+  private static ChatMessage.Queue lastQueue(List<ChatMessage.ThreadMessage> messages) {
+    ChatMessage.Queue last = null;
+    for (ChatMessage.ThreadMessage message : messages) {
+      if (message instanceof ChatMessage.Queue queue) {
+        last = queue;
+      }
+    }
+    return last;
+  }
+
+  /** Opens the thread and starts a turn that waits for its permission prompt. */
+  private ChatMessage.Permission startWaitingTurn() throws InterruptedException {
+    this.controller.open();
+    this.awaitPost(ChatMessage.Init.class);
+    assertEquals(QueuedPrompts.Action.SEND, this.controller.send("write a.txt", List.of(), List.of(), 1, 0,
+      QueuedPrompts.Delivery.QUEUE));
+    return this.awaitPost(ChatMessage.Permission.class);
+  }
+
+  public void testPromptDuringATurnWaitsAndGoesAfterIt() throws Exception {
+    ChatMessage.Permission permission = this.startWaitingTurn();
+    assertEquals(QueuedPrompts.Action.HOLD, this.controller.send("write b.txt", List.of(), List.of(), 2, 1,
+      QueuedPrompts.Delivery.QUEUE));
+    assertEquals(ChatController.State.WAITING, this.controller.state());
+
+    this.controller.answer(permission.requestId(), true, null, false, null, null);
+    List<ChatMessage.ThreadMessage> posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertFalse("the queued prompt waits for the turn's end", hasEvent(posts, new AgentEvent.PromptTaken(2, true)));
+    assertNotSame("never idle between the turns", ChatController.State.IDLE, this.controller.state());
+    posts = this.postsUntil(ChatMessage.Permission.class);
+    assertTrue(hasEvent(posts, new AgentEvent.PromptTaken(2, true)));
+    this.controller.answer(((ChatMessage.Permission) posts.getLast()).requestId(), true, null, false, null, null);
+    posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+    assertTrue(lastQueue(posts).items().isEmpty());
+  }
+
+  public void testUnqueuedPromptIsNeverSent() throws Exception {
+    ChatMessage.Permission permission = this.startWaitingTurn();
+    this.controller.send("fail", List.of(), List.of(), 2, 1, QueuedPrompts.Delivery.QUEUE);
+    assertEquals("fail", this.controller.unqueue(2).text());
+    assertNull("twice gives nothing", this.controller.unqueue(2));
+
+    this.controller.answer(permission.requestId(), true, null, false, null, null);
+    this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+    assertFalse(hasEvent(this.postsFor(1000), new AgentEvent.PromptTaken(2, true)));
+  }
+
+  /** What the chat is sent within the next {@code millis}. */
+  private List<ChatMessage.ThreadMessage> postsFor(long millis) throws InterruptedException {
+    List<ChatMessage.ThreadMessage> messages = new ArrayList<>();
+    long deadline = System.currentTimeMillis() + millis;
+    while (System.currentTimeMillis() < deadline) {
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+      ChatMessage.ThreadMessage message = this.posted.poll(50, TimeUnit.MILLISECONDS);
+      if (message != null) {
+        messages.add(message);
+      }
+    }
+    return messages;
+  }
+
+  public void testSendNowStopsTheTurnAndSendsThePromptNext() throws Exception {
+    this.startWaitingTurn();
+    this.controller.send("fail second", List.of(), List.of(), 2, 1, QueuedPrompts.Delivery.QUEUE);
+    this.controller.send("fail third", List.of(), List.of(), 3, 2, QueuedPrompts.Delivery.QUEUE);
+
+    assertEquals(QueuedPrompts.SendNow.INTERRUPT, this.controller.sendQueuedNow(3));
+    assertEquals("twice does nothing", QueuedPrompts.SendNow.NONE, this.controller.sendQueuedNow(3));
+    List<ChatMessage.ThreadMessage> posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertTrue(hasEvent(posts, new AgentEvent.Interrupted()));
+    posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertTrue("the hurried prompt goes first", hasEvent(posts, new AgentEvent.PromptTaken(3, true)));
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+    assertFalse("its error holds the rest", hasEvent(this.postsFor(1000), new AgentEvent.PromptTaken(2, true)));
+  }
+
+  public void testStopHoldsTheQueueAndANewPromptResumesIt() throws Exception {
+    this.startWaitingTurn();
+    this.controller.send("fail queued", List.of(), List.of(), 2, 1, QueuedPrompts.Delivery.QUEUE);
+
+    this.controller.interrupt();
+    List<ChatMessage.ThreadMessage> posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertTrue(lastQueue(posts).held());
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+
+    assertEquals(QueuedPrompts.Action.SEND, this.controller.send("write b.txt", List.of(), List.of(), 3, 2,
+      QueuedPrompts.Delivery.QUEUE));
+    posts = this.postsUntil(ChatMessage.Permission.class);
+    assertTrue(hasEvent(posts, new AgentEvent.PromptTaken(3, true)));
+    assertFalse(hasEvent(posts, new AgentEvent.PromptTaken(2, true)));
+    this.controller.answer(((ChatMessage.Permission) posts.getLast()).requestId(), true, null, false, null, null);
+    this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertTrue("the held prompt goes after the new one", hasEvent(posts, new AgentEvent.PromptTaken(2, true)));
+  }
+
+  public void testAgentExitKeepsQueuedPromptsHeldAndSendRestartsIt() throws Exception {
+    this.startWaitingTurn();
+    this.controller.send("fail later", List.of(), List.of(), 2, 1, QueuedPrompts.Delivery.QUEUE);
+    assertEquals(QueuedPrompts.Action.STEER, this.controller.send("exit now", List.of(), List.of(), 3, 2,
+      QueuedPrompts.Delivery.STEER));
+
+    List<ChatMessage.ThreadMessage> posts = this.postsUntil(ChatMessage.Exit.class);
+    assertEquals(ChatController.State.STOPPED, this.controller.state());
+    ChatMessage.Queue queue = lastQueue(posts);
+    assertTrue(queue.held());
+    assertEquals(List.of(new ChatMessage.QueueItem(3, QueuedPrompts.Status.HELD),
+      new ChatMessage.QueueItem(2, QueuedPrompts.Status.HELD)), queue.items());
+
+    assertEquals("exit now", this.controller.unqueue(3).text());
+    assertEquals(QueuedPrompts.SendNow.SEND, this.controller.sendQueuedNow(2));
+    posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertNotNull("the agent started again", find(posts, ChatMessage.Init.class));
+    assertTrue(hasEvent(posts, new AgentEvent.PromptTaken(2, true)));
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+  }
+
+  public void testClosingTheThreadStashesItsQueuedPrompts() throws Exception {
+    PromptStash stash = PromptStash.getInstance(this.getProject());
+    for (PromptStash.Entry entry : stash.entries()) {
+      stash.remove(entry.id);
+    }
+    this.startWaitingTurn();
+    this.controller.send("first ä 😀", List.of(), List.of(), 2, 1, QueuedPrompts.Delivery.QUEUE);
+    this.controller.send("second", List.of(), List.of(), 3, 2, QueuedPrompts.Delivery.QUEUE);
+
+    this.controller.dispose();
+    assertEquals(2, this.awaitPost(ChatMessage.QueueStashed.class).count());
+    List<PromptStash.Entry> entries = stash.entries();
+    assertEquals("second", entries.get(0).prompt.text());
+    assertEquals("first ä 😀", entries.get(1).prompt.text());
+    assertEquals("a closed queue sends nothing", QueuedPrompts.Action.SEND, this.controller.send("late", List.of(),
+      List.of(), 4, 3, QueuedPrompts.Delivery.QUEUE));
+    for (PromptStash.Entry entry : stash.entries()) {
+      stash.remove(entry.id);
+    }
+  }
+
+  public void testSubmitWhileWaitingKeepsWaitingAndQueues() throws Exception {
+    this.startWaitingTurn();
+    this.controller.submit("from another agent");
+    assertEquals(ChatController.State.WAITING, this.controller.state());
+    assertEquals("from another agent", this.awaitPost(ChatMessage.Submit.class).text());
+  }
+
   /** A thread of the fake ACP agent that resumes its session s0. */
   private ChatController acpController() throws Exception {
     Path agent = FakeExecutable.write("fake-acp", FakeAcpAgent.class);
@@ -511,7 +685,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     ChatController thread = this.setupController("echo ok> setup.txt");
     try {
       thread.open();
-      thread.send("write a.txt", List.of(), List.of(), 1, 0);
+      thread.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
 
       List<ChatMessage.ThreadMessage> posts = this.postsUntil(ChatMessage.Permission.class);
 
@@ -528,7 +702,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     ChatController thread = this.setupController("exit 1");
     try {
       thread.open();
-      thread.send("write a.txt", List.of(), List.of(), 1, 0);
+      thread.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
       List<ChatMessage.ThreadMessage> posts = new ArrayList<>(this.postsUntil(ChatMessage.Setup.class));
       while (!(posts.getLast() instanceof ChatMessage.Setup setup && setup.phase() == ChatMessage.SetupPhase.FAILED)) {
         posts.addAll(this.postsUntil(ChatMessage.Setup.class));
@@ -560,7 +734,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   public void testStopCancelsTheSetupAndClosingClearsWhatTheChatShows() throws Exception {
     ChatController thread = this.setupController(SystemInfo.isWindows ? "ping -n 61 127.0.0.1 > nul" : "sleep 60");
     thread.open();
-    thread.send("write a.txt", List.of(), List.of(), 1, 0);
+    thread.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
     this.awaitState(thread, ChatController.State.WORKING);
     while (this.awaitPost(ChatMessage.Setup.class).step() != 1) {
     }

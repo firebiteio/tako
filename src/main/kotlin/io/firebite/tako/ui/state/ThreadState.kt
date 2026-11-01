@@ -63,8 +63,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The chat's number for the last prompt sent. */
   var turnNo = 0
   var turn: Turn? = null
-  /** Prompts sent while a turn ran, for agents that take one turn at a time. */
+  /** Prompts sent while a turn ran that the agent has not taken yet, in the order they go. */
   val queued = mutableStateListOf<QueuedPrompt>()
+  /** The queued prompts wait until a prompt is sent, after a stop, an error or the agent's end. */
+  var queueHeld by mutableStateOf(false)
   val entries = HashMap<String, Entry>()
   val declined = HashSet<String>()
   val live = HashMap<String?, MutableList<LiveText>>()

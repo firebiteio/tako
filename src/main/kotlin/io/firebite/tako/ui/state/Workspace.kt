@@ -51,6 +51,8 @@ class Workspace(val service: ChatService, val project: Project) {
   var limits by mutableStateOf("")
   /** Whether the settings allow parallel runs. */
   var parallelRuns by mutableStateOf(false)
+  /** A prompt sent while the agent works steers its turn by default, instead of queuing. */
+  var steers by mutableStateOf(false)
   var benches by mutableStateOf<List<ChatMessage.BenchItem>>(emptyList())
   /** Benches the person folded; only this session remembers. */
   val collapsedBenches = mutableStateMapOf<String, Boolean>()
@@ -256,7 +258,10 @@ class Workspace(val service: ChatService, val project: Project) {
         .update(message.item)
       is ChatMessage.ThreadRemoved -> this.removeThread(message.thread)
       is ChatMessage.Select -> this.activate(this.threads[message.thread])
-      is ChatMessage.Settings -> this.parallelRuns = message.parallelRuns
+      is ChatMessage.Settings -> {
+        this.parallelRuns = message.parallelRuns
+        this.steers = message.steers
+      }
       is ChatMessage.Benches -> {
         this.benches = message.items
         if (this.shownBench != null && this.benches.none { it.id == this.shownBench }) {
@@ -279,6 +284,8 @@ class Workspace(val service: ChatService, val project: Project) {
       is ChatMessage.ContextUsage -> thread.contextUsage = message.data
       is ChatMessage.Exit -> thread.onExit(message.code, message.stderr)
       is ChatMessage.Submit -> thread.startPrompt(message.text, message.context, message.images)
+      is ChatMessage.Queue -> thread.applyQueue(message)
+      is ChatMessage.QueueStashed -> thread.onQueueStashed(message.count)
       is ChatMessage.BenchFailed -> thread.onBenchFailed(message.prompt, message.error)
       is ChatMessage.Error -> thread.onError(message.text)
       is ChatMessage.Notice -> thread.showAlert(message.text)

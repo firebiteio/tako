@@ -128,8 +128,12 @@ final class ThreadTools implements McpTools {
         + "its agent wrote since its last prompt, or with conversation, the whole conversation instead.",
         schema(getProperties, THREAD_ID)),
       new Tool(SEND, "Sends a prompt to another thread as if the person typed it, and opens the thread if it is "
-        + "closed. Fails while the thread is starting, working or waiting, so wait_for_thread first. Returns at once; "
-        + "wait_for_thread then gives the answer.", schema(sendProperties, THREAD_ID, "prompt")),
+        + "closed. While the thread works or waits for the person, the prompt queues and goes once the running turn "
+        + "ends, and the person can edit or remove it. The result has queued set when the thread was busy at the call, "
+        + "a hint since its turn may end meanwhile. Fails while the thread is "
+        + "starting. Returns at once; wait_for_thread then gives the answer once the queued prompts ran, but returns "
+        + "early while the thread waits for the person.",
+        schema(sendProperties, THREAD_ID, "prompt")),
       new Tool(WAIT, "Waits until another thread is done working: idle, waiting for the person, stopped or closed. "
         + "Returns what get_thread does, with timedOut set when the thread still works after the timeout. Call it "
         + "again to keep waiting.", schema(waitProperties, THREAD_ID)),
@@ -247,12 +251,16 @@ final class ThreadTools implements McpTools {
     ThreadStore.Record record = this.other(arguments);
     String prompt = required(arguments, "prompt");
     ChatController controller = this.service.controller(record.id);
-    if (controller != null && (controller.state().isBusy() || controller.state() == ChatController.State.WAITING)) {
-      throw new McpToolException("The thread is " + controller.state().name().toLowerCase(Locale.ROOT)
-        + ". Call wait_for_thread first.");
+    ChatController.State state = controller != null ? controller.state() : null;
+    if (state == ChatController.State.STARTING) {
+      throw new McpToolException("The thread is starting. Call wait_for_thread first.");
     }
     ApplicationManager.getApplication().invokeAndWait(() -> this.service.prompt(record, prompt));
-    return GSON.toJson(this.describe(record, this.service.controller(record.id)));
+    JsonObject thread = this.describe(record, this.service.controller(record.id));
+    if (state == ChatController.State.WORKING || state == ChatController.State.WAITING) {
+      thread.addProperty("queued", true);
+    }
+    return GSON.toJson(thread);
   }
 
   private String await(JsonObject arguments) throws McpToolException {

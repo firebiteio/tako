@@ -4,6 +4,7 @@ import io.firebite.tako.agent.AgentEvent;
 import io.firebite.tako.agent.AgentInfo;
 import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.agent.PermissionPrompt;
+import io.firebite.tako.chat.thread.QueuedPrompts;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.ProjectIcons;
@@ -98,9 +99,14 @@ public sealed interface ChatMessage {
   ) {
   }
 
-  /** What the settings let the chat offer. */
+  /**
+   * What the settings let the chat offer.
+   *
+   * @param steers a prompt sent while the agent works steers its turn by default, instead of queuing
+   */
   record Settings(
-    boolean parallelRuns
+    boolean parallelRuns,
+    boolean steers
   ) implements WorkspaceMessage {
   }
 
@@ -264,6 +270,35 @@ public sealed interface ChatMessage {
   record Exit(
     int code,
     String stderr
+  ) implements ThreadMessage {
+  }
+
+  /**
+   * The prompts the agent has not taken that the chat shows as queued, in order.
+   *
+   * @param held    they wait until a prompt is sent, after a stop, an error or the agent's end
+   * @param running a turn runs or a prompt is on its way to the agent
+   */
+  record Queue(
+    List<QueueItem> items,
+    boolean held,
+    boolean running
+  ) implements ThreadMessage {
+  }
+
+  record QueueItem(
+    int turn,
+    QueuedPrompts.Status status
+  ) {
+  }
+
+  /**
+   * The thread closed with prompts queued, which went to the prompt stash.
+   *
+   * @param count how many the stash kept
+   */
+  record QueueStashed(
+    int count
   ) implements ThreadMessage {
   }
 

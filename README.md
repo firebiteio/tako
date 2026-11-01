@@ -21,6 +21,7 @@ It works with:
 - Pin, rename, snooze or mark threads unread from their menu. A thread whose agent finished or asked something while you looked elsewhere gets a dot until you open it. Optionally archive threads automatically once their pull request is merged or after some days without activity (Settings > Tools > Tako)
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
+- Prompts sent while the agent works queue up. Edit, reorder or remove them, send one now, or steer the running turn with it (Claude Code, Codex)
 - Fix Problems sends a file's inspection results to the agent
 - For Claude Code, a context meter and a usage view with cost and tokens per session
 - Optional parallel runs: one prompt goes to several agents or models at once, each in its own git worktree. Compare what each changed, cost and took, then apply the best one
@@ -39,6 +40,12 @@ In the editor or project view, right-click and choose Tako > Add to Tako (`Ctrl+
 To comment on the agent's changes, select lines in a diff Tako opened, right-click and choose Comment for Tako. Type the comment and press Enter. It lands in the composer of the thread that made the change, with the file, the lines and the code, so you can collect several and send them in one prompt. Sending only comments asks the agent to address them. Declining a proposed edit sends the comments made in its diff as the reason, if the agent reads one. In a file's editor the same command is under Tako, and the comment goes to the current thread.
 
 Settings are under Settings > Tools > Tako. The top page sets the agent for new threads. Each agent has its own page below it for the executable and the default model, mode and effort. ACP agents go in a table, one name and command line per row.
+
+### Queued prompts and steering
+
+A prompt sent while the agent works waits under the conversation until the turn ends. Each queued prompt has Send now, which stops the turn and sends it next, Steer, which hands it to the running turn without stopping it, Edit, which moves it back into the composer, Move up and Remove. Ctrl+Enter steers instead of queuing, and Settings > Tools > Tako swaps the two. Agents that can't take a prompt mid-turn, such as ACP agents, always queue.
+
+Stopping the agent, a failed turn or the agent's process ending holds the queue: nothing more is sent until you send a prompt or press Send on one. Prompts still queued when the thread is archived or closed, or the IDE exits, go to the prompt stash.
 
 ### Rewind
 

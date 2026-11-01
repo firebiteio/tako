@@ -35,7 +35,8 @@ public final class CodexBackend implements AgentBackend {
   public static final String NAME = "Codex";
   /** Reasoning efforts Codex's models take. Each model lists the ones it supports. */
   public static final List<String> EFFORTS = List.of("minimal", "low", "medium", "high", "xhigh");
-  static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, false, false, false, true, true);
+  static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, false, false, false, true, true,
+    true);
   private static final Logger LOG = Logger.getInstance(CodexBackend.class);
   private static final long LIST_TIMEOUT_SECONDS = 15;
   private static final long ASK_TIMEOUT_SECONDS = 90;
