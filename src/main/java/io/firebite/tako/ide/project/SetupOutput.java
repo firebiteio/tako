@@ -8,8 +8,8 @@ package io.firebite.tako.ide.project;
  */
 public final class SetupOutput {
   public static final int LIMIT = 20_000;
-  /** Longer held back text is no escape sequence after all. */
-  private static final int MAX_PENDING = 64;
+  /** Longer held back text is no escape sequence after all. Links and titles can take a few hundred characters. */
+  private static final int MAX_PENDING = 2048;
   /** How much more than needed a cut drops to start at a line. */
   private static final int MAX_LINE_CUT = 1000;
   private static final char ESCAPE = '\u001b';
@@ -63,10 +63,6 @@ public final class SetupOutput {
 
   public String text() {
     return this.isCut ? CUT + this.text : this.text.toString();
-  }
-
-  public boolean isEmpty() {
-    return this.text.isEmpty();
   }
 
   /** An escape sequence that never ends shows as text, without its escape character. */

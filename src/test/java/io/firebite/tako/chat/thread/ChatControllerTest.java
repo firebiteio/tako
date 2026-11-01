@@ -321,8 +321,17 @@ public class ChatControllerTest extends BasePlatformTestCase {
     try {
       thread.open();
       thread.send("write a.txt", List.of(), List.of(), 1);
-      this.awaitSetup(ChatMessage.SetupPhase.FAILED);
+      List<ChatMessage.ThreadMessage> posts = new ArrayList<>(this.postsUntil(ChatMessage.Setup.class));
+      while (!(posts.getLast() instanceof ChatMessage.Setup setup && setup.phase() == ChatMessage.SetupPhase.FAILED)) {
+        posts.addAll(this.postsUntil(ChatMessage.Setup.class));
+      }
       this.awaitState(thread, ChatController.State.WAITING);
+      Thread.sleep(500);
+      ChatMessage.ThreadMessage late;
+      while ((late = this.posted.poll()) != null) {
+        posts.add(late);
+      }
+      assertNull("the agent waits for the setup too: " + posts, find(posts, ChatMessage.Init.class));
       assertTrue(thread.error(), thread.error().startsWith(TakoBundle.message("setup.failed", "")));
       assertNotNull("a failed setup keeps its record", this.record.pendingSetup);
 

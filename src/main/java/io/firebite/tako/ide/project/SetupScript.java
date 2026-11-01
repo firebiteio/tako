@@ -51,11 +51,13 @@ public final class SetupScript {
 
   /**
    * The process to start for one command. On Windows the command goes to {@code cmd.exe /s /c} in quotes, which Java
-   * passes on as they are and cmd takes off again, so the command reaches cmd exactly as written.
+   * passes on as they are and cmd takes off again, so the command reaches cmd exactly as written. A command ending in
+   * a backslash gets a space after it, as Java would take {@code \"} for an escaped quote and quote it again.
    */
   public static List<String> shell(String command, boolean isWindows, Map<String, String> environment) {
     if (isWindows) {
-      return List.of(comSpec(environment), "/d", "/s", "/c", "\"" + command + "\"");
+      String end = command.endsWith("\\") ? " \"" : "\"";
+      return List.of(comSpec(environment), "/d", "/s", "/c", "\"" + command + end);
     }
     return List.of("/bin/sh", "-c", command);
   }

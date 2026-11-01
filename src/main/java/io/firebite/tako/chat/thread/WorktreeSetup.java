@@ -199,7 +199,10 @@ public final class WorktreeSetup {
     this.held.clear();
   }
 
-  /** Kills what runs in the background and forgets the held prompts. The listener hears nothing more. */
+  /**
+   * Kills what runs and forgets the held prompts. The listener hears nothing more. The processes get their kill at once,
+   * as the worktree may be removed next, which their open files would block on Windows.
+   */
   public void dispose() {
     Process running;
     synchronized (this) {
@@ -213,7 +216,10 @@ public final class WorktreeSetup {
       running = this.process;
       this.process = null;
     }
-    killLater(running);
+    if (running != null) {
+      destroyChildren(running);
+      killLater(running);
+    }
   }
 
   private void runAll(int token) {
@@ -248,6 +254,7 @@ public final class WorktreeSetup {
         this.steps = commands.size();
         this.step = i + 1;
         this.command = next;
+        this.output.finish();
         this.post();
       }
       String failure = this.runCommand(token, next, environment, deadline);
@@ -291,19 +298,16 @@ public final class WorktreeSetup {
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
       kill(started);
+      reader.cancel(true);
+      this.forget(started);
       return TakoBundle.message("setup.error.cancelled");
     }
     if (isTimedOut) {
       kill(started);
     }
     drain(reader);
-    synchronized (this) {
-      if (this.process == started) {
-        this.process = null;
-      }
-      if (this.isCancelled) {
-        return TakoBundle.message("setup.error.cancelled");
-      }
+    if (this.forget(started)) {
+      return TakoBundle.message("setup.error.cancelled");
     }
     if (isTimedOut) {
       long minutes = Math.max(1, TimeUnit.MILLISECONDS.toMinutes(this.timeoutMillis));
@@ -313,7 +317,23 @@ public final class WorktreeSetup {
     return code == 0 ? null : TakoBundle.message("setup.error.exit", line, String.valueOf(code));
   }
 
-  /** Waits a little for the last output; a child that keeps the pipe open is left reading. */
+  /**
+   * Stops listening to the ended process, so output still read from it, e.g. from a child that outlived it, shows no
+   * more.
+   *
+   * @return whether the setup was cancelled meanwhile
+   */
+  private synchronized boolean forget(Process ended) {
+    if (this.process == ended) {
+      this.process = null;
+    }
+    return this.isCancelled;
+  }
+
+  /**
+   * Waits a little for the last output. A child that keeps the pipe open leaves its reader blocked until the child
+   * ends; what it reads is ignored.
+   */
   private static void drain(Future<?> reader) {
     try {
       reader.get(DRAIN_MILLIS, TimeUnit.MILLISECONDS);
@@ -340,26 +360,31 @@ public final class WorktreeSetup {
         bytes.flip();
         decoder.decode(bytes, chars, false);
         bytes.compact();
-        this.appendOutput(token, chars);
+        this.appendOutput(token, started, chars);
       }
       bytes.flip();
       decoder.decode(bytes, chars, true);
       decoder.flush(chars);
-      this.appendOutput(token, chars);
+      this.appendOutput(token, started, chars);
     } catch (IOException ignored) {
     }
     synchronized (this) {
-      if (token == this.run) {
+      if (this.isCurrent(token, started)) {
         this.output.finish();
       }
     }
   }
 
-  private synchronized void appendOutput(int token, CharBuffer chars) {
+  /** Whether output of {@code started} still counts: it is the running command of the running setup. */
+  private boolean isCurrent(int token, Process started) {
+    return token == this.run && this.process == started && this.phase == ChatMessage.SetupPhase.RUNNING;
+  }
+
+  private synchronized void appendOutput(int token, Process started, CharBuffer chars) {
     chars.flip();
     String text = chars.toString();
     chars.clear();
-    if (token != this.run || text.isEmpty() || this.phase != ChatMessage.SetupPhase.RUNNING) {
+    if (text.isEmpty() || !this.isCurrent(token, started)) {
       return;
     }
     this.output.append(text);
@@ -400,8 +425,14 @@ public final class WorktreeSetup {
     }
   }
 
+  /** A cancel that came as the last command ended still counts, so the prompts keep waiting as asked. */
   private synchronized void done(int token) {
-    if (token == this.run && !this.isDisposed) {
+    if (token != this.run || this.isDisposed) {
+      return;
+    }
+    if (this.isCancelled) {
+      this.failLocked(TakoBundle.message("setup.error.cancelled"), false);
+    } else {
       this.end(ChatMessage.SetupPhase.DONE);
     }
   }
@@ -468,12 +499,8 @@ public final class WorktreeSetup {
       return;
     }
     for (int round = 0; round < KILL_ROUNDS; round++) {
-      List<ProcessHandle> children = target.descendants().toList();
-      if (children.isEmpty()) {
+      if (!destroyChildren(target)) {
         break;
-      }
-      for (ProcessHandle child : children) {
-        child.destroyForcibly();
       }
       try {
         Thread.sleep(KILL_PAUSE_MILLIS);
@@ -483,6 +510,15 @@ public final class WorktreeSetup {
       }
     }
     target.destroyForcibly();
+  }
+
+  /** @return whether there were children to kill */
+  private static boolean destroyChildren(Process target) {
+    List<ProcessHandle> children = target.descendants().toList();
+    for (ProcessHandle child : children) {
+      child.destroyForcibly();
+    }
+    return !children.isEmpty();
   }
 
   /** What the setup tells its thread. Called with the setup's lock held, so keep it short and non blocking. */

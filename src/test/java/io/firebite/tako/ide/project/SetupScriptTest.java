@@ -88,6 +88,12 @@ public class SetupScriptTest {
   }
 
   @Test
+  public void aTrailingBackslashDoesNotEscapeTheClosingQuote() {
+    assertEquals("\"xcopy /e /i assets build\\ \"",
+      SetupScript.shell("xcopy /e /i assets build\\", true, Map.of()).getLast());
+  }
+
+  @Test
   public void windowsFindsCmdInTheSystemFolderWithoutComSpec() {
     assertEquals(Path.of("D:\\Win", "System32", "cmd.exe").toString(),
       SetupScript.shell("dir", true, Map.of("SYSTEMROOT", "D:\\Win")).getFirst());

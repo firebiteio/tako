@@ -52,9 +52,16 @@ public class SetupOutputTest {
 
   @Test
   public void anEscapeThatNeverEndsShowsAsText() {
-    String rest = "[" + "1".repeat(100);
+    String rest = "[" + "1".repeat(3000);
 
     assertEquals(rest + " more", of("\u001b" + rest, " more"));
+  }
+
+  @Test
+  public void aLongLinkSplitBetweenChunksIsStillLeftOut() {
+    String link = "\u001b]8;;https://example.com/" + "a".repeat(500) + "\u001b\\";
+
+    assertEquals("docs", of(link.substring(0, 300), link.substring(300) + "docs"));
   }
 
   @Test

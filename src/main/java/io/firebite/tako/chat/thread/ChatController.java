@@ -108,7 +108,10 @@ public final class ChatController implements Disposable {
         () -> TrustedProjects.isProjectTrusted(project), WorktreeSetup.TIMEOUT_MILLIS);
   }
 
-  /** Replays the thread's past, if it has one, and starts its agent. */
+  /**
+   * Replays the thread's past, if it has one, and starts its agent. In a new worktree the agent starts once the
+   * worktree's setup is through, so it loads what the setup installed.
+   */
   public void open() {
     this.open(null);
   }
@@ -142,9 +145,12 @@ public final class ChatController implements Disposable {
           }
         }
         if (this.setup != null) {
+          String resumed = resume;
           this.setup.start();
+          this.setup.whenReady(() -> this.launch(resumed));
+        } else {
+          this.launch(resume);
         }
-        this.launch(resume);
       } finally {
         this.opened.complete(null);
       }

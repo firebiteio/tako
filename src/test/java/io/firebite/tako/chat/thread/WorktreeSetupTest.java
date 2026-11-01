@@ -146,12 +146,13 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
   }
 
   public void testQuotesInACommandReachTheShellAsWritten() throws Exception {
-    this.file("echo \"a  b\" > \"quoted file.txt\"");
+    this.file("echo \"a  b\" > \"quoted file.txt\"", SystemInfo.isWindows ? "mkdir made\\" : "mkdir made/");
     WorktreeSetup setup = this.setup();
 
     setup.start();
 
     this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    assertTrue("a trailing backslash stays the command's", Files.isDirectory(this.worktree.resolve("made")));
     String written = Files.readString(this.worktree.resolve("quoted file.txt")).strip();
     assertEquals(SystemInfo.isWindows ? "\"a  b\"" : "a  b", written);
   }
