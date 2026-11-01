@@ -5,6 +5,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.firebite.tako.agent.FakeExecutable;
 import io.firebite.tako.agent.claude.FakeClaude;
 import io.firebite.tako.chat.store.ThreadStore;
+import io.firebite.tako.ide.project.GitWorktree;
 import io.firebite.tako.settings.AuthMode;
 import io.firebite.tako.settings.ChatSettings;
 import java.nio.charset.StandardCharsets;
@@ -92,19 +93,33 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
   public void testPlanThreadCopiesTheSourceButNotItsPlanMode() {
     ThreadStore.Record source = this.source("/work/here");
 
-    ThreadStore.Record record = this.service.planThread(source, PLAN, "/work/tree");
+    ThreadStore.Record record = this.service.planThread(source, PLAN, null);
 
     assertEquals("Implement Add dark mode", record.title);
     assertEquals("claude", record.agent());
     assertEquals("opus", record.model);
     assertEquals("default", record.mode);
     assertEquals("high", record.effort);
-    assertEquals("/work/tree", record.workPath);
+    assertEquals("/work/here", record.workPath);
+    assertNull(record.pendingSetup);
     assertNull(record.projectPath);
     assertNull(record.parentId);
     assertNull(record.sessionId);
     assertEquals("plan", source.mode);
     assertSame(record, this.store.find(record.id));
+  }
+
+  public void testPlanThreadInAWorktreeRunsItsSetupFirst() {
+    ThreadStore.Record source = this.source("/work/here");
+    GitWorktree.Worktree worktree = new GitWorktree.Worktree(Path.of("/repo.worktrees/add-dark-mode"), "add-dark-mode",
+      Path.of("/repo"));
+
+    ThreadStore.Record record = this.service.planThread(source, PLAN, worktree);
+
+    assertEquals(worktree.folder().toString(), record.workPath);
+    assertNotNull(record.pendingSetup);
+    assertEquals(Path.of("/repo").toString(), record.pendingSetup.repository);
+    assertEquals(worktree.folder().toString(), record.pendingSetup.worktree);
   }
 
   public void testPlanThreadKeepsAModeOtherThanPlan() {

@@ -663,7 +663,7 @@ public final class ChatService implements Disposable {
     }
     ThreadStore.Record record;
     try {
-      record = this.planThread(source, plan, worktree != null ? worktree.folder().toString() : source.workPath);
+      record = this.planThread(source, plan, worktree);
     } catch (RuntimeException e) {
       LOG.warn("Could not store a thread implementing the plan of thread " + source.id, e);
       this.dropWorktree(folder, worktree);
@@ -703,7 +703,8 @@ public final class ChatService implements Disposable {
   }
 
   /** Stores a thread for implementing the plan, beside the planning thread and like it but not in plan mode. */
-  ThreadStore.Record planThread(ThreadStore.Record source, String plan, @Nullable String workPath) {
+  /** @param worktree the worktree made for it, whose {@code .worktreesetup} runs first; null to work where the source does */
+  ThreadStore.Record planThread(ThreadStore.Record source, String plan, @Nullable GitWorktree.Worktree worktree) {
     String projectPath = source.projectPath;
     if (projectPath != null && this.store.findProject(projectPath) == null) {
       this.store.addProject(projectPath, Path.of(projectPath).getFileName().toString());
@@ -718,7 +719,10 @@ public final class ChatService implements Disposable {
     record.model = source.model;
     record.mode = Plans.implementMode(agent, source.mode, defaultMode);
     record.effort = source.effort;
-    record.workPath = workPath;
+    record.workPath = worktree != null ? worktree.folder().toString() : source.workPath;
+    record.pendingSetup = worktree != null
+      ? ThreadStore.PendingSetup.of(worktree.repository(), worktree.folder())
+      : null;
     this.store.save();
     return record;
   }
