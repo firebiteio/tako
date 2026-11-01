@@ -1,6 +1,7 @@
 package io.firebite.tako.agent.codex;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 import io.firebite.tako.agent.AgentDefaults;
@@ -56,6 +57,35 @@ public class CodexSessionTest {
         .findFirst().orElseThrow();
       assertEquals(Long.valueOf(400000), usage.contextWindow());
       assertEquals(new AgentEvent.TurnEnded(1500L, null, null), rest.getLast());
+    } finally {
+      session.stop();
+    }
+  }
+
+  @Test
+  public void steerJoinsTheRunningTurnOrIsRefused() throws Exception {
+    Path codex = FakeExecutable.write("codex", FakeCodex.class);
+    RecordingListener listener = new RecordingListener();
+    AgentLaunch launch = new AgentLaunch(Files.createTempDirectory("work"), null, "", "", "", List.of(),
+      System.getenv(), null);
+    AgentSession session = new CodexBackend(codex.toString(), AgentDefaults.NONE, Map.of()).start(launch, listener);
+    try {
+      assertTrue(session.initialize().get(20, TimeUnit.SECONDS).capabilities().steer());
+      assertFalse("no turn runs yet", session.steer("too early", List.of(), 1).get(20, TimeUnit.SECONDS));
+
+      session.prompt("list files", List.of(), 2);
+      listener.until(AgentEvent.ToolStarted.class);
+      assertTrue(session.steer("also look at b 😀", List.of(), 3).get(20, TimeUnit.SECONDS));
+      assertEquals(new AgentEvent.PromptTaken(3, false), listener.until(AgentEvent.PromptTaken.class).getLast());
+      assertFalse(session.steer("refuse this", List.of(), 4).get(20, TimeUnit.SECONDS));
+
+      session.answer(listener.nextPermission().requestId(), new PermissionAnswer(true, null, false, Map.of(), null));
+      List<AgentEvent> rest = listener.until(AgentEvent.TurnEnded.class);
+      for (AgentEvent event : rest) {
+        assertFalse("a refused steer is not taken", event.equals(new AgentEvent.PromptTaken(4, false)));
+      }
+      assertFalse("after the turn there is none to steer",
+        session.steer("late", List.of(), 5).get(20, TimeUnit.SECONDS));
     } finally {
       session.stop();
     }

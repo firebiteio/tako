@@ -189,5 +189,5 @@ class RewindTest : BasePlatformTestCase() {
   private fun prompt(text: String) = AgentEvent.Prompt(text, false, emptyList())
 
   private fun info(rewinds: Boolean) = AgentInfo("claude", "Claude Code", "", AgentInfo.Capabilities(true, true, true,
-    true, true, rewinds), emptyList(), null, emptyList(), null, null, emptyList())
+    true, true, rewinds, true), emptyList(), null, emptyList(), null, null, emptyList())
 }

@@ -89,6 +89,27 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
     }
   }
 
+  /** Adds the prompt to the running turn with {@code turn/steer}. Refused while no turn runs. */
+  @Override
+  public CompletableFuture<Boolean> steer(String text, List<ImageAttachment> images, int key) {
+    String turn = this.turnId;
+    String thread = this.threadId;
+    if (turn == null || thread == null) {
+      return CompletableFuture.completedFuture(false);
+    }
+    JsonObject params = Json.of(THREAD_ID, thread);
+    params.addProperty("expectedTurnId", turn);
+    params.add("input", input(text, images));
+    return this.connection.request("turn/steer", params).handle((response, error) -> {
+      if (error != null) {
+        LOG.info("Codex did not take the prompt into turn " + turn, error);
+        return false;
+      }
+      this.emit(new AgentEvent.PromptTaken(key, false));
+      return true;
+    });
+  }
+
   @Override
   public void interrupt() {
     String turn = this.turnId;
@@ -299,18 +320,8 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
 
   private void startTurn(String text, List<ImageAttachment> images, int key) {
     this.emit(new AgentEvent.PromptTaken(key, true));
-    JsonArray input = new JsonArray();
-    JsonObject textInput = Json.of("type", "text");
-    textInput.addProperty("text", text);
-    textInput.add("text_elements", new JsonArray());
-    input.add(textInput);
-    for (ImageAttachment image : images) {
-      JsonObject imageInput = Json.of("type", "image");
-      imageInput.addProperty("url", "data:" + image.mediaType() + ";base64," + image.data());
-      input.add(imageInput);
-    }
     JsonObject params = Json.of(THREAD_ID, String.valueOf(this.threadId));
-    params.add("input", input);
+    params.add("input", input(text, images));
     if (!this.model.isBlank()) {
       params.addProperty("model", this.model);
     }
@@ -329,6 +340,20 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
         this.nextPrompt();
       }
     });
+  }
+
+  private static JsonArray input(String text, List<ImageAttachment> images) {
+    JsonArray input = new JsonArray();
+    JsonObject textInput = Json.of("type", "text");
+    textInput.addProperty("text", text);
+    textInput.add("text_elements", new JsonArray());
+    input.add(textInput);
+    for (ImageAttachment image : images) {
+      JsonObject imageInput = Json.of("type", "image");
+      imageInput.addProperty("url", "data:" + image.mediaType() + ";base64," + image.data());
+      input.add(imageInput);
+    }
+    return input;
   }
 
   private void onTurnCompleted(@Nullable JsonObject turn) {

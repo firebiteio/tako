@@ -40,6 +40,7 @@ public final class FakeCodex {
         case "turn/start" -> turn(id, reader);
         case "thread/turns/list" -> turns(id, message.getAsJsonObject("params"));
         case "thread/revert" -> revert(id, message.getAsJsonObject("params"));
+        case "turn/steer" -> emit("{\"id\":" + id + ",\"error\":{\"code\":-32600,\"message\":\"no active turn\"}}");
         default -> {
         }
       }
@@ -93,12 +94,28 @@ public final class FakeCodex {
     emit("{\"method\":\"item/commandExecution/requestApproval\",\"id\":7,\"params\":{\"threadId\":\"" + THREAD
       + "\",\"turnId\":\"turn1\",\"itemId\":\"c1\",\"command\":\"ls\",\"reason\":\"List files\"}}");
     JsonObject answer = JsonParser.parseString(reader.readLine()).getAsJsonObject();
+    while (answer.has("method") && answer.get("method").getAsString().equals("turn/steer")) {
+      steer(answer);
+      answer = JsonParser.parseString(reader.readLine()).getAsJsonObject();
+    }
     String decision = answer.getAsJsonObject("result").get("decision").getAsString();
     notify("item/completed", "{\"item\":{\"type\":\"commandExecution\",\"id\":\"c1\",\"command\":\"ls\",\"status\":"
       + "\"completed\",\"aggregatedOutput\":\"" + decision + "\",\"exitCode\":0}}");
     notify("thread/tokenUsage/updated", "{\"tokenUsage\":{\"last\":{\"inputTokens\":1200,\"outputTokens\":30,"
       + "\"cachedInputTokens\":1000},\"modelContextWindow\":400000}}");
     notify("turn/completed", "{\"turn\":{\"id\":\"turn1\",\"status\":\"completed\",\"durationMs\":1500}}");
+  }
+
+  /** Takes a steer into the running turn, unless its text says "refuse" or it names another turn. */
+  private static void steer(JsonObject request) {
+    String id = request.get("id").toString();
+    JsonObject params = request.getAsJsonObject("params");
+    String text = params.getAsJsonArray("input").get(0).getAsJsonObject().get("text").getAsString();
+    if (text.contains("refuse") || !"turn1".equals(params.get("expectedTurnId").getAsString())) {
+      emit("{\"id\":" + id + ",\"error\":{\"code\":-32600,\"message\":\"no active turn to steer\"}}");
+      return;
+    }
+    respond(id, "{\"turnId\":\"turn1\"}");
   }
 
   private static void respond(String id, String result) {
