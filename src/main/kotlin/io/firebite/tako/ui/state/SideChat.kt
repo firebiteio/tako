@@ -104,7 +104,8 @@ fun ThreadState.startSideChat(question: String, contexts: List<ContextItem> = em
   if (main.startingSideChat) {
     return false
   }
-  val canFork = main.info?.capabilities?.fork == true
+  // Before the main agent started its capabilities are unknown; a fork it can't make falls back to an excerpt.
+  val canFork = main.info?.capabilities?.fork != false
   val started = this.workspace.service.startSideChat(main.id, if (canFork) main.settledPrompts() else 0,
     ChatMessage.Submit(question, contexts, images))
   main.startingSideChat = started

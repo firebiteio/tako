@@ -253,6 +253,16 @@ class SideChatTest : BasePlatformTestCase() {
     assertNotNull("its agent started", this.service.controller(side.id))
   }
 
+  fun testAStartThatMadeNothingLetsTheMainThreadStartAgain() {
+    val main = this.thread()
+    main.startingSideChat = true
+
+    this.workspace.receive(ChatMessage.ShowSideChat(main.id, true))
+
+    assertFalse(main.startingSideChat)
+    assertNull(main.sideChatShown)
+  }
+
   fun testShowingAgainKeepsAStartInFlight() {
     val main = this.thread()
     this.show(main)

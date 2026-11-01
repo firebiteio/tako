@@ -193,13 +193,18 @@ public final class ChatService implements Disposable {
     this.withActiveController(controller -> controller.attachFiles(files));
   }
 
+  /** Runs on the controller of the thread on screen: the active one, or the side chat that covers it. */
   private void withActiveController(Consumer<ChatController> action) {
     ToolWindow window = this.toolWindow();
     if (window == null) {
       return;
     }
     window.activate(() -> {
-      ChatController controller = this.activeController();
+      String activeId = this.store.activeId();
+      String covering = activeId != null && this.isSidePaneCovering ? this.shownSideChats.get(activeId) : null;
+      ChatController controller = covering != null && this.controllers.containsKey(covering)
+        ? this.controllers.get(covering)
+        : this.activeController();
       if (controller != null) {
         action.accept(controller);
       }
@@ -456,26 +461,45 @@ public final class ChatService implements Disposable {
     ChatController controller = this.controllers.get(main.id);
     String sessionId = main.sessionId;
     if (forkPrompts <= 0 || sessionId == null) {
-      this.createSideChat(main, null, 0, first, excerpt(main, controller));
+      this.createOrRelease(main, null, 0, first, excerpt(main, controller));
       return true;
     }
     String folder = this.workFolder(main);
     AgentBackend backend = AgentRegistry.find(main.agent(), EnvironmentUtil.getEnvironmentMap());
     Async.inBackground(() -> {
       String forkId = null;
-      int inherited = 0;
       try {
         forkId = backend.fork(folder, sessionId, forkPrompts);
-        inherited = promptCount(backend.history(folder, forkId));
       } catch (AgentException | RuntimeException e) {
         LOG.warn("Could not fork thread " + main.id + " for a side chat, attaching an excerpt instead", e);
       }
+      int inherited = forkPrompts;
+      if (forkId != null) {
+        try {
+          inherited = promptCount(backend.history(folder, forkId));
+        } catch (RuntimeException e) {
+          LOG.warn("Could not count the prompts of side chat session " + forkId, e);
+        }
+      }
       String session = forkId;
-      int prompts = inherited;
+      int prompts = session == null ? 0 : inherited;
       ContextItem excerpt = session == null ? excerpt(main, controller) : null;
-      Async.onEdt(() -> this.createSideChat(main, session, prompts, first, excerpt));
+      Async.onEdt(() -> this.createOrRelease(main, session, prompts, first, excerpt));
     });
     return true;
+  }
+
+  /** Makes the side chat, else tells the main thread that it may start another. */
+  private void createOrRelease(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
+    ChatMessage.Submit first, @Nullable ContextItem excerpt) {
+    boolean isCreated = false;
+    try {
+      isCreated = this.createSideChat(main, sessionId, inheritedPrompts, first, excerpt);
+    } finally {
+      if (!isCreated) {
+        this.post(new ChatMessage.ShowSideChat(main.id, true));
+      }
+    }
   }
 
   private static @Nullable ContextItem excerpt(ThreadStore.Record main, @Nullable ChatController controller) {
@@ -494,11 +518,15 @@ public final class ChatService implements Disposable {
     return count;
   }
 
-  /** Makes the side chat unless the main thread was closed or archived meanwhile, then starts it. */
-  private void createSideChat(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
+  /**
+   * Makes the side chat unless the main thread was closed or archived meanwhile, then starts it.
+   *
+   * @return whether it made one
+   */
+  private boolean createSideChat(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
     ChatMessage.Submit first, @Nullable ContextItem excerpt) {
     if (this.store.find(main.id) != main || main.archived) {
-      return;
+      return false;
     }
     ThreadStore.Record record = this.store.create(sessionId, SideChats.title(first.text()), main.projectPath,
       main.agent());
@@ -528,6 +556,7 @@ public final class ChatService implements Disposable {
       controller.open(new ChatMessage.Submit(first.text().strip(), context, first.images()));
     }
     this.post(new ChatMessage.ShowSideChat(record.id, true));
+    return true;
   }
 
   /** Starts the agent of a side chat the pane shows, unless it runs. Doesn't select it. Must run on the EDT. */
