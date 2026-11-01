@@ -76,7 +76,11 @@ class Workspace(val service: ChatService, val project: Project) {
   var taskPanel by mutableStateOf<TaskCard?>(null)
   var contextPanelOpen by mutableStateOf(false)
   /** Whether the side chat pane covers the main thread, as the chat is too narrow for both. */
-  var sidePaneCovers by mutableStateOf(false)
+  var sidePaneCovers: Boolean = false
+    set(value) {
+      field = value
+      this.service.setSidePaneCovering(value)
+    }
   /** The thread whose composer the context panel opened from. */
   var contextPanelFor by mutableStateOf<String?>(null)
   /** The run whose agent and model are being picked. */

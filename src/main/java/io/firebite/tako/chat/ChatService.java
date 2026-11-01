@@ -94,6 +94,7 @@ public final class ChatService implements Disposable {
   private final List<Runnable> activityListeners = new CopyOnWriteArrayList<>();
   /** The side chat each main thread's pane shows, by main thread id. */
   private final Map<String, String> shownSideChats = new ConcurrentHashMap<>();
+  private volatile boolean isSidePaneCovering;
   /** Serves each thread's {@link ThreadTools}, keyed by thread id. Guarded by {@code this}. */
   private @Nullable McpServer toolServer;
   private @Nullable ChatPanel panel;
@@ -394,13 +395,17 @@ public final class ChatService implements Disposable {
     return record;
   }
 
-  /** Sends a prompt as if typed into the thread, opening it if it is not. Must run on the EDT. */
+  /**
+   * Sends a prompt as if typed into the thread, opening it if it is not. A side chat lists its main thread again, so
+   * its pane can show it. Must run on the EDT.
+   */
   void prompt(ThreadStore.Record record, String prompt) {
     ChatController controller = this.controllers.get(record.id);
     if (controller != null) {
       controller.submit(prompt);
       return;
     }
+    this.unarchive(SideChats.mainOf(this.store, record));
     this.unarchive(record);
     this.newController(record).open(prompt);
   }
@@ -417,6 +422,11 @@ public final class ChatService implements Disposable {
         this.unarchive(sideChat);
       }
     }
+  }
+
+  /** Whether a shown side chat pane covers its main thread, as the chat is too narrow for both. */
+  public void setSidePaneCovering(boolean covering) {
+    this.isSidePaneCovering = covering;
   }
 
   /** The pane of the main thread shows the side chat, or none when null; a side chat on screen needs no balloon. */
@@ -496,6 +506,7 @@ public final class ChatService implements Disposable {
     record.sideChat = true;
     record.inheritedPrompts = inheritedPrompts;
     record.model = main.model;
+    record.mode = main.mode;
     record.effort = main.effort;
     record.workPath = main.workPath;
     this.store.save();
@@ -1076,7 +1087,9 @@ public final class ChatService implements Disposable {
   private void requestAttention(ThreadStore.Record record, String reason) {
     ToolWindow window = this.toolWindow;
     ThreadStore.Record main = SideChats.mainOf(this.store, record);
-    boolean isOnScreen = main == record || record.id.equals(this.shownSideChats.get(main.id));
+    boolean isOnScreen = main == record
+      ? !this.isSidePaneCovering || !this.shownSideChats.containsKey(main.id)
+      : record.id.equals(this.shownSideChats.get(main.id));
     boolean isShown = window != null && window.isVisible() && main.id.equals(this.store.activeId()) && isOnScreen;
     if (isShown) {
       return;

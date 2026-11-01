@@ -58,6 +58,7 @@ import io.firebite.tako.ui.samePath
 import io.firebite.tako.ui.state.ThreadNode
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
+import io.firebite.tako.ui.state.hasAskingSideChat
 import io.firebite.tako.ui.state.isSideChat
 import io.firebite.tako.ui.state.runName
 import io.firebite.tako.ui.state.sideChatsOf
@@ -87,7 +88,7 @@ fun threadStatus(thread: ThreadState, now: Long): ThreadStatus {
       else -> t("sidebar.status.approval")
     })
   }
-  if (thread.workspace.sideChatsOf(thread).any { !it.archived && it.approvals.isNotEmpty() }) {
+  if (thread.workspace.hasAskingSideChat(thread)) {
     return ThreadStatus(StatusKind.INPUT, t("sidebar.status.side.chat"))
   }
   if (thread.busy) {

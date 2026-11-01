@@ -14,17 +14,18 @@ val SIDE_COMMANDS = listOf("side", "btw")
 /** The question of a typed `/side` or `/btw` prompt, empty without one; null for any other text. */
 fun sideCommand(text: String): String? = SIDE_COMMAND.matchEntire(text.trim())?.let { it.groupValues[1].trim() }
 
-/** How many prompts the leading done turns hold, each turn's prompt and follow-ups: what a fork can copy now. */
+/** The prompts the agent got in the turn, as its session counts them: the turn's prompt and its follow-ups. */
+private val Turn.promptCount: Int
+  get() = (if (this.prompt != null) 1 else 0) + this.items.count { it is TurnItem.FollowUp }
+
+/** How many prompts the leading done turns hold: what a fork can copy now. */
 fun ThreadState.settledPrompts(): Int {
   var count = 0
   for (turn in this.turns) {
     if (!turn.done) {
       break
     }
-    if (turn.prompt != null) {
-      count++
-    }
-    count += turn.items.count { it is TurnItem.FollowUp }
+    count += turn.promptCount
   }
   return count
 }
@@ -37,7 +38,7 @@ fun ThreadState.inheritedTurns(): Int {
     if (!turn.replayed || prompts >= this.inheritedPrompts) {
       break
     }
-    val count = (if (turn.prompt != null) 1 else 0) + turn.items.count { it is TurnItem.FollowUp }
+    val count = turn.promptCount
     if (prompts + count > this.inheritedPrompts) {
       break
     }
@@ -66,19 +67,25 @@ fun Workspace.sideChatsOf(main: ThreadState): List<ThreadState> =
 fun Workspace.shownSideChat(main: ThreadState): ThreadState? =
   main.sideChatShown?.let { this.threads[it] }?.takeIf { it.parentId == main.id }
 
-/** The thread is on screen: the active one, or the side chat shown beside it. */
+/** The thread is on screen: the active one unless its side chat covers it, or the side chat shown beside it. */
 val ThreadState.isShown: Boolean
   get() {
     if (this.isActive) {
-      return true
+      return !this.workspace.sidePaneCovers || this.workspace.shownSideChat(this) == null
     }
     val main = this.workspace.mainOf(this)
     return main !== this && main.isActive && main.sideChatShown == this.id
   }
 
-/** Side chats of the main thread waiting for an approval or question that are not on screen. */
-fun Workspace.waitingSideChats(main: ThreadState): Int =
-  this.sideChatsOf(main).count { !it.archived && !it.isShown && it.approvals.isNotEmpty() }
+/** Side chats of the main thread off screen that wait for an approval or question, or have an unread answer. */
+fun Workspace.waitingSideChats(main: ThreadState): Int = this.threads.values.count {
+  it.sideChat && it.parentId == main.id && !it.archived && !it.isShown && (it.approvals.isNotEmpty() || it.unread)
+}
+
+/** Whether a side chat of the main thread waits for an approval or question. */
+fun Workspace.hasAskingSideChat(main: ThreadState): Boolean = this.threads.values.any {
+  it.sideChat && it.parentId == main.id && !it.archived && it.approvals.isNotEmpty()
+}
 
 /** A side chat's title, "Side chat" until its first prompt names it. */
 fun sideChatTitle(thread: ThreadState): String =

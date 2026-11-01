@@ -75,7 +75,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     assertEquals("D:/repo-tako/one", side.workPath);
     assertEquals("opus", side.model);
     assertEquals("high", side.effort);
-    assertEquals("a side question doesn't inherit a bypass mode", "", side.mode);
+    assertEquals("bypassPermissions", side.mode);
     assertEquals("Why is the cache 🐙 cold?", side.title);
     assertNull(side.sessionId);
     assertEquals(0, side.inheritedPrompts);
@@ -222,7 +222,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     assertNull(this.service.controller(thread.id));
   }
 
-  public void testSideChatsAreNotCreatedByTheMainAgent() throws McpToolException {
+  public void testAgentsListSubThreadsButNotSideChats() throws McpToolException {
     ThreadStore.Record main = this.thread();
     ThreadStore.Record spawned = this.thread();
     spawned.parentId = main.id;
@@ -233,19 +233,29 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     JsonArray listed = JsonParser.parseString(tools.call(ThreadTools.LIST, new JsonObject())).getAsJsonArray();
 
     boolean sawSpawned = false;
-    boolean sawSide = false;
     for (JsonElement element : listed) {
       JsonObject thread = element.getAsJsonObject();
       String id = thread.get("threadId").getAsString();
+      assertFalse(id.equals(side.id));
       if (id.equals(spawned.id)) {
         sawSpawned = true;
         assertTrue(thread.has("createdByYou"));
-      } else if (id.equals(side.id)) {
-        sawSide = true;
-        assertFalse(thread.has("createdByYou"));
       }
     }
-    assertTrue(sawSpawned && sawSide);
+    assertTrue(sawSpawned);
+  }
+
+  public void testAPromptToASideChatOfAnArchivedThreadListsTheThreadAgain() {
+    ThreadStore.Record main = this.thread();
+    this.start(main.id, 0, "why?");
+    ThreadStore.Record side = this.sideChatsOf(main).get(0);
+    this.service.archive(main.id);
+
+    this.service.prompt(side, "and now?");
+
+    assertFalse(main.archived);
+    assertFalse(side.archived);
+    assertNotNull(this.service.controller(side.id));
   }
 
   public void testExcerptCarriesTheConversationUnderTheMainThreadsTitle() {

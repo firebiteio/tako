@@ -38,6 +38,7 @@ class SideChatTest : BasePlatformTestCase() {
   override fun tearDown() {
     try {
       this.workspace.scope.cancel()
+      this.workspace.sidePaneCovers = false
       for (record in this.store.all()) {
         this.service.close(record.id)
       }
@@ -448,6 +449,29 @@ class SideChatTest : BasePlatformTestCase() {
     assertEquals(1, this.workspace.waitingSideChats(main))
     this.workspace.showSideChat(side.id, false)
     assertEquals(0, this.workspace.waitingSideChats(main))
+  }
+
+  fun testACoveringPaneHidesTheMainThread() {
+    val main = this.thread()
+    this.show(main)
+    val side = this.sideChat(main)
+    assertTrue(main.isShown)
+
+    this.workspace.showSideChat(side.id, false)
+    assertTrue("beside it", main.isShown)
+    this.workspace.sidePaneCovers = true
+    assertFalse("covered", main.isShown)
+    assertTrue(side.isShown)
+  }
+
+  fun testAnUnreadAnswerOffScreenCounts() {
+    val main = this.thread()
+    this.show(main)
+    val side = this.sideChat(main)
+    side.unread = true
+
+    assertEquals(1, this.workspace.waitingSideChats(main))
+    assertFalse(this.workspace.hasAskingSideChat(main))
   }
 
   fun testSideChatTitleFallsBackForTheDefault() {

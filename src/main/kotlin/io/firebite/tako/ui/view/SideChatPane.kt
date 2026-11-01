@@ -89,8 +89,8 @@ private fun SideChatMenu(main: ThreadState, shown: ThreadState, onDismiss: () ->
   val workspace = main.workspace
   val entries = workspace.sideChatsOf(main).map { side ->
     val status = threadStatus(side, workspace.now)
-    MenuEntry(sideChatTitle(side), status.label.takeIf { status.kind == StatusKind.INPUT || status.kind ==
-      StatusKind.WORKING }, checked = side === shown) {
+    val isNews = status.kind == StatusKind.INPUT || status.kind == StatusKind.WORKING || side.unread
+    MenuEntry(sideChatTitle(side), status.label.takeIf { isNews }, checked = side === shown) {
       workspace.showSideChat(side.id, false)
     }
   } + MenuEntry(t("side.new"), icon = Icons.add) { main.startSideChat("") }
