@@ -277,6 +277,7 @@ fun Dock(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
   Box(Modifier.fillMaxWidth().padding(start = 12.dp, end = 12.dp, top = 4.dp, bottom = 12.dp),
     contentAlignment = Alignment.TopCenter) {
     Column(Modifier.widthIn(max = LANE).fillMaxWidth()) {
+      LimitBanner(thread)
       TasksTray(thread)
       thread.setup?.let { SetupCard(thread, it) }
       thread.approvals.firstOrNull()?.let { Drawer(thread, it) }
