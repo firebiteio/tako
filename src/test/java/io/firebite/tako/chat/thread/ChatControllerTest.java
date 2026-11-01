@@ -190,6 +190,20 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertEquals(merged, this.record.pullRequest);
   }
 
+  public void testThreadInItsOwnFolderDropsThePullRequestOnAnotherBranch() throws Exception {
+    Path worktree = Files.createTempDirectory("tako-worktree");
+    Process init = new ProcessBuilder("git", "init", "-q", "-b", "feat-b").directory(worktree.toFile()).start();
+    assertEquals(0, init.waitFor());
+    this.record.workPath = worktree.toString();
+    this.record.branch = "feat-a";
+    this.record.pullRequest = new GitInfo.PullRequest("#5", "A", "https://github.com/o/r/pull/5", "merged");
+
+    this.controller.refreshGit();
+
+    assertEquals("feat-b", this.record.branch);
+    assertNull(this.record.pullRequest);
+  }
+
   public void testThreadInTheSharedCheckoutDropsThePullRequestOfAGoneBranch() {
     this.record.branch = "fix";
     this.record.pullRequest = new GitInfo.PullRequest("#7", "Fix", "https://github.com/o/r/pull/7", "open");
