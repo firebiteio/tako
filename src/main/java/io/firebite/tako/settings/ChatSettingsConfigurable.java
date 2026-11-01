@@ -69,7 +69,7 @@ public final class ChatSettingsConfigurable implements Configurable {
     return !this.selectedId().equals(data.defaultAgent) || this.parallelRunsBox.isSelected() != data.parallelRuns
       || this.settlePullRequestBox.isSelected() != data.settleOnPullRequest
       || this.settleIdleBox.isSelected() != data.settleIdle
-      || this.settleDaysSpinner.getNumber() != data.settleIdleDays;
+      || this.settleDaysSpinner.getNumber() != ThreadUpkeep.Rules.of(data).idleDays();
   }
 
   @Override
