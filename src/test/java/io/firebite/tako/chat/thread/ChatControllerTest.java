@@ -189,15 +189,6 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertTrue(this.awaitPost(ChatMessage.Error.class).text().startsWith("Could not read the changes: "));
   }
 
-  private static void git(Path directory, String... arguments) throws Exception {
-    List<String> command = new ArrayList<>();
-    command.add("git");
-    command.addAll(List.of(arguments));
-    Process process = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true).start();
-    String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
-    assertEquals(output, 0, process.waitFor());
-  }
-
   public void testPromptPermissionAndResultFlowThroughTheView() throws Exception {
     this.controller.open();
     ChatMessage.Init init = this.awaitPost(ChatMessage.Init.class);
