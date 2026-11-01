@@ -23,6 +23,7 @@ It works with:
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
 - Prompts sent while the agent works queue up. Edit, reorder or remove them, send one now, or steer the running turn with it (Claude Code, Codex)
+- Type `/` for the agent's commands and Tako's own, marked Tako: `/model`, `/effort`, `/mode`, `/new`, `/fork`, `/archive` and more. `//model` sends `/model` to the agent instead
 - Fix Problems sends a file's inspection results to the agent
 - For Claude Code, a context meter and a usage view with cost and tokens per session
 - Optional parallel runs: one prompt goes to several agents or models at once, each in its own git worktree. Compare what each changed, cost and took, then apply the best one

@@ -382,11 +382,23 @@ public final class ChatService implements Disposable {
    * @param agent       the agent to run, or the default one when null
    */
   public void newThread(@Nullable String projectPath, @Nullable String agent) {
-    this.newThread(null, null, this.threadPath(projectPath), agent);
+    this.newThread(projectPath, agent, null);
+  }
+
+  /**
+   * Like {@link #newThread(String, String)}, then sends {@code prompt} there as if typed.
+   *
+   * @param prompt the text, context and images to send, or null to send nothing
+   */
+  public void newThread(@Nullable String projectPath, @Nullable String agent, @Nullable ChatMessage.Submit prompt) {
+    ThreadStore.Record record = this.newThread(null, null, this.threadPath(projectPath), agent);
+    if (prompt != null) {
+      this.post(prompt, record.id);
+    }
   }
 
   /** @param agent the agent to run, or the default one when null */
-  private void newThread(@Nullable String sessionId, @Nullable String title, @Nullable String projectPath,
+  private ThreadStore.Record newThread(@Nullable String sessionId, @Nullable String title, @Nullable String projectPath,
     @Nullable String agent) {
     if (projectPath != null && this.store.findProject(projectPath) == null) {
       this.store.addProject(projectPath, Path.of(projectPath).getFileName().toString());
@@ -397,6 +409,7 @@ public final class ChatService implements Disposable {
     ThreadStore.Record record = this.store.create(sessionId, title, projectPath, agentId);
     this.post(new ChatMessage.ThreadAdded(record.toItem()));
     this.select(record.id);
+    return record;
   }
 
   public void select(@Nullable String id) {

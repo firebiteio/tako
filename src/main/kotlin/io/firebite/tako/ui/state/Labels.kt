@@ -138,6 +138,25 @@ fun todos(input: JsonObject): List<Todo> {
 
 fun prettyJson(input: JsonObject): String = PRETTY.toJson(input)
 
+/** Reasoning effort levels by their usual names; other levels show as named. */
+fun effortLabel(level: String): String = when (level) {
+  "low" -> t("composer.effort.low")
+  "medium" -> t("composer.effort.medium")
+  "high" -> t("composer.effort.high")
+  "xhigh" -> t("composer.effort.xhigh")
+  "max" -> t("composer.effort.max")
+  else -> level
+}
+
+fun effortDescription(level: String): String? = when (level) {
+  "low" -> t("composer.effort.low.description")
+  "medium" -> t("composer.effort.medium.description")
+  "high" -> t("composer.effort.high.description")
+  "xhigh" -> t("composer.effort.xhigh.description")
+  "max" -> t("composer.effort.max.description")
+  else -> null
+}
+
 fun approvalLabel(prompt: PermissionPrompt): String = when (prompt.category) {
   ToolKind.COMMAND -> t("tools.approval.command")
   ToolKind.EDIT -> t("tools.approval.edit")
