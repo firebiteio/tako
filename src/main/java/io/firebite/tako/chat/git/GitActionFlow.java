@@ -182,6 +182,7 @@ public final class GitActionFlow {
       case BRANCH_CHANGED -> TakoBundle.message("git.failed.branch.changed");
       case ON_DEFAULT_BRANCH -> TakoBundle.message("git.failed.default.branch", detail);
       case NOTHING_TO_COMMIT -> TakoBundle.message("git.failed.nothing.to.commit");
+      case CONFLICTS -> TakoBundle.message("git.failed.conflicts");
       case COMMIT_FAILED -> TakoBundle.message("git.failed.commit");
       case PUSH_REJECTED -> TakoBundle.message("git.failed.push.rejected");
       case PUSH_FAILED -> TakoBundle.message("git.failed.push");

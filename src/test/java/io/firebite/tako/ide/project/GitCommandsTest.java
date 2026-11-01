@@ -98,6 +98,44 @@ public class GitCommandsTest {
   }
 
   @Test
+  public void commitRefusesConflictsThatAppearedAfterTheMenu() throws Exception {
+    Path repository = TestRepos.committed();
+    git(repository, "checkout", "-q", "-b", "other");
+    write(repository, "a.txt", "other\n");
+    git(repository, "commit", "-q", "-am", "other");
+    git(repository, "checkout", "-q", "main");
+    write(repository, "a.txt", "main\n");
+    git(repository, "commit", "-q", "-am", "main");
+    try {
+      git(repository, "merge", "-q", "other");
+      fail("The merge should conflict");
+    } catch (AssertionError expected) {
+    }
+
+    GitCommands.CommandException error = expectFailure(() -> GitCommands.commit(repository, ENVIRONMENT, "x", NEVER));
+
+    assertEquals(GitCommands.CommandException.Kind.CONFLICTS, error.kind());
+    assertTrue(git(repository, "status", "--porcelain").contains("UU a.txt"));
+  }
+
+  @Test
+  public void pushToAForkKeepsTheUpstreamOnTheOtherRemote() throws Exception {
+    Path repository = TestRepos.committed();
+    TestRepos.addRemote(repository, "upstream");
+    Path fork = TestRepos.addRemote(repository, "origin");
+    git(repository, "push", "-q", "-u", "upstream", "main");
+    git(repository, "config", "remote.pushDefault", "origin");
+    GitCommands.Status status = GitCommands.status(repository, ENVIRONMENT);
+    assertEquals("origin", status.remote());
+    assertFalse(status.tracksBranch());
+
+    assertEquals("origin/main", GitCommands.push(repository, ENVIRONMENT, status, NEVER));
+
+    assertEquals("upstream\n", git(repository, "config", "branch.main.remote"));
+    assertEquals(git(repository, "rev-parse", "HEAD"), git(fork, "rev-parse", "refs/heads/main"));
+  }
+
+  @Test
   public void remoteWithoutUpstreamIsPushedWithTracking() throws Exception {
     Path repository = TestRepos.committed();
     Path bare = TestRepos.addRemote(repository, "origin");

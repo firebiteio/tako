@@ -11,8 +11,9 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
-import java.util.Set;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import org.jetbrains.annotations.Nullable;
 
@@ -29,7 +30,7 @@ public final class GitCommands {
   private static final long POLL_MILLIS = 100;
   private static final int MAX_OUTPUT_BYTES = 256 * 1024;
   private static final int MAX_DETAIL_CHARS = 4000;
-  private static final Set<String> CONFLICT_CODES = Set.of("DD", "AU", "UD", "UA", "DU", "AA", "UU");
+  private static final long STOP_WAIT_SECONDS = 10;
 
   private GitCommands() {
   }
@@ -45,14 +46,13 @@ public final class GitCommands {
       boolean hasCommits = read(directory, environment, "rev-parse", "-q", "--verify", "HEAD").exitCode() == 0;
       boolean isMerging = read(directory, environment, "rev-parse", "-q", "--verify", "MERGE_HEAD").exitCode() == 0;
       int changedFiles = 0;
-      boolean hasConflicts = false;
       for (String line : success(read(directory, environment, "status", "--porcelain", "--untracked-files=all"))
         .split("\\R")) {
         if (line.length() >= 2) {
           changedFiles++;
-          hasConflicts |= CONFLICT_CODES.contains(line.substring(0, 2));
         }
       }
+      boolean hasConflicts = hasConflicts(directory, environment);
       List<String> remotes = lines(read(directory, environment, "remote").stdout());
       String remote = branch == null ? null : pushRemote(directory, environment, branch, remotes);
       boolean tracksBranch = false;
@@ -192,6 +192,9 @@ public final class GitCommands {
 
   private static String commitAll(Path directory, Map<String, String> environment, String message,
     BooleanSupplier cancelled) throws CommandException {
+    if (hasConflicts(directory, environment)) {
+      throw new CommandException(CommandException.Kind.CONFLICTS, "");
+    }
     success(git(directory, environment, COMMIT_TIMEOUT_SECONDS, cancelled, List.of("add", "-A")));
     boolean isMerging = read(directory, environment, "rev-parse", "-q", "--verify", "MERGE_HEAD").exitCode() == 0;
     Output staged = read(directory, environment, "diff", "--cached", "--quiet");
@@ -214,8 +217,10 @@ public final class GitCommands {
   }
 
   /**
-   * Pushes HEAD to the branch of the same name on the status's remote, and tracks it there when the branch did not.
-   * Names the target, so neither {@code push.default} nor an upstream of another name sends it elsewhere.
+   * Pushes HEAD to the branch of the same name on the status's remote. Names the target, so neither
+   * {@code push.default} nor an upstream of another name sends it elsewhere. Tracks the pushed branch when the branch
+   * tracked nothing or a branch of another name on the same remote; an upstream on another remote, as when pulling
+   * from one remote and pushing to a fork, stays.
    *
    * @return where it pushed, e.g. {@code origin/feature}
    */
@@ -225,7 +230,8 @@ public final class GitCommands {
       throw new CommandException(CommandException.Kind.FAILED, "No remote or branch");
     }
     List<String> arguments = new ArrayList<>(List.of("push"));
-    if (!status.tracksBranch()) {
+    String upstreamRemote = config(directory, environment, "branch." + status.branch() + ".remote");
+    if (!status.tracksBranch() && (upstreamRemote == null || upstreamRemote.equals(status.remote()))) {
       arguments.add("-u");
     }
     arguments.add(status.remote());
@@ -325,6 +331,11 @@ public final class GitCommands {
     return head.exitCode() == 0 && name.startsWith(remote + "/") ? name.substring(remote.length() + 1) : null;
   }
 
+  /** Whether the index has unmerged paths, which {@code add -A} would mark resolved with their conflict markers. */
+  private static boolean hasConflicts(Path directory, Map<String, String> environment) throws CommandException {
+    return !success(read(directory, environment, "ls-files", "--unmerged")).isBlank();
+  }
+
   /** A file in the repository's git folder, e.g. {@code index}, which may not exist. */
   private static Path gitPath(Path directory, Map<String, String> environment, String name) throws CommandException {
     return directory.resolve(success(read(directory, environment, "rev-parse", "--git-path", name)).strip());
@@ -407,11 +418,11 @@ public final class GitCommands {
       long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(timeoutSeconds);
       while (!process.waitFor(POLL_MILLIS, TimeUnit.MILLISECONDS)) {
         if (cancelled.getAsBoolean()) {
-          Processes.destroyTree(process);
+          stop(process);
           throw new CommandException(CommandException.Kind.CANCELLED, "");
         }
         if (System.nanoTime() > deadline) {
-          Processes.destroyTree(process);
+          stop(process);
           throw new CommandException(CommandException.Kind.TIMED_OUT,
             command.getFirst() + " timed out after " + timeoutSeconds + " s");
         }
@@ -425,6 +436,25 @@ public final class GitCommands {
     } finally {
       deleteQuietly(output);
       deleteQuietly(error);
+    }
+  }
+
+  /**
+   * Stops the process and the ones it started, such as hooks, and waits until they exited, so nothing writes to the
+   * repository afterwards.
+   */
+  private static void stop(Process process) throws InterruptedException {
+    List<ProcessHandle> tree = new ArrayList<>(process.descendants().toList());
+    tree.add(process.toHandle());
+    Processes.destroyTree(process);
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(STOP_WAIT_SECONDS);
+    for (ProcessHandle handle : tree) {
+      long left = deadline - System.nanoTime();
+      try {
+        handle.onExit().get(Math.max(0, left), TimeUnit.NANOSECONDS);
+      } catch (ExecutionException | TimeoutException e) {
+        handle.destroyForcibly();
+      }
     }
   }
 
@@ -530,6 +560,7 @@ public final class GitCommands {
     public enum Kind {
       FAILED,
       NOTHING_TO_COMMIT,
+      CONFLICTS,
       PUSH_REJECTED,
       TIMED_OUT,
       CANCELLED

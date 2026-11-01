@@ -172,6 +172,7 @@ public final class ThreadGit {
       Failure kind = switch (e.kind()) {
         case CANCELLED -> Failure.CANCELLED;
         case NOTHING_TO_COMMIT -> Failure.NOTHING_TO_COMMIT;
+        case CONFLICTS -> Failure.CONFLICTS;
         case PUSH_REJECTED -> Failure.PUSH_REJECTED;
         case FAILED, TIMED_OUT -> failure;
       };
@@ -322,6 +323,8 @@ public final class ThreadGit {
     /** The branch is the repository's default branch. The detail is its name. */
     ON_DEFAULT_BRANCH,
     NOTHING_TO_COMMIT,
+    /** Unmerged paths appeared after the menu was read. */
+    CONFLICTS,
     COMMIT_FAILED,
     PUSH_REJECTED,
     PUSH_FAILED,
