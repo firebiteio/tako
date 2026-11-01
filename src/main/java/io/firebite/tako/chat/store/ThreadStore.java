@@ -241,6 +241,8 @@ public final class ThreadStore {
     public @Nullable String parentId;
     /** How long the first turn took, 0 until it ended. */
     public long firstTurnMillis;
+    /** The worktree setup that has to run before the thread's next prompt; null once it ran or was skipped. */
+    public @Nullable PendingSetup pendingSetup;
     /** The pull request the thread watches, see {@link PullRequestWatcher}. Swapped whole, never changed in place. */
     public volatile @Nullable PullRequestWatch watch;
 
@@ -309,6 +311,19 @@ public final class ThreadStore {
     public String thread = "";
     public String worktree = "";
     public String branch = "";
+  }
+
+  /** A new worktree whose {@code .worktreesetup} still has to run, with the main checkout it was made from. */
+  public static final class PendingSetup {
+    public String repository = "";
+    public String worktree = "";
+
+    public static PendingSetup of(Path repository, Path worktree) {
+      PendingSetup setup = new PendingSetup();
+      setup.repository = repository.toString();
+      setup.worktree = worktree.toString();
+      return setup;
+    }
   }
 
   static final class Data {

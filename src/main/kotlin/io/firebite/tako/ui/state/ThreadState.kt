@@ -102,6 +102,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The folder the agent keeps its scratch files in, if it has one. */
   var scratchpad by mutableStateOf<String?>(null)
   val alerts = mutableStateListOf<Alert>()
+  /** The setup of the thread's new worktree while it runs or after it failed, which the prompts wait for. */
+  var setup by mutableStateOf<ChatMessage.Setup?>(null)
   /** The prompt a running rewind goes back to before; sending waits until it is done. */
   var rewinding by mutableStateOf<Prompt?>(null)
   /** The stashed drafts to pick from, while their menu is open. */
@@ -144,6 +146,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
 
   val isActive: Boolean
     get() = this.workspace.active === this
+
+  /** The worktree setup failed, so the prompts wait for the person to retry or skip it. */
+  val setupFailed: Boolean
+    get() = this.setup?.phase == ChatMessage.SetupPhase.FAILED
 
   /** The folder paths are shown relative to. */
   val root: String

@@ -205,10 +205,22 @@ final class Benches {
       }
       workDirectories.add(slashes(workDirectory));
     }
-    Async.onEdt(() -> this.startRuns(request, bench, workDirectories));
+    Path mainCheckout = mainCheckout(repository, environment);
+    Async.onEdt(() -> this.startRuns(request, bench, workDirectories, mainCheckout));
   }
 
-  private void startRuns(BenchRequest request, ThreadStore.Bench bench, List<String> workDirectories) {
+  /** Where {@code .worktreesetup} may be: the repository itself may be a linked worktree of another checkout. */
+  private static Path mainCheckout(Path repository, Map<String, String> environment) {
+    try {
+      return Worktrees.mainCheckout(repository, environment);
+    } catch (Worktrees.GitException e) {
+      LOG.warn("Could not find the main checkout of " + repository, e);
+      return repository;
+    }
+  }
+
+  private void startRuns(BenchRequest request, ThreadStore.Bench bench, List<String> workDirectories,
+    Path mainCheckout) {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     List<ThreadStore.Record> records = new ArrayList<>();
     List<String> threads = new ArrayList<>();
@@ -220,6 +232,7 @@ final class Benches {
       record.mode = spec.mode();
       record.effort = spec.effort();
       record.workPath = workDirectories.get(i);
+      record.pendingSetup = ThreadStore.PendingSetup.of(mainCheckout, Path.of(bench.runs.get(i).worktree));
       bench.runs.get(i).thread = record.id;
       records.add(record);
       threads.add(record.id);

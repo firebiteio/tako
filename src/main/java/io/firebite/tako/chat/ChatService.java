@@ -377,6 +377,7 @@ public final class ChatService implements Disposable {
     record.mode = spec.mode();
     record.effort = spec.effort();
     record.workPath = spec.workPath();
+    record.pendingSetup = spec.setup();
     this.store.save();
     this.post(new ChatMessage.ThreadAdded(record.toItem()));
     this.newController(record).open(spec.prompt());

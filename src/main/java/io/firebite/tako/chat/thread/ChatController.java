@@ -1,5 +1,6 @@
 package io.firebite.tako.chat.thread;
 
+import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
@@ -119,6 +120,8 @@ public final class ChatController implements Disposable {
   private volatile boolean isTitled;
   /** Set by {@link #restartSession} until the next launch, whose session's past the chat already shows. */
   private volatile boolean keepsTimeline;
+  /** The setup of the thread's new worktree, which its prompts wait for, while it has not run yet. */
+  private final @Nullable WorktreeSetup setup;
   /** Done unless a {@link #rewind} runs. */
   private volatile CompletableFuture<Void> rewinding = CompletableFuture.completedFuture(null);
   /** Whether the running agent's sessions can be rewound, so prompts get file checkpoints. */
@@ -135,13 +138,28 @@ public final class ChatController implements Disposable {
     this.backend = backend;
     this.isTitled = record.sessionId != null || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
+    ThreadStore.PendingSetup pending = record.pendingSetup;
+    this.setup = pending == null
+      ? null
+      : new WorktreeSetup(pending, new SetupListener(), this::isTrusted, WorktreeSetup.TIMEOUT_MILLIS);
     this.git = new ThreadGit(() -> {
       String folder = this.gitFolder();
       return folder == null ? null : Path.of(folder);
     }, EnvironmentUtil.getEnvironmentMap(), this::busyIn, GitHubCli.GH);
   }
 
-  /** Replays the thread's past, if it has one, and starts its agent. */
+  /** Whether the IDE trusts the thread's project, and its project folder when that is another one than the IDE's. */
+  private boolean isTrusted() {
+    String folder = this.record.projectPath;
+    boolean isOwnFolder = folder == null || ThreadStore.samePath(folder, this.project.getBasePath());
+    return TrustedProjects.isProjectTrusted(this.project)
+      && (isOwnFolder || TrustedProjects.isProjectTrusted(Path.of(folder)));
+  }
+
+  /**
+   * Replays the thread's past, if it has one, and starts its agent. In a new worktree the agent starts once the
+   * worktree's setup is through, so it loads what the setup installed.
+   */
   public void open() {
     this.open(null);
   }
@@ -174,7 +192,13 @@ public final class ChatController implements Disposable {
             this.recordChanged();
           }
         }
-        this.launch(resume);
+        if (this.setup != null) {
+          String resumed = resume;
+          this.setup.start();
+          this.setup.startWhenReady(() -> this.launch(resumed));
+        } else {
+          this.launch(resume);
+        }
       } finally {
         this.opened.complete(null);
       }
@@ -208,8 +232,34 @@ public final class ChatController implements Disposable {
     this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of()));
   }
 
+  /**
+   * Interrupts the agent's turn. While prompts wait for the worktree setup it cancels the setup instead, and while
+   * they wait after it failed it does nothing: the setup's card offers the way on.
+   */
   public void interrupt() {
+    if (this.setup != null && (this.setup.holdsFailed() || this.setup.cancelHeld())) {
+      return;
+    }
     this.connection.ifLive(AgentSession::interrupt);
+  }
+
+  public void retrySetup() {
+    if (this.setup != null) {
+      this.setup.retry();
+    }
+  }
+
+  /** Sends the prompts that wait for the worktree setup without it. */
+  public void skipSetup() {
+    if (this.setup != null) {
+      this.setup.skip();
+    }
+  }
+
+  public void cancelSetup() {
+    if (this.setup != null) {
+      this.setup.cancel();
+    }
   }
 
   /**
@@ -436,7 +486,35 @@ public final class ChatController implements Disposable {
       this.isDisposed = true;
       this.stateLock.notifyAll();
     }
+    if (this.setup != null) {
+      this.disposeSetup(this.setup);
+    }
     this.connection.stop();
+  }
+
+  /** Stops the setup and clears what the chat shows of it: its card, and the turn of a prompt that waited for it. */
+  private void disposeSetup(WorktreeSetup worktreeSetup) {
+    boolean holds = worktreeSetup.holdsPrompts();
+    boolean showsCard = worktreeSetup.showsCard();
+    worktreeSetup.dispose();
+    if (showsCard) {
+      this.view.post(new ChatMessage.Setup(ChatMessage.SetupPhase.DONE, 0, 0, "", "", null, 0, 0));
+    }
+    if (holds) {
+      this.view.post(new ChatMessage.Exit(0, ""));
+    }
+  }
+
+  /** The agent is ready. A prompt sent to it meanwhile already made the thread work, which stays so. */
+  private void idleIfStarting() {
+    synchronized (this.stateLock) {
+      if (this.state != State.STARTING) {
+        return;
+      }
+      this.state = State.IDLE;
+      this.stateLock.notifyAll();
+    }
+    Async.onEdt(this.host::stateChanged);
   }
 
   private void setState(State state) {
@@ -489,8 +567,10 @@ public final class ChatController implements Disposable {
       this.refreshContext();
       if (prompt != null) {
         this.submit(prompt);
+      } else if (!forPrompt && this.deferredSubmits.get() == 0 && this.setup != null) {
+        this.setup.settle(this::idleIfStarting);
       } else if (!forPrompt && this.deferredSubmits.get() == 0) {
-        this.setState(State.IDLE);
+        this.idleIfStarting();
       }
     });
   }
@@ -520,9 +600,21 @@ public final class ChatController implements Disposable {
     });
   }
 
-  /** Runs on {@link #sender}, so a prompt waits for the one before it, and for a rewind. */
+  /** Runs on {@link #sender}, so a prompt waits for the one before it, for the worktree setup and for a rewind. */
   private void sendPrompt(String typed, String prompt, List<ImageAttachment> images, int turn, int prompts) {
     this.opened.join();
+    if (this.setup != null) {
+      this.setup.whenReady(() -> this.sendReady(typed, prompt, images, turn, prompts));
+    } else {
+      this.sendReady(typed, prompt, images, turn, prompts);
+    }
+  }
+
+  /** Runs on {@link #sender}, or in order on the setup's thread for prompts that waited for it. */
+  private void sendReady(String typed, String prompt, List<ImageAttachment> images, int turn, int prompts) {
+    if (this.isDisposed) {
+      return;
+    }
     this.rewinding.join();
     AgentSession session = this.connection.live();
     if (session == null) {
@@ -1043,6 +1135,9 @@ public final class ChatController implements Disposable {
   private void stopped(@Nullable String error) {
     this.turnRunning = false;
     this.untakenTurns.clear();
+    if (this.setup != null) {
+      this.setup.dropHeld();
+    }
     this.setState(State.STOPPED);
     this.error = error;
   }
@@ -1073,6 +1168,40 @@ public final class ChatController implements Disposable {
     /** Works on a turn or waits for an answer in one, so the files may change any moment. */
     public boolean isInTurn() {
       return this == WORKING || this == WAITING;
+    }
+  }
+
+  /** Shows the setup in the chat and keeps the thread working, or waiting for the person, while prompts wait for it. */
+  private final class SetupListener implements WorktreeSetup.Listener {
+    /** The thread's error this setup set, which goes once the setup is through. */
+    private @Nullable String error;
+
+    @Override
+    public void changed(ChatMessage.Setup setup) {
+      ChatController.this.view.post(setup);
+    }
+
+    @Override
+    public void held(@Nullable String failure) {
+      this.error = failure != null ? TakoBundle.message("setup.failed", failure) : null;
+      ChatController.this.error = this.error;
+      ChatController.this.setState(failure != null ? State.WAITING : State.WORKING);
+    }
+
+    @Override
+    public void finished() {
+      if (this.error != null && this.error.equals(ChatController.this.error)) {
+        ChatController.this.error = null;
+      }
+      this.error = null;
+      ChatController.this.record.pendingSetup = null;
+      ChatController.this.recordChanged();
+    }
+
+    @Override
+    public void failed(String reason) {
+      String text = TakoBundle.message("setup.failed", reason);
+      Async.onEdt(() -> ChatController.this.host.requestAttention(text));
     }
   }
 

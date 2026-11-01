@@ -264,6 +264,36 @@ public sealed interface ChatMessage {
   ) implements ThreadMessage {
   }
 
+  /**
+   * How the {@code .worktreesetup} of the thread's new worktree is doing. DONE with no steps only takes the card away.
+   *
+   * @param step      the running or failed command's number, from 1
+   * @param output    the end of the output so far
+   * @param error     why it failed, when it did
+   * @param startedAt when the setup started, in epoch millis
+   * @param endedAt   when it ended, 0 while it runs
+   */
+  record Setup(
+    SetupPhase phase,
+    int step,
+    int steps,
+    String command,
+    String output,
+    @Nullable String error,
+    long startedAt,
+    long endedAt
+  ) implements ThreadMessage {
+  }
+
+  enum SetupPhase {
+    RUNNING,
+    /** Failed or cancelled; the thread's prompts wait for a retry or a start without setup. */
+    FAILED,
+    DONE,
+    /** The person started the agent without setup. */
+    SKIPPED
+  }
+
   /** Sends a prompt as if the person typed it, e.g. the one an agent gave the thread it created. */
   record Submit(
     String text,

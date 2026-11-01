@@ -462,6 +462,109 @@ public class ChatControllerTest extends BasePlatformTestCase {
       new AcpBackend("Fake", List.of(agent.toString()), Map.of()));
   }
 
+  public void testAPassingWorktreeSetupRunsBeforeThePromptReachesTheAgent() throws Exception {
+    ChatController thread = this.setupController("echo ok> setup.txt");
+    try {
+      thread.open();
+      thread.send("write a.txt", List.of(), List.of(), 1, 0);
+
+      List<ChatMessage.ThreadMessage> posts = this.postsUntil(ChatMessage.Permission.class);
+
+      assertNotNull("the setup showed before the agent got the prompt", find(posts, ChatMessage.Setup.class));
+      assertTrue(Files.exists(Path.of(this.record.workPath, "setup.txt")));
+      assertNull(this.record.pendingSetup);
+      assertEquals(ChatController.State.WAITING, thread.state());
+    } finally {
+      thread.dispose();
+    }
+  }
+
+  public void testAFailedWorktreeSetupHoldsThePromptUntilTheAgentStartsWithoutIt() throws Exception {
+    ChatController thread = this.setupController("exit 1");
+    try {
+      thread.open();
+      thread.send("write a.txt", List.of(), List.of(), 1, 0);
+      List<ChatMessage.ThreadMessage> posts = new ArrayList<>(this.postsUntil(ChatMessage.Setup.class));
+      while (!(posts.getLast() instanceof ChatMessage.Setup setup && setup.phase() == ChatMessage.SetupPhase.FAILED)) {
+        posts.addAll(this.postsUntil(ChatMessage.Setup.class));
+      }
+      this.awaitState(thread, ChatController.State.WAITING);
+      Thread.sleep(500);
+      ChatMessage.ThreadMessage late;
+      while ((late = this.posted.poll()) != null) {
+        posts.add(late);
+      }
+      assertNull("the agent waits for the setup too: " + posts, find(posts, ChatMessage.Init.class));
+      assertTrue(thread.error(), thread.error().startsWith(TakoBundle.message("setup.failed", "")));
+      assertNotNull("a failed setup keeps its record", this.record.pendingSetup);
+
+      thread.interrupt();
+      thread.retrySetup();
+      this.awaitSetup(ChatMessage.SetupPhase.FAILED);
+      this.awaitState(thread, ChatController.State.WAITING);
+
+      thread.skipSetup();
+
+      assertNotNull(this.awaitPost(ChatMessage.Permission.class));
+      assertNull(this.record.pendingSetup);
+    } finally {
+      thread.dispose();
+    }
+  }
+
+  public void testStopCancelsTheSetupAndClosingClearsWhatTheChatShows() throws Exception {
+    ChatController thread = this.setupController(SystemInfo.isWindows ? "ping -n 61 127.0.0.1 > nul" : "sleep 60");
+    thread.open();
+    thread.send("write a.txt", List.of(), List.of(), 1, 0);
+    this.awaitState(thread, ChatController.State.WORKING);
+    while (this.awaitPost(ChatMessage.Setup.class).step() != 1) {
+    }
+
+    thread.interrupt();
+
+    ChatMessage.Setup failed = this.awaitSetup(ChatMessage.SetupPhase.FAILED);
+    assertEquals(TakoBundle.message("setup.error.cancelled"), failed.error());
+    this.awaitState(thread, ChatController.State.WAITING);
+
+    thread.dispose();
+
+    List<ChatMessage.ThreadMessage> posts = this.postsUntil(ChatMessage.Exit.class);
+    ChatMessage.Setup cleared = find(posts, ChatMessage.Setup.class);
+    assertNotNull("the card goes", cleared);
+    assertEquals(ChatMessage.SetupPhase.DONE, cleared.phase());
+    assertEquals(0, cleared.steps());
+    assertNotNull("archiving keeps the setup for the next open", this.record.pendingSetup);
+  }
+
+  /** A thread in a new worktree whose main checkout's {@code .worktreesetup} holds {@code command}. */
+  private ChatController setupController(String command) throws Exception {
+    Path repository = Files.createTempDirectory("tako-main");
+    Files.writeString(repository.resolve(".worktreesetup"), command + "\n", StandardCharsets.UTF_8);
+    Path worktree = Path.of(this.record.projectPath);
+    this.record.workPath = worktree.toString();
+    this.record.pendingSetup = ThreadStore.PendingSetup.of(repository, worktree);
+    return new ChatController(this.getProject(), this.posted::add, this.host, this.record,
+      new ClaudeBackend(Map.of()));
+  }
+
+  private ChatMessage.Setup awaitSetup(ChatMessage.SetupPhase phase) throws InterruptedException {
+    while (true) {
+      ChatMessage.Setup setup = this.awaitPost(ChatMessage.Setup.class);
+      if (setup.phase() == phase) {
+        return setup;
+      }
+    }
+  }
+
+  private void awaitState(ChatController thread, ChatController.State state) throws InterruptedException {
+    long deadline = System.currentTimeMillis() + TIMEOUT_MILLIS;
+    while (thread.state() != state && System.currentTimeMillis() < deadline) {
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+      Thread.sleep(20);
+    }
+    assertEquals(state, thread.state());
+  }
+
   /** Restarts the idle agent and waits until the chat learns it stopped. */
   private void restart(ChatController thread) throws InterruptedException {
     thread.restartSession();
