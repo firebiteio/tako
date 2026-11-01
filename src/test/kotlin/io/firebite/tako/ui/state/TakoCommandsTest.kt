@@ -283,6 +283,32 @@ class TakoCommandsTest : BasePlatformTestCase() {
     assertEquals("opus", this.thread.model)
   }
 
+  fun testDoubleSlashDeclinesWithTheCommandAsFeedback() {
+    this.start()
+    this.thread.approvals.add(this.approval())
+    this.type("//model sonnet")
+
+    this.thread.submit()
+
+    assertTrue(this.thread.approvals.isEmpty())
+    assertEquals("opus", this.thread.model)
+    assertEquals("", this.thread.input.text.toString())
+  }
+
+  fun testDoubleSlashAnswersAQuestionWithOneSlashLess() {
+    val question = PermissionPrompt.Question("Which command?", null, false, emptyList())
+    val approval = Approval("q1", PermissionPrompt(PermissionPrompt.Kind.QUESTION, "AskUserQuestion",
+      ToolKind.QUESTION, JsonObject(), null, null, null, false, emptyList(), listOf(question), null))
+    this.thread.approvals.add(approval)
+    val state = this.thread.questionFor(approval)
+    this.type("//model sonnet")
+
+    this.thread.submit()
+
+    assertTrue(this.thread.approvals.isEmpty())
+    assertEquals("/model sonnet", state.answers["Which command?"])
+  }
+
   fun testOtherSlashTextStillGoesToTheAgent() {
     for (text in listOf("/compact", "/foo bar", "/", "// note")) {
       this.thread.turns.clear()

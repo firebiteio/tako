@@ -1,14 +1,17 @@
 package io.firebite.tako.ui.state
 
 import androidx.compose.foundation.text.input.clearText
+import com.intellij.openapi.diagnostic.logger
 import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.t
+import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.max
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
+private val LOG = logger<TakoCommand>()
 const val MAX_SLASH_ITEMS = 50
 /** Most choices an alert names. */
 private const val MAX_LISTED_CHOICES = 10
@@ -294,17 +297,19 @@ private fun ThreadState.regenerateTitle() {
   this.titling = true
   this.workspace.scope.launch {
     val workspace = this@regenerateTitle.workspace
-    var canTitle = false
-    try {
-      canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(this@regenerateTitle.id, shown) }
-    } finally {
-      if (!canTitle) {
-        this@regenerateTitle.titling = false
-      }
+    val canTitle = try {
+      withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(this@regenerateTitle.id, shown) }
+    } catch (e: CancellationException) {
+      this@regenerateTitle.titling = false
+      throw e
+    } catch (e: RuntimeException) {
+      LOG.warn("Could not tell whether the agent can title thread " + this@regenerateTitle.id, e)
+      false
     }
     if (canTitle) {
       workspace.regenerateTitle(this@regenerateTitle)
     } else {
+      this@regenerateTitle.titling = false
       this@regenerateTitle.showAlert(t("slash.error.title.unavailable", this@regenerateTitle.agentName))
     }
   }

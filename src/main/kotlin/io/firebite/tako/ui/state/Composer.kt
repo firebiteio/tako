@@ -31,9 +31,13 @@ private val STASH_IO = Dispatchers.IO.limitedParallelism(1)
 val ThreadState.typed: String
   get() = this.input.text.toString().trim()
 
+/** The typed text as the agent gets it: with one `/` less when `//` escapes a Tako command. */
+private val ThreadState.forAgent: String
+  get() = escapedTakoCommand(this.typed) ?: this.typed
+
 /** Takes the typed text, e.g. as feedback for a declined approval, and clears the box. */
 fun ThreadState.takeFeedback(): String {
-  val text = this.typed
+  val text = this.forAgent
   this.input.clearText()
   return text
 }
@@ -41,7 +45,7 @@ fun ThreadState.takeFeedback(): String {
 /**
  * Sends what is typed; with the agent waiting, it answers the question or declines the approval instead. While a turn
  * runs, the prompt queues or steers as the settings say, or the other way with [opposite]. A Tako command runs before
- * either, and `//` before one sends it as typed with one `/` less.
+ * either, and `//` before one sends, answers or declines with it as typed with one `/` less.
  */
 fun ThreadState.submit(opposite: Boolean = false) {
   if (this.rewinding != null || this.runTakoCommand(this.typed)) {
@@ -56,7 +60,7 @@ fun ThreadState.submit(opposite: Boolean = false) {
     this.declineWithFeedback(approval)
     return
   }
-  val typed = escapedTakoCommand(this.typed) ?: this.typed
+  val typed = this.forAgent
   val images = this.images.map { it.image }
   val hasReviews = hasReviews(this.contexts)
   if (typed.isEmpty() && images.isEmpty() && !hasReviews) {
@@ -319,7 +323,8 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
   val readsReason = this.info?.capabilities?.declineReason != false
   val foldsReviews = foldsReviews(approval.prompt, interrupt, readsReason, this.contexts)
-  val feedback = if (foldsReviews) withReviews(this.typed, this.contexts, approval.prompt) else this.typed
+  val typed = this.forAgent
+  val feedback = if (foldsReviews) withReviews(typed, this.contexts, approval.prompt) else typed
   val decline = decline(approval.prompt, feedback, fallback, interrupt, readsReason)
   if (!decline.keepsFeedback) {
     this.input.clearText()
