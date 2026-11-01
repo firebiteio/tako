@@ -176,7 +176,7 @@ private fun DiffSourcesButton(thread: ThreadState) {
             val sources = try {
               controller.gitDiffSources()
             } catch (e: Exception) {
-              error = e.message
+              error = e.message ?: e.javaClass.simpleName
               null
             }
             diffMenu(sources, error, System.currentTimeMillis()) { controller.showGitDiff(it) }

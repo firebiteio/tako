@@ -93,6 +93,26 @@ public class GitDiffsTest {
   }
 
   @Test
+  public void aBrokenIndexStillLeavesTheBranchAndCommits() throws Exception {
+    Path repository = repository();
+    write(repository, "a.txt", "one\n");
+    commit(repository, "base");
+    git(repository, "checkout", "-q", "-b", "feature");
+    write(repository, "b.txt", "one\n");
+    commit(repository, "feature");
+    Files.write(repository.resolve(".git/index"), new byte[]{'D', 'I', 'R', 'C', 0, 0, 0, 9, 1, 2, 3});
+
+    Sources sources = GitDiffs.sources(repository, ENVIRONMENT);
+
+    assertEquals(GitDiffs.UNKNOWN, sources.uncommitted());
+    assertEquals(BranchState.OK, sources.branchState());
+    assertEquals(List.of("feature"), subjects(sources.commits()));
+    assertThrows(Worktrees.GitException.class, () -> GitDiffs.changes(repository, UNCOMMITTED, ENVIRONMENT));
+    assertEquals(List.of(new Change('A', "b.txt", null)),
+      GitDiffs.changes(repository, sources.branch(), ENVIRONMENT).files());
+  }
+
+  @Test
   public void aCleanCheckoutHasNothingUncommitted() throws Exception {
     Path repository = repository();
     write(repository, "a.txt", "one\n");

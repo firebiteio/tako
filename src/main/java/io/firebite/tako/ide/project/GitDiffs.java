@@ -1,8 +1,6 @@
 package io.firebite.tako.ide.project;
 
 import io.firebite.tako.ide.project.Worktrees.GitException;
-import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -19,6 +17,8 @@ public final class GitDiffs {
   public static final int COMMIT_LIMIT = 50;
   /** Larger files are not loaded, like {@code FileUtilRt.LARGE_FOR_CONTENT_LOADING}. */
   public static final long MAX_FILE_BYTES = 20L << 20;
+  /** {@link Sources#uncommitted} when git could not list the uncommitted changes. */
+  public static final int UNKNOWN = -1;
   private static final String REMOTE_HEAD = "refs/remotes/origin/HEAD";
   private static final String REMOTES = "refs/remotes/";
   private static final String HEADS = "refs/heads/";
@@ -33,7 +33,12 @@ public final class GitDiffs {
   public static Sources sources(Path directory, Map<String, String> environment) throws GitException {
     Path topLevel = Worktrees.topLevel(directory, environment);
     String head = resolve(topLevel, environment, "HEAD");
-    int uncommitted = uncommittedFiles(topLevel, head, environment).size();
+    int uncommitted;
+    try {
+      uncommitted = uncommittedFiles(topLevel, head, environment).size();
+    } catch (GitException e) {
+      uncommitted = UNKNOWN;
+    }
     if (head == null) {
       return new Sources(uncommitted, BranchState.UNBORN, null, null, 0, List.of());
     }
@@ -104,15 +109,7 @@ public final class GitDiffs {
     if (size > limit) {
       return new Content(null, size, false);
     }
-    Path output = Worktrees.createTemp(".blob");
-    try {
-      Worktrees.run(topLevel, environment, output, "cat-file", "blob", fields[2]);
-      return new Content(Files.readAllBytes(output), size, false);
-    } catch (IOException e) {
-      throw new GitException(e.getMessage());
-    } finally {
-      Worktrees.deleteQuietly(output);
-    }
+    return new Content(Worktrees.gitBytes(topLevel, environment, "cat-file", "blob", fields[2]), size, false);
   }
 
   /**
@@ -242,7 +239,7 @@ public final class GitDiffs {
   /**
    * What the checkout has to diff.
    *
-   * @param uncommitted how many files differ from HEAD, untracked ones included
+   * @param uncommitted how many files differ from HEAD, untracked ones included, or {@link #UNKNOWN}
    * @param base the default branch's name, like {@code origin/main}, when the branch has one
    * @param branch the branch's commits since {@code base}, only when it has some
    * @param branchCommits how many commits the branch has since it left {@code base}

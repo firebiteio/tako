@@ -193,7 +193,7 @@ public final class Worktrees {
     }
   }
 
-  static Path createTemp(String suffix) throws GitException {
+  private static Path createTemp(String suffix) throws GitException {
     try {
       return Files.createTempFile("tako-git", suffix);
     } catch (IOException e) {
@@ -203,17 +203,25 @@ public final class Worktrees {
 
   static String git(Path directory, Map<String, String> environment, String... arguments)
     throws GitException {
+    return new String(gitBytes(directory, environment, arguments), StandardCharsets.UTF_8);
+  }
+
+  /** Git's output as it wrote it, for file contents in any encoding. */
+  static byte[] gitBytes(Path directory, Map<String, String> environment, String... arguments)
+    throws GitException {
     Path output = createTemp(".out");
     try {
       run(directory, environment, output, arguments);
-      return readText(output);
+      return Files.readAllBytes(output);
+    } catch (IOException e) {
+      throw new GitException(e.getMessage());
     } finally {
       deleteQuietly(output);
     }
   }
 
   /** Runs git with its output going to {@code output}. */
-  static void run(Path directory, Map<String, String> environment, Path output, String... arguments)
+  private static void run(Path directory, Map<String, String> environment, Path output, String... arguments)
     throws GitException {
     List<String> command = new ArrayList<>();
     command.add("git");
@@ -258,7 +266,7 @@ public final class Worktrees {
     }
   }
 
-  static void deleteQuietly(@Nullable Path file) {
+  private static void deleteQuietly(@Nullable Path file) {
     if (file == null) {
       return;
     }

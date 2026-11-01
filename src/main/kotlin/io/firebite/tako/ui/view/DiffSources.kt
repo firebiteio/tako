@@ -14,10 +14,10 @@ fun diffMenu(sources: GitDiffs.Sources?, error: String?, now: Long, open: (GitDi
     return listOf(MenuEntry(t("diff.git.error"), error, Icons.error, enabled = false) {})
   }
   val entries = mutableListOf<MenuEntry>()
-  entries += if (sources.uncommitted > 0) {
-    MenuEntry(t("diff.uncommitted"), t("diff.uncommitted.count", sources.uncommitted), Icons.diff) {
-      open(GitDiffs.Uncommitted())
-    }
+  entries += if (sources.uncommitted != 0) {
+    val description = if (sources.uncommitted == GitDiffs.UNKNOWN) t("diff.git.error")
+    else t("diff.uncommitted.count", sources.uncommitted)
+    MenuEntry(t("diff.uncommitted"), description, Icons.diff) { open(GitDiffs.Uncommitted()) }
   } else {
     MenuEntry(t("diff.uncommitted"), t("diff.uncommitted.none"), Icons.diff, enabled = false) {}
   }

@@ -60,6 +60,17 @@ class DiffSourcesTest : BasePlatformTestCase() {
     assertEquals(3, noBase.size)
   }
 
+  fun testUnreadableUncommittedChangesStayClickableToShowWhy() {
+    val entries = diffMenu(this.sources(GitDiffs.UNKNOWN, GitDiffs.BranchState.OK, 1, listOf()), null, this.now) {
+      this.opened += it
+    }
+
+    assertEquals("Can't read git", entries[0].description)
+    assertTrue(entries[0].enabled)
+    entries[0].run()
+    assertEquals(listOf<GitDiffs.Source>(GitDiffs.Uncommitted()), this.opened)
+  }
+
   fun testACommitWithoutSubjectStillHasALabel() {
     val blank = GitDiffs.Commit("b".repeat(40), "bbbbbbb", "  ", this.now)
 
