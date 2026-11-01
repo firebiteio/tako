@@ -63,6 +63,27 @@ public final class PromptStash {
    * @throws IOException when it could not be saved; the stash is then as before
    */
   public synchronized Entry push(ChatMessage.Submit prompt) throws IOException {
+    Entry entry = this.entry(prompt);
+    this.save(List.of(entry));
+    return entry;
+  }
+
+  /**
+   * Saves drafts in one write, the last one as the newest entry. Like {@link #push} each.
+   *
+   * @return how many of them the stash kept
+   * @throws IOException when they could not be saved; the stash is then as before
+   */
+  public synchronized int pushAll(List<ChatMessage.Submit> prompts) throws IOException {
+    List<Entry> added = new ArrayList<>();
+    for (int i = prompts.size() - 1; i >= 0; i--) {
+      added.add(this.entry(prompts.get(i)));
+    }
+    this.save(added);
+    return Math.min(added.size(), MAX_ENTRIES);
+  }
+
+  private Entry entry(ChatMessage.Submit prompt) {
     Entry entry = new Entry();
     entry.id = UUID.randomUUID().toString();
     entry.prompt = prompt;
@@ -74,9 +95,18 @@ public final class PromptStash {
         entry.pasted.put(item.id(), text);
       }
     }
+    return entry;
+  }
+
+  /** Puts the entries, newest first, before the old ones, dropping the oldest beyond {@link #MAX_ENTRIES}. */
+  private void save(List<Entry> added) throws IOException {
     Data before = this.data;
     this.data = new Data();
-    this.data.entries.add(entry);
+    for (Entry entry : added) {
+      if (this.data.entries.size() < MAX_ENTRIES) {
+        this.data.entries.add(entry);
+      }
+    }
     for (Entry old : before.entries) {
       if (this.data.entries.size() < MAX_ENTRIES) {
         this.data.entries.add(old);
@@ -88,7 +118,6 @@ public final class PromptStash {
       this.data = before;
       throw e;
     }
-    return entry;
   }
 
   /** Newest first. */

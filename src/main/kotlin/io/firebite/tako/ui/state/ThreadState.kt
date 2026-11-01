@@ -37,12 +37,19 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** Counts the reads of [gitMenu] started, so only the latest one sets it. */
   var gitMenuReads = 0
   var archived by mutableStateOf(item.archived)
+  var pinned by mutableStateOf(item.pinned)
+  /** When the thread's snooze ends, in epoch millis; 0 when it is not snoozed. */
+  var snoozedUntil by mutableLongStateOf(item.snoozedUntil)
   var updatedAt by mutableLongStateOf(if (item.updatedAt > 0) item.updatedAt else System.currentTimeMillis())
   var costUsd by mutableStateOf(item.costUsd)
   var tokens by mutableLongStateOf(item.tokens)
   var branch by mutableStateOf(item.branch)
   var worktree by mutableStateOf(item.worktree)
   var pullRequest by mutableStateOf<GitInfo.PullRequest?>(item.pullRequest)
+  /** The number of the pull request the thread watches, if it does. */
+  var watching by mutableStateOf(item.watching)
+  /** Whether a watch is starting, between the click and gh's first answer. */
+  var watchStarting by mutableStateOf(false)
   var projectPath by mutableStateOf(item.projectPath)
   /** The id of the agent the thread runs. */
   var agent by mutableStateOf(item.agent)
@@ -56,8 +63,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The chat's number for the last prompt sent. */
   var turnNo = 0
   var turn: Turn? = null
-  /** Prompts sent while a turn ran, for agents that take one turn at a time. */
+  /** Prompts sent while a turn ran that the agent has not taken yet, in the order they go. */
   val queued = mutableStateListOf<QueuedPrompt>()
+  /** The queued prompts wait until a prompt is sent, after a stop, an error or the agent's end. */
+  var queueHeld by mutableStateOf(false)
   val entries = HashMap<String, Entry>()
   val declined = HashSet<String>()
   val live = HashMap<String?, MutableList<LiveText>>()
@@ -81,7 +90,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var contextWindow by mutableStateOf<Long?>(null)
   val tasks = mutableStateMapOf<String, Task>()
   var finished by mutableStateOf(false)
-  var unread by mutableStateOf(false)
+  /** The agent finished or asked something while the thread was not shown; the IDE decides and stores it. */
+  var unread by mutableStateOf(item.unread)
   var failed by mutableStateOf(false)
   var model by mutableStateOf<String?>(null)
   var mode by mutableStateOf("default")
@@ -90,6 +100,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val runs = mutableStateListOf<RunPlan>()
   /** Whether a bench started from this thread waits for its worktrees. */
   var startingBench = false
+  /** Whether a thread implementing one of this thread's plans is being started. */
+  var implementing by mutableStateOf(false)
   /** What the agent offers, once it started. */
   var info by mutableStateOf<AgentInfo?>(null)
   /** The agent's process ended or was stopped. The next prompt starts it again. */
@@ -98,6 +110,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The folder the agent keeps its scratch files in, if it has one. */
   var scratchpad by mutableStateOf<String?>(null)
   val alerts = mutableStateListOf<Alert>()
+  /** The setup of the thread's new worktree while it runs or after it failed, which the prompts wait for. */
+  var setup by mutableStateOf<ChatMessage.Setup?>(null)
   /** The prompt a running rewind goes back to before; sending waits until it is done. */
   var rewinding by mutableStateOf<Prompt?>(null)
   /** The stashed drafts to pick from, while their menu is open. */
@@ -113,6 +127,9 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   fun update(item: ChatMessage.ThreadItem) {
     this.title = item.title.ifEmpty { this.title }
     this.archived = item.archived
+    this.pinned = item.pinned
+    this.unread = item.unread
+    this.snoozedUntil = item.snoozedUntil
     if (item.updatedAt > 0) {
       this.updatedAt = item.updatedAt
     }
@@ -122,6 +139,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     this.worktree = item.worktree
     this.projectPath = item.projectPath
     this.pullRequest = item.pullRequest
+    this.watching = item.watching
     this.hasSession = item.hasSession
     this.firstTurnMillis = item.firstTurnMillis
     if (item.agent.isNotEmpty() && item.agent != this.agent) {
@@ -139,6 +157,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
 
   val isActive: Boolean
     get() = this.workspace.active === this
+
+  /** The worktree setup failed, so the prompts wait for the person to retry or skip it. */
+  val setupFailed: Boolean
+    get() = this.setup?.phase == ChatMessage.SetupPhase.FAILED
 
   /** The folder paths are shown relative to. */
   val root: String

@@ -83,6 +83,7 @@ private fun runRow(workspace: Workspace, bench: ChatMessage.BenchItem, run: Chat
 private fun runStatus(thread: ThreadState?): String = when {
   thread == null -> t("bench.status.closed")
   thread.approvals.isNotEmpty() -> t("bench.status.waiting")
+  thread.setupFailed -> t("bench.status.setup.failed")
   thread.busy -> t("bench.status.working")
   thread.failed -> t("bench.status.failed")
   else -> t("bench.status.done")

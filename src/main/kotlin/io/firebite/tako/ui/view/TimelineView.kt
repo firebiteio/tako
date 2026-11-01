@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.intellij.openapi.ui.MessageDialogBuilder
+import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.clock
 import io.firebite.tako.ui.elapsed
@@ -60,9 +61,20 @@ import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
+import io.firebite.tako.ui.state.canActOn
+import io.firebite.tako.ui.state.canMoveUp
+import io.firebite.tako.ui.state.canQuote
 import io.firebite.tako.ui.state.canRewind
+import io.firebite.tako.ui.state.canSteer
+import io.firebite.tako.ui.state.editQueued
+import io.firebite.tako.ui.state.implementElsewhere
+import io.firebite.tako.ui.state.moveQueuedUp
 import io.firebite.tako.ui.state.promptsUpTo
+import io.firebite.tako.ui.state.removeQueued
 import io.firebite.tako.ui.state.rewind
+import io.firebite.tako.ui.state.savePlan
+import io.firebite.tako.ui.state.sendQueuedNow
+import io.firebite.tako.ui.state.steerQueued
 import io.firebite.tako.ui.t
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -233,7 +245,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
     is TimelineRow.Working -> WorkingRow(thread)
     is TimelineRow.Error -> InlineAlert(row.text, Modifier.fillMaxWidth().padding(bottom = 12.dp))
     is TimelineRow.Changes -> ChangesCard(thread, row.turn)
-    is TimelineRow.Queued -> UserRow(thread, row.queued.prompt, true)
+    is TimelineRow.Queued -> UserRow(thread, row.queued.prompt, row.queued)
   }
 }
 
@@ -254,7 +266,7 @@ private fun TurnItemView(thread: ThreadState, item: TurnItem, forkPrompts: Int?,
     is TurnItem.Group -> GroupView(item.group, markdown, actions)
     is TurnItem.Task -> TaskRowView(item.card)
     is TurnItem.Completion -> CompletionRowView(item.card)
-    is TurnItem.Plan -> PlanCard(item.plan, markdown, actions)
+    is TurnItem.Plan -> PlanCard(thread, item, markdown, actions)
     is TurnItem.FollowUp -> UserRow(thread, item.prompt)
   }
 }
@@ -272,10 +284,10 @@ val cssRem: Dp
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 /**
- * @param queued  the prompt waits for the running turn to end
+ * @param queued  the prompt's place in the queue, while the agent has not taken it
  * @param rewinds the turn the prompt starts, when the thread can rewind to before it
  */
-private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false, rewinds: Turn? = null) {
+private fun UserRow(thread: ThreadState, prompt: Prompt, queued: QueuedPrompt? = null, rewinds: Turn? = null) {
   val workspace = thread.workspace
   val (interaction, hovered) = rememberHover()
   val long = prompt.text.length > COLLAPSE_CHARS || prompt.text.count { it == '\n' } >= COLLAPSE_LINES
@@ -283,7 +295,7 @@ private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false
   val rem = cssRem
   Column(Modifier.fillMaxWidth().hoverable(interaction).padding(bottom = 6.dp), horizontalAlignment = Alignment.End,
     verticalArrangement = Arrangement.spacedBy(2.dp)) {
-    Box(Modifier.fillMaxWidth(0.8f).alpha(if (queued) 0.6f else 1f), contentAlignment = Alignment.CenterEnd) {
+    Box(Modifier.fillMaxWidth(0.8f).alpha(if (queued != null) 0.6f else 1f), contentAlignment = Alignment.CenterEnd) {
       Column(Modifier.clip(RoundedCornerShape(18.dp)).background(colors.message)
         .let { if (collapsed) it.heightIn(max = rem * 11) else it }.padding(horizontal = 14.dp, vertical = 10.dp)) {
         if (prompt.images.isNotEmpty()) {
@@ -315,8 +327,8 @@ private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false
           .background(Brush.verticalGradient(listOf(Color.Transparent, colors.bg))))
       }
     }
-    if (queued) {
-      Text(t("timeline.queued"), Modifier.padding(horizontal = 6.dp), color = colors.muted, style = smallStyle)
+    if (queued != null) {
+      QueuedMeta(thread, queued)
     }
     HoverMeta(hovered) {
       if (long) {
@@ -370,6 +382,49 @@ private fun confirmRewind(thread: ThreadState, turn: Turn, files: Boolean) {
   else t("timeline.rewind.confirm")
   if (MessageDialogBuilder.yesNo(title, text).guessWindowAndAsk()) {
     thread.rewind(turn, files)
+  }
+}
+
+/** A queued prompt's status, and while it waits, what the person can do with it. */
+@Composable
+private fun QueuedMeta(thread: ThreadState, queued: QueuedPrompt) {
+  val label = when (queued.status) {
+    QueuedPrompts.Status.HELD -> if (thread.queueHeld || !thread.busy) t("timeline.queued.held") else t("timeline.queued")
+    QueuedPrompts.Status.NEXT -> t("timeline.queued.next")
+    QueuedPrompts.Status.SENDING -> t("timeline.queued.sending")
+    QueuedPrompts.Status.STEERING -> t("timeline.queued.steering")
+  }
+  Row(Modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Text(label, color = colors.muted, style = smallStyle)
+    if (queued.status != QueuedPrompts.Status.HELD) {
+      return@Row
+    }
+    if (thread.busy) {
+      TextAction(t("queue.send.now"), t("queue.send.now.tip")) { thread.sendQueuedNow(queued) }
+      if (thread.canSteer && QueuedPrompts.isSteerable(queued.prompt.text)) {
+        TextAction(t("queue.steer"), t("queue.steer.tip")) { thread.steerQueued(queued) }
+      }
+    } else {
+      TextAction(t("queue.send"), t("queue.send.tip")) { thread.sendQueuedNow(queued) }
+    }
+    if (thread.canQuote) {
+      TextAction(t("queue.edit"), t("queue.edit.tip")) { thread.editQueued(queued) }
+    }
+    if (thread.canMoveUp(queued)) {
+      TextAction(t("queue.move.up"), null) { thread.moveQueuedUp(queued) }
+    }
+    TextAction(t("queue.remove"), null) { thread.removeQueued(queued) }
+  }
+}
+
+/** A small text button, muted until hovered. */
+@Composable
+private fun TextAction(label: String, tip: String?, onClick: () -> Unit) {
+  val (interaction, hovered) = rememberHover()
+  Tip(tip) {
+    Text(label, Modifier.hoverable(interaction).clickable(interaction, indication = null, onClick = onClick),
+      color = if (hovered) colors.fg else colors.muted, style = smallStyle)
   }
 }
 
@@ -428,7 +483,12 @@ private fun FoldHeadView(fold: Fold) {
 private fun WorkingRow(thread: ThreadState) {
   val since = elapsed(thread.startedAt, thread.workspace.now)
   Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-    Text(if (thread.approvals.isNotEmpty()) t("timeline.working.waiting", since) else t("timeline.working", since),
+    val text = when {
+      thread.approvals.isNotEmpty() || thread.setupFailed -> t("timeline.working.waiting", since)
+      thread.setup != null -> t("timeline.working.setup", since)
+      else -> t("timeline.working", since)
+    }
+    Text(text,
       Modifier.padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 8.dp), color = colors.muted,
       style = textStyle.copy(fontFeatureSettings = "tnum"))
     Rule()
@@ -484,9 +544,36 @@ private fun ChangesCard(thread: ThreadState, turn: Turn) {
   }
 }
 
+/** The menu entries that hand the plan to a new thread; none for a blank plan. */
+fun implementElsewhereEntries(thread: ThreadState, plan: TurnItem.Plan): List<MenuEntry> {
+  if (plan.plan.isBlank()) {
+    return emptyList()
+  }
+  val enabled = thread.canActOn(plan)
+  return listOf(
+    MenuEntry(t("plan.implement.thread"), icon = Icons.thread, enabled = enabled) {
+      thread.implementElsewhere(plan, false)
+    },
+    MenuEntry(t("plan.implement.worktree"), icon = Icons.worktree, enabled = enabled) {
+      thread.implementElsewhere(plan, true)
+    })
+}
+
+@Composable
+private fun PlanMenuButton(thread: ThreadState, item: TurnItem.Plan) {
+  var open by remember { mutableStateOf(false) }
+  Box {
+    IconBtn(Icons.more, t("plan.more"), iconSize = 14.dp) { open = true }
+    if (open) {
+      MenuPopup(implementElsewhereEntries(thread, item), alignment = Alignment.End) { open = false }
+    }
+  }
+}
+
 /** A plan the agent proposes, long ones collapsed. */
 @Composable
-private fun PlanCard(plan: String, markdown: ChatMarkdown, actions: CodeActions) {
+private fun PlanCard(thread: ThreadState, item: TurnItem.Plan, markdown: ChatMarkdown, actions: CodeActions) {
+  val plan = item.plan
   val long = plan.count { it == '\n' } >= PLAN_COLLAPSE_LINES
   var collapsed by remember(plan) { mutableStateOf(long) }
   val shape = RoundedCornerShape(22.dp)
@@ -497,7 +584,13 @@ private fun PlanCard(plan: String, markdown: ChatMarkdown, actions: CodeActions)
       Text(t("timeline.plan"), Modifier.clip(RoundedCornerShape(6.dp)).background(colors.hover)
         .padding(horizontal = 8.dp, vertical = 1.dp), style = tinyStyle, fontWeight = FontWeight.Medium)
       Text(t("timeline.plan.title"), Modifier.weight(1f))
+      if (plan.isNotBlank()) {
+        IconBtn(Icons.download, t("plan.save"), iconSize = 14.dp) { thread.savePlan(item) }
+      }
       IconBtn(Icons.copy, t("timeline.plan.copy"), iconSize = 14.dp) { actions.copy(plan) }
+      if (plan.isNotBlank()) {
+        PlanMenuButton(thread, item)
+      }
     }
     Box(if (collapsed) Modifier.heightIn(max = cssRem * 22).clip(RoundedCornerShape(0.dp)) else Modifier) {
       MarkdownText(markdown, plan, true, actions)

@@ -10,10 +10,13 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.intellij.ide.util.PropertiesComponent
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.InputValidator
+import com.intellij.openapi.ui.Messages
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.git.ThreadGit
@@ -27,6 +30,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.ZonedDateTime
 
 private const val SIDEBAR_KEY = "tako.sidebar"
 private const val ARCHIVED_TOAST_MILLIS = 5000L
@@ -47,6 +51,8 @@ class Workspace(val service: ChatService, val project: Project) {
   var limits by mutableStateOf("")
   /** Whether the settings allow parallel runs. */
   var parallelRuns by mutableStateOf(false)
+  /** A prompt sent while the agent works steers its turn by default, instead of queuing. */
+  var steers by mutableStateOf(false)
   var benches by mutableStateOf<List<ChatMessage.BenchItem>>(emptyList())
   /** Benches the person folded; only this session remembers. */
   val collapsedBenches = mutableStateMapOf<String, Boolean>()
@@ -58,6 +64,7 @@ class Workspace(val service: ChatService, val project: Project) {
 
   var sidebarOpen by mutableStateOf(PropertiesComponent.getInstance().getBoolean(SIDEBAR_KEY, true))
   var showArchived by mutableStateOf(false)
+  var showSnoozed by mutableStateOf(false)
   /** The thread last archived, while the toast offering to undo it shows. */
   var archivedToast by mutableStateOf<ChatService.Archived?>(null)
   /** Whether the thread list shows the search field. */
@@ -202,6 +209,21 @@ class Workspace(val service: ChatService, val project: Project) {
     this.service.newThread(this.active?.projectPath, null)
   }
 
+  /** Asks for the thread's new title once the current event is handled, as the menu that asked is still closing. */
+  fun rename(thread: ThreadState) {
+    ApplicationManager.getApplication().invokeLater {
+      val title = Messages.showInputDialog(this.project, t("sidebar.rename.message"), t("sidebar.rename.title"), null,
+        thread.title, NotBlank)
+      if (title != null) {
+        this.service.rename(thread.id, title)
+      }
+    }
+  }
+
+  fun snooze(thread: ThreadState, preset: SnoozePreset) {
+    this.service.snooze(thread.id, snoozeUntil(preset, ZonedDateTime.now()).toInstant().toEpochMilli())
+  }
+
   /** Has the thread's agent write a title from the conversation the chat holds. */
   fun regenerateTitle(thread: ThreadState) {
     thread.titling = true
@@ -236,7 +258,10 @@ class Workspace(val service: ChatService, val project: Project) {
         .update(message.item)
       is ChatMessage.ThreadRemoved -> this.removeThread(message.thread)
       is ChatMessage.Select -> this.activate(this.threads[message.thread])
-      is ChatMessage.Settings -> this.parallelRuns = message.parallelRuns
+      is ChatMessage.Settings -> {
+        this.parallelRuns = message.parallelRuns
+        this.steers = message.steers
+      }
       is ChatMessage.Benches -> {
         this.benches = message.items
         if (this.shownBench != null && this.benches.none { it.id == this.shownBench }) {
@@ -259,9 +284,12 @@ class Workspace(val service: ChatService, val project: Project) {
       is ChatMessage.ContextUsage -> thread.contextUsage = message.data
       is ChatMessage.Exit -> thread.onExit(message.code, message.stderr)
       is ChatMessage.Submit -> thread.startPrompt(message.text, message.context, message.images)
+      is ChatMessage.Queue -> thread.applyQueue(message)
+      is ChatMessage.QueueStashed -> thread.onQueueStashed(message.count)
       is ChatMessage.BenchFailed -> thread.onBenchFailed(message.prompt, message.error)
       is ChatMessage.Error -> thread.onError(message.text)
       is ChatMessage.Notice -> thread.showAlert(message.text)
+      is ChatMessage.Setup -> thread.onSetup(message)
       is ChatMessage.Rewound -> thread.onRewound(message.rewound, message.error)
     }
   }
@@ -291,4 +319,11 @@ class Workspace(val service: ChatService, val project: Project) {
     this.shownBench = benchId
     this.benchLoads++
   }
+}
+
+/** Keeps the rename dialog's OK disabled while the title is blank. */
+private object NotBlank : InputValidator {
+  override fun checkInput(inputString: String?): Boolean = !inputString.isNullOrBlank()
+
+  override fun canClose(inputString: String?): Boolean = this.checkInput(inputString)
 }

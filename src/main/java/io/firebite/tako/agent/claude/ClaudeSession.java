@@ -67,6 +67,13 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
     this.process.sendUser(text, images);
   }
 
+  /** The CLI takes a prompt written while it works into the turn after the next tool call, else as the next turn. */
+  @Override
+  public CompletableFuture<Boolean> steer(String text, List<ImageAttachment> images, int key) {
+    this.prompt(text, images, key);
+    return CompletableFuture.completedFuture(true);
+  }
+
   @Override
   public void interrupt() {
     this.process.interrupt();
@@ -145,11 +152,25 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
       }
       this.subagents.onToolResults(message.toolResults());
     }
+    if (message.type() == CliMessage.Type.RESULT) {
+      this.onResult(message, change);
+      return;
+    }
+    this.tell(message, change);
+  }
+
+  /**
+   * Ends the turn before telling it, so a prompt sent once the listener heard of the end starts a turn at once. Holds
+   * the monitor, so a prompt sent meanwhile waits until the end was told.
+   */
+  private synchronized void onResult(CliMessage message, @Nullable FileChange change) {
+    this.echoes.turnEnded();
+    this.tell(message, change);
+  }
+
+  private void tell(CliMessage message, @Nullable FileChange change) {
     for (AgentEvent event : ClaudeTranslator.translate(message, change, false)) {
       this.listener.onEvent(event instanceof AgentEvent.SessionStarted started ? this.withScratchpad(started) : event);
-    }
-    if (message.type() == CliMessage.Type.RESULT) {
-      this.echoes.turnEnded();
     }
   }
 

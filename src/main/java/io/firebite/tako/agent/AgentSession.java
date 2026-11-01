@@ -18,6 +18,17 @@ public interface AgentSession {
    */
   void prompt(String text, List<ImageAttachment> images, int key);
 
+  /**
+   * Hands a prompt to the running turn without stopping it, for agents whose {@link AgentInfo.Capabilities#steer} says
+   * so. The agent announces it with an {@link AgentEvent.PromptTaken}: joining the turn, or starting the next one if it
+   * could not take it in time.
+   *
+   * @return completes with true when the agent has the prompt, false when it refused it, which then was not sent
+   */
+  default CompletableFuture<Boolean> steer(String text, List<ImageAttachment> images, int key) {
+    return CompletableFuture.completedFuture(false);
+  }
+
   void interrupt();
 
   void answer(String requestId, PermissionAnswer answer);

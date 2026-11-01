@@ -6,6 +6,7 @@ import io.firebite.tako.agent.AgentEvent
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.chat.BenchRequest
+import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ide.context.ContextItem
@@ -37,8 +38,11 @@ fun ThreadState.takeFeedback(): String {
   return text
 }
 
-/** Sends what is typed; with the agent waiting, it answers the question or declines the approval instead. */
-fun ThreadState.submit() {
+/**
+ * Sends what is typed; with the agent waiting, it answers the question or declines the approval instead. While a turn
+ * runs, the prompt queues or steers as the settings say, or the other way with [opposite].
+ */
+fun ThreadState.submit(opposite: Boolean = false) {
   if (this.rewinding != null) {
     return
   }
@@ -66,7 +70,7 @@ fun ThreadState.submit() {
       return
     }
   } else {
-    this.startPrompt(text, this.contexts.toList(), images)
+    this.startPrompt(text, this.contexts.toList(), images, this.followUpDelivery(opposite))
   }
   this.contexts.clear()
   this.images.clear()
@@ -262,7 +266,7 @@ fun ThreadState.addImage(image: ImageAttachment) {
 fun ThreadState.addPermission(requestId: String, prompt: PermissionPrompt) {
   this.approvals.add(Approval(requestId, prompt))
   if (prompt.kind == PermissionPrompt.Kind.PLAN) {
-    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: ""))
+    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: "", requestId))
   }
   this.scrollToEnd++
 }
@@ -279,9 +283,16 @@ fun ThreadState.cancelAllApprovals() {
   this.question = null
 }
 
-/** Answers the waiting prompt. @param suggestion the index of the suggestion approved with */
+/**
+ * Answers the waiting prompt. A plan is not approved while a new thread for it starts, so two threads don't carry it out.
+ *
+ * @param suggestion the index of the suggestion approved with
+ */
 fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = null, interrupt: Boolean = false,
   answers: Map<String, String>? = null, suggestion: Int? = null) {
+  if (allow && this.implementing && approval.prompt.kind == PermissionPrompt.Kind.PLAN) {
+    return
+  }
   this.controller?.answer(approval.requestId, allow, message, interrupt, answers, suggestion)
   val prompt = approval.prompt
   val toolUseId = prompt.toolUseId
@@ -313,7 +324,7 @@ fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = 
   }
   this.answer(approval, false, decline.message, decline.interrupt)
   val followUp = decline.followUp ?: return
-  this.startPrompt(followUp, this.contexts.toList(), this.images.map { it.image })
+  this.startPrompt(followUp, this.contexts.toList(), this.images.map { it.image }, QueuedPrompts.Delivery.NEXT)
   this.contexts.clear()
   this.images.clear()
 }

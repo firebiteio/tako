@@ -41,6 +41,12 @@ public class GitWorktreeTest {
     assertNotNull(second);
     assertEquals("physics-2", second.branch());
     assertTrue(Files.isDirectory(second.folder()));
+    assertEquals(repository.toRealPath(), first.repository().toRealPath());
+
+    GitWorktree.Worktree nested = GitWorktree.create(first.folder(), "Nested", environment);
+    assertNotNull(nested);
+    assertEquals("a worktree's worktree still belongs to the main checkout", repository.toRealPath(),
+      nested.repository().toRealPath());
   }
 
   @Test
