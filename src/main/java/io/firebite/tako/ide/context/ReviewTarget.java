@@ -28,6 +28,12 @@ public record ReviewTarget(
       new Version("after your change", true));
   }
 
+  /** What a parallel run changed in its worktree since the commit it started from; the new version is on disk. */
+  public static ReviewTarget run(String threadId, String path) {
+    return new ReviewTarget(threadId, path, new Version("the commit this run started from", false),
+      new Version("as your changes left it", true));
+  }
+
   /** An edit a permission prompt proposes; the old version is the file on disk. */
   public static ReviewTarget proposed(String threadId, String path) {
     return new ReviewTarget(threadId, path, new Version("the current file, before your proposed edit", true),

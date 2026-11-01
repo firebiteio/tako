@@ -482,11 +482,8 @@ public final class ChatController implements Disposable {
         this.postError(TakoBundle.message("error.no.turn.changes"));
         return;
       }
-      List<ReviewTarget> targets = new ArrayList<>();
-      for (EditPreview preview : previews) {
-        targets.add(ReviewTarget.turn(this.record.id, IdeFiles.absolute(this.project, preview.filePath())));
-      }
-      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews, targets));
+      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews,
+        preview -> ReviewTarget.turn(this.record.id, IdeFiles.absolute(this.project, preview.filePath()))));
     });
   }
 

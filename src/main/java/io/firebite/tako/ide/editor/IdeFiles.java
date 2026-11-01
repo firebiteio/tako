@@ -36,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Function;
 import org.jetbrains.annotations.Nullable;
 
 /** Opening, diffing, refreshing and editing the files the agent names. */
@@ -149,15 +150,15 @@ public final class IdeFiles {
   /**
    * One diff window stepping through the files. Must run on the EDT.
    *
-   * @param targets where review comments on each file's diff go, in the order of the previews
+   * @param targetOf where review comments on a file's diff go
    */
-  public static void showDiffs(Project project, List<EditPreview> previews, List<ReviewTarget> targets) {
+  public static void showDiffs(Project project, List<EditPreview> previews,
+    Function<EditPreview, ReviewTarget> targetOf) {
     List<DiffRequest> requests = new ArrayList<>();
-    for (int i = 0; i < previews.size(); i++) {
-      EditPreview preview = previews.get(i);
+    for (EditPreview preview : previews) {
       String title = relativeOrAbsolute(project, preview.filePath());
       requests.add(request(project, preview, title, TakoBundle.message("diff.before"), TakoBundle.message("diff.now"),
-        targets.get(i)));
+        targetOf.apply(preview)));
     }
     DiffManager.getInstance().showDiff(project, new SimpleDiffRequestChain(requests), DiffDialogHints.DEFAULT);
   }

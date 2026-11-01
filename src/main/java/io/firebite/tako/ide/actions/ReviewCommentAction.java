@@ -127,9 +127,15 @@ public final class ReviewCommentAction extends AnAction implements DumbAware {
     return file != null && file.isInLocalFileSystem() ? file : null;
   }
 
-  /** The selected lines, or the caret's line. A selection ending at the start of a line leaves that line out. */
+  /**
+   * The selected lines, or the caret's line. A selection ending at the start of a line leaves that line out. None in an
+   * empty document, such as the old side of a new file.
+   */
   private static List<ReviewComment.Line> lines(Editor editor, IntUnaryOperator toBefore, IntUnaryOperator toAfter) {
     Document document = editor.getDocument();
+    if (document.getTextLength() == 0) {
+      return List.of();
+    }
     SelectionModel selection = editor.getSelectionModel();
     int first;
     int last;
@@ -137,20 +143,11 @@ public final class ReviewCommentAction extends AnAction implements DumbAware {
       first = document.getLineNumber(selection.getSelectionStart());
       last = document.getLineNumber(Math.max(selection.getSelectionStart(), selection.getSelectionEnd() - 1));
     } else {
-      first = editor.getCaretModel().getLogicalPosition().line;
+      first = document.getLineNumber(editor.getCaretModel().getOffset());
       last = first;
     }
-    int lineCount = Math.max(document.getLineCount(), 1);
-    first = Math.min(first, lineCount - 1);
-    last = Math.min(last, lineCount - 1);
-    return ReviewComment.lines(first, last, toBefore, toAfter, line -> lineText(document, line));
-  }
-
-  private static String lineText(Document document, int line) {
-    if (line >= document.getLineCount()) {
-      return "";
-    }
-    return document.getText(new TextRange(document.getLineStartOffset(line), document.getLineEndOffset(line)));
+    return ReviewComment.lines(first, last, toBefore, toAfter, line -> document.getText(
+      new TextRange(document.getLineStartOffset(line), document.getLineEndOffset(line))));
   }
 
   /** Builds the comment, telling the agent when the file is no longer what the diff shows, and adds it. */

@@ -19,6 +19,15 @@ public class ReviewTargetTest {
   }
 
   @Test
+  public void runNamesItsStartCommitAndComparesTheNewVersionWithTheDisk() {
+    ReviewTarget target = ReviewTarget.run("run-thread", "/repo-tako/run-1/A.java");
+
+    assertEquals("the commit this run started from", target.before().description());
+    assertFalse(target.before().isOnDisk());
+    assertTrue(target.after().isOnDisk());
+  }
+
+  @Test
   public void proposedEditComparesTheOldVersionWithTheDisk() {
     ReviewTarget target = ReviewTarget.proposed("thread-1", "/repo/A.java");
 

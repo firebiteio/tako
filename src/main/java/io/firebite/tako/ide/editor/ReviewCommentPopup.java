@@ -25,7 +25,8 @@ public final class ReviewCommentPopup {
 
   /**
    * Enter hands the typed comment to {@code onAdd} and closes the box, Shift+Enter starts a new line, Esc closes it.
-   * Clicks elsewhere leave it open, so a typed comment is not lost by accident. Must run on the EDT.
+   * Clicks elsewhere leave it open, so a stray click does not lose a typed comment. It closes with its editor, such as
+   * when the diff closes or shows another file. Must run on the EDT.
    */
   public static void show(Editor editor, String title, Consumer<String> onAdd) {
     JBTextArea area = new JBTextArea(3, 50);

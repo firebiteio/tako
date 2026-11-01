@@ -126,11 +126,8 @@ final class Benches {
         this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.no.changes", runIndex)));
         return;
       }
-      List<ReviewTarget> targets = new ArrayList<>();
-      for (EditPreview preview : previews) {
-        targets.add(ReviewTarget.turn(run.thread, Path.of(run.worktree).resolve(preview.filePath()).toString()));
-      }
-      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews, targets));
+      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews,
+        preview -> ReviewTarget.run(run.thread, Path.of(run.worktree).resolve(preview.filePath()).toString())));
     } catch (Worktrees.GitException e) {
       this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.diff", runIndex, e.getMessage())));
     }
