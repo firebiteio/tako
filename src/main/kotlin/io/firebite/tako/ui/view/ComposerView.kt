@@ -122,6 +122,8 @@ import io.firebite.tako.ui.state.declinesWithReviews
 import io.firebite.tako.ui.state.hasReviews
 import io.firebite.tako.ui.state.RunPlan
 import io.firebite.tako.ui.state.SlashItem
+import io.firebite.tako.ui.state.isSideChat
+import io.firebite.tako.ui.state.requestFocus
 import io.firebite.tako.ui.state.effortDescription
 import io.firebite.tako.ui.state.effortLabel
 import io.firebite.tako.ui.state.selectEffort
@@ -300,7 +302,14 @@ private fun Composer(thread: ThreadState) {
   var top by remember { mutableFloatStateOf(0f) }
   var cacheIconOnly by remember { mutableStateOf(false) }
   val paste = remember(thread) { ComposerPaste(thread) }
-  LaunchedEffect(workspace.focusComposer, thread) {
+  val focusKey = if (thread.sideChat) thread.focusRequests else workspace.focusComposer
+  LaunchedEffect(focusKey, thread) {
+    if (thread.sideChat) {
+      if (!thread.pendingFocus) {
+        return@LaunchedEffect
+      }
+      thread.pendingFocus = false
+    }
     try {
       focus.requestFocus()
     } catch (ignored: IllegalStateException) {
@@ -414,7 +423,7 @@ private fun Composer(thread: ThreadState) {
     if (suggestions.size > 0) {
       SuggestionPopup(thread, suggestions, with(density) { width.toDp() - 16.dp }, maxHeight)
     }
-    if (workspace.contextPanelOpen) {
+    if (workspace.contextPanelOpen && workspace.contextPanelFor == thread.id) {
       ContextPanel(thread, maxHeight)
     }
     thread.stashMenu?.let { entries ->
@@ -423,7 +432,7 @@ private fun Composer(thread: ThreadState) {
       }
       MenuPopup(items, t("stash.menu")) {
         thread.stashMenu = null
-        workspace.focusComposer++
+        thread.requestFocus()
       }
     }
   }
@@ -491,7 +500,8 @@ private fun mentionThreads(thread: ThreadState, query: String): List<ThreadState
   val workspace = thread.workspace
   val project = workspace.projectOf(thread).path
   return workspace.threads.values.filter {
-    it !== thread && !it.archived && it.title.contains(query, true) && workspace.projectOf(it).path == project
+    it !== thread && !it.archived && !workspace.isSideChat(it) && it.title.contains(query, true) &&
+      workspace.projectOf(it).path == project
   }.sortedWith(compareBy<ThreadState> { !it.title.startsWith(query, true) }.thenByDescending { it.updatedAt })
     .take(MAX_THREAD_ITEMS)
 }
@@ -942,7 +952,8 @@ private fun ContextMeter(thread: ThreadState) {
 
 fun toggleContextPanel(thread: ThreadState) {
   val workspace = thread.workspace
-  workspace.contextPanelOpen = !workspace.contextPanelOpen
+  workspace.contextPanelOpen = !workspace.contextPanelOpen || workspace.contextPanelFor != thread.id
+  workspace.contextPanelFor = thread.id
   if (workspace.contextPanelOpen) {
     thread.controller?.refreshContext()
   }

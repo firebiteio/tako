@@ -40,7 +40,10 @@ import io.firebite.tako.ui.money
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.WatchButton
 import io.firebite.tako.ui.state.Workspace
+import io.firebite.tako.ui.state.hasAskingSideChat
+import io.firebite.tako.ui.state.toggleSideChats
 import io.firebite.tako.ui.state.toggleWatch
+import io.firebite.tako.ui.state.waitingSideChats
 import io.firebite.tako.ui.state.watchButton
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
@@ -51,6 +54,26 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.icon.IconKey
 import java.nio.file.Path
+
+/**
+ * Shows or hides the thread's side chats, starting the first one. A dot tells that one off screen waits for you, or
+ * has a new answer.
+ */
+@Composable
+private fun SideChatsButton(workspace: Workspace, thread: ThreadState) {
+  val waiting = workspace.waitingSideChats(thread) > 0
+  val dot = if (workspace.hasAskingSideChat(thread)) colors.warn else colors.primary
+  val shown = thread.sideChatShown != null
+  Box {
+    IconBtn(Icons.sideChats, if (shown) t("side.hide") else t("side.chats"),
+      color = if (waiting) dot else if (shown) colors.fg else colors.muted) {
+      workspace.toggleSideChats(thread)
+    }
+    if (waiting) {
+      Dot(dot, 6.dp, Modifier.align(Alignment.TopEnd).offset((-5).dp, 5.dp))
+    }
+  }
+}
 
 /**
  * The project and thread names, the thread's cost, the rate-limit windows, and its worktree, branch and pull request.
@@ -121,6 +144,7 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
             DiffSourcesButton(thread)
           }
         }
+        SideChatsButton(workspace, thread)
       }
       val meta = listOf(thread?.costUsd?.takeIf { it > 0 }?.let { money(it) } ?: "", workspace.limits)
         .filter { it.isNotEmpty() }.joinToString(" · ")

@@ -96,7 +96,9 @@ public sealed interface ChatMessage {
     boolean pinned,
     boolean unread,
     long snoozedUntil,
-    @Nullable LimitItem limit
+    @Nullable LimitItem limit,
+    boolean sideChat,
+    int inheritedPrompts
   ) {
   }
 
@@ -161,6 +163,17 @@ public sealed interface ChatMessage {
 
   record Select(
     String thread
+  ) implements WorkspaceMessage {
+  }
+
+  /**
+   * Shows the side chat in its main thread's pane.
+   *
+   * @param started the side chat was just made, so the main thread may start another
+   */
+  record ShowSideChat(
+    String thread,
+    boolean started
   ) implements WorkspaceMessage {
   }
 

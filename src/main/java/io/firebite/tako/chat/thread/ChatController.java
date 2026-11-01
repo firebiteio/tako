@@ -91,7 +91,7 @@ public final class ChatController implements Disposable {
   private final TurnChanges changes;
   /** Done once {@link #open} launched the agent, so a prompt sent meanwhile does not launch a second one. */
   private final CompletableFuture<Void> opened = new CompletableFuture<>();
-  private final AtomicReference<String> firstPrompt = new AtomicReference<>();
+  private final AtomicReference<ChatMessage.Submit> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
   private final Conversation conversation = new Conversation();
   private final ThreadGit git;
@@ -140,7 +140,8 @@ public final class ChatController implements Disposable {
     this.host = host;
     this.record = record;
     this.backend = backend;
-    this.isTitled = record.sessionId != null || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
+    this.isTitled = record.sessionId != null && !record.sideChat
+      || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
     ThreadStore.PendingSetup pending = record.pendingSetup;
     this.setup = pending == null
@@ -165,11 +166,16 @@ public final class ChatController implements Disposable {
    * worktree's setup is through, so it loads what the setup installed.
    */
   public void open() {
-    this.open(null);
+    this.open((ChatMessage.Submit) null);
   }
 
   /** Like {@link #open()}, then sends {@code prompt} as if typed, once the agent is ready. Keeps the thread's title. */
   public void open(@Nullable String prompt) {
+    this.open(prompt == null ? null : new ChatMessage.Submit(prompt, List.of(), List.of()));
+  }
+
+  /** Like {@link #open(String)}, with the prompt's context and images. */
+  public void open(@Nullable ChatMessage.Submit prompt) {
     this.firstPrompt.set(prompt);
     if (prompt != null) {
       this.isTitled = true;
@@ -215,6 +221,10 @@ public final class ChatController implements Disposable {
    * During a rewind it is sent once the rewind is done.
    */
   public void submit(String prompt) {
+    this.submit(new ChatMessage.Submit(prompt, List.of(), List.of()));
+  }
+
+  private void submit(ChatMessage.Submit prompt) {
     if (this.state != State.WAITING) {
       this.setState(State.WORKING);
     }
@@ -235,7 +245,7 @@ public final class ChatController implements Disposable {
       });
       return;
     }
-    this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of()));
+    this.view.post(prompt);
   }
 
   /**
@@ -610,9 +620,9 @@ public final class ChatController implements Disposable {
         return;
       }
       this.hasTools = launch.toolsUrl() != null && session.takesTools();
-      this.canRewind = info.capabilities().rewind();
+      this.canRewind = info.capabilities().rewind() && !this.record.sideChat;
       this.canSteer = info.capabilities().steer();
-      String prompt = this.firstPrompt.getAndSet(null);
+      ChatMessage.Submit prompt = this.firstPrompt.getAndSet(null);
       this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
       if (prompt != null) {

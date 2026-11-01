@@ -60,9 +60,13 @@ import io.firebite.tako.ui.state.ThreadAction
 import io.firebite.tako.ui.state.ThreadNode
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
+import io.firebite.tako.ui.state.hasAskingSideChat
 import io.firebite.tako.ui.state.isHidden
+import io.firebite.tako.ui.state.isSideChat
 import io.firebite.tako.ui.state.pinnedFirst
 import io.firebite.tako.ui.state.runName
+import io.firebite.tako.ui.state.sideChatsOf
+import io.firebite.tako.ui.state.waitingSideChats
 import io.firebite.tako.ui.state.runningTasks
 import io.firebite.tako.ui.state.snoozeTime
 import io.firebite.tako.ui.state.snoozeUntil
@@ -96,6 +100,9 @@ fun threadStatus(thread: ThreadState, now: Long): ThreadStatus {
   if (thread.setupFailed) {
     return ThreadStatus(StatusKind.INPUT, t("sidebar.status.setup.failed"))
   }
+  if (thread.workspace.hasAskingSideChat(thread)) {
+    return ThreadStatus(StatusKind.INPUT, t("sidebar.status.side.chat"))
+  }
   if (thread.busy) {
     return ThreadStatus(StatusKind.WORKING, t("sidebar.status.working", elapsed(thread.startedAt, now)))
   }
@@ -122,7 +129,8 @@ private fun rememberStatus(workspace: Workspace, thread: ThreadState): ThreadSta
 
 /** Threads needing a look that are not shown, for the sidebar toggle's badge. A snooze keeps them out of it. */
 fun waitingThreads(workspace: Workspace): Int = workspace.threads.values.count {
-  !it.archived && it !== workspace.active && (it.approvals.isNotEmpty() || it.setupFailed || it.unread) &&
+  !it.archived && it !== workspace.active && !workspace.isSideChat(it) &&
+    (it.approvals.isNotEmpty() || it.setupFailed || it.unread || workspace.waitingSideChats(it) > 0) &&
     !workspace.isHidden(it)
 }
 
@@ -150,7 +158,7 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
       SearchField(workspace)
     }
     Rule()
-    val sorted = workspace.threads.values.sortedByDescending { it.updatedAt }
+    val sorted = workspace.threads.values.filter { !workspace.isSideChat(it) }.sortedByDescending { it.updatedAt }
     val runIds = workspace.benches.flatMap { it.threads }.toSet()
     val query = if (workspace.searching) workspace.searchInput.text.toString().trim() else ""
     LaunchedEffect(query) {
@@ -297,7 +305,8 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     Rule()
-    val listed = workspace.threads.values.sortedByDescending { it.updatedAt }.filter { !workspace.isHidden(it) }
+    val listed = workspace.threads.values.sortedByDescending { it.updatedAt }
+      .filter { !workspace.isHidden(it) && !workspace.isSideChat(it) }
     val runIds = workspace.benches.flatMap { it.threads }.toSet()
     val projects = workspace.projectList()
     VerticallyScrollableContainer(Modifier.weight(1f)) {
@@ -740,7 +749,8 @@ private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modi
       }
     }
     IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {
-      val confirmed = !thread.busy || MessageDialogBuilder.yesNo(t("sidebar.close"),
+      val isWorking = thread.busy || workspace.sideChatsOf(thread).any { it.busy }
+      val confirmed = !isWorking || MessageDialogBuilder.yesNo(t("sidebar.close"),
         t("sidebar.close.confirm", thread.agentName)).guessWindowAndAsk()
       if (confirmed) {
         workspace.service.close(thread.id)

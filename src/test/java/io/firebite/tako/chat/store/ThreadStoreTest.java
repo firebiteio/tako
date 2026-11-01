@@ -127,6 +127,35 @@ public class ThreadStoreTest {
   }
 
   @Test
+  public void sideChatKeepsWhatItInheritedAcrossAReload() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record main = store.create(null, null, null, "claude");
+    ThreadStore.Record side = store.create("fork", "Why?", null, "claude");
+    side.parentId = main.id;
+    side.sideChat = true;
+    side.inheritedPrompts = 3;
+    store.save();
+
+    ThreadStore reloaded = new ThreadStore(file);
+
+    assertTrue(reloaded.find(side.id).toItem().sideChat());
+    assertEquals(3, reloaded.find(side.id).toItem().inheritedPrompts());
+    assertFalse(reloaded.find(main.id).toItem().sideChat());
+  }
+
+  @Test
+  public void threadsFromBeforeSideChatsAreNone() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    Files.writeString(file, "{\"threads\":[{\"id\":\"old\",\"title\":\"Old\",\"parentId\":\"p\"}]}");
+
+    ThreadStore.Record old = new ThreadStore(file).find("old");
+
+    assertFalse(old.sideChat);
+    assertEquals(0, old.inheritedPrompts);
+  }
+
+  @Test
   public void ideProjectIsAlwaysTheFirstFolder() throws Exception {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     ThreadStore store = new ThreadStore(file);

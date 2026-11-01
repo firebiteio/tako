@@ -199,7 +199,7 @@ final class ThreadTools implements McpTools {
   private String list() {
     JsonArray threads = new JsonArray();
     for (ThreadStore.Record record : this.store.all()) {
-      if (!record.archived) {
+      if (!record.archived && !record.sideChat) {
         threads.add(this.describe(record, this.service.controller(record.id)));
       }
     }
@@ -379,7 +379,7 @@ final class ThreadTools implements McpTools {
     if (record.id.equals(this.threadId)) {
       thread.addProperty("isYou", true);
     }
-    if (this.threadId.equals(record.parentId)) {
+    if (this.threadId.equals(record.parentId) && !record.sideChat) {
       thread.addProperty("createdByYou", true);
     }
     return thread;

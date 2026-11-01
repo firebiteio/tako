@@ -191,6 +191,10 @@ object Icons {
   val snooze: IconKey = lucide("alarm-clock")
   val unread: IconKey = lucide("circle-dot")
   val rename: IconKey = lucide("pen-line")
+  val sideChats: IconKey = lucide("messages-square")
+  val hidePane: IconKey = lucide("panel-right")
+  val bringBack: IconKey = lucide("reply")
+  val delete: IconKey = lucide("trash-2")
 
   fun category(kind: ToolKind): IconKey = when (kind) {
     ToolKind.READ -> lucide("eye")

@@ -1,7 +1,7 @@
 package io.firebite.tako.ui.state
 
-/** The prompts the thread sent, oldest first. */
-fun ThreadState.sentPrompts(): List<String> = sentPrompts(this.turns, this.queued)
+/** The prompts the thread sent, oldest first; a side chat's own only. */
+fun ThreadState.sentPrompts(): List<String> = sentPrompts(this.ownTurns, this.queued)
 
 /** The texts of each turn's prompt, its follow-ups, then the queued prompts, without blank ones. */
 fun sentPrompts(turns: List<Turn>, queued: List<QueuedPrompt>): List<String> {

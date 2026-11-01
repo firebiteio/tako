@@ -61,7 +61,9 @@ import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
+import io.firebite.tako.ui.state.bringBack
 import io.firebite.tako.ui.state.canActOn
+import io.firebite.tako.ui.state.canBringBack
 import io.firebite.tako.ui.state.canMoveUp
 import io.firebite.tako.ui.state.canQuote
 import io.firebite.tako.ui.state.canRewind
@@ -69,6 +71,7 @@ import io.firebite.tako.ui.state.canSteer
 import io.firebite.tako.ui.state.editQueued
 import io.firebite.tako.ui.state.implementElsewhere
 import io.firebite.tako.ui.state.moveQueuedUp
+import io.firebite.tako.ui.state.ownTurns
 import io.firebite.tako.ui.state.promptsUpTo
 import io.firebite.tako.ui.state.removeQueued
 import io.firebite.tako.ui.state.rewind
@@ -112,9 +115,9 @@ private sealed class TimelineRow(val key: String) {
 /** The turns as rows: prompts, what the agent did (some folded away), what each turn changed and queued prompts. */
 private fun timelineRows(thread: ThreadState): List<TimelineRow> {
   val rows = ArrayList<TimelineRow>()
-  val canFork = thread.info?.capabilities?.fork == true
+  val canFork = thread.info?.capabilities?.fork == true && !thread.sideChat
   var prompts = 0
-  for (turn in thread.turns) {
+  for (turn in thread.ownTurns) {
     turn.prompt?.let {
       prompts++
       rows.add(TimelineRow.PromptRow(turn, it))
@@ -155,7 +158,7 @@ private suspend fun ScrollState.scrollToEnd() {
 @Composable
 fun ThreadView(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions, modifier: Modifier) {
   Column(modifier.fillMaxWidth()) {
-    if (thread.turns.isEmpty()) {
+    if (thread.ownTurns.isEmpty()) {
       Spacer(Modifier.weight(1f))
       Hero(thread)
       Dock(thread, markdown, actions)
@@ -456,6 +459,9 @@ private fun AssistantRow(thread: ThreadState, text: AssistantText, markdown: Cha
     }
     HoverMeta(hovered) {
       IconBtn(Icons.copy, t("common.copy"), iconSize = 14.dp) { actions.copy(text.text) }
+      if (thread.sideChat && text.done && thread.canBringBack) {
+        IconBtn(Icons.bringBack, t("side.bring.back"), iconSize = 14.dp) { thread.bringBack(text.text) }
+      }
       if (onFork != null) {
         IconBtn(Icons.fork, t("timeline.fork"), iconSize = 14.dp, onClick = onFork)
       }

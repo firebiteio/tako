@@ -47,7 +47,7 @@ fun ThreadState.applyQueue(message: ChatMessage.Queue) {
   if (!message.running && this.busy && this.turn?.done != false && !this.startingBench && this.rewinding == null) {
     this.setBusy(false)
     this.finished = true
-    if (!this.isActive) {
+    if (!this.isShown) {
       this.unread = true
     }
   }
@@ -80,7 +80,7 @@ fun ThreadState.editQueued(queued: QueuedPrompt) {
   this.input.setTextAndPlaceCursorAtEnd(mergeDraft(this.input.text.toString(), prompt.text))
   this.contexts.addAll(prompt.context)
   this.images.addAll(prompt.images.map { PendingImage(it) })
-  this.workspace.focusComposer++
+  this.requestFocus()
 }
 
 /** Deletes the queued prompt, with the files of its pasted text. */

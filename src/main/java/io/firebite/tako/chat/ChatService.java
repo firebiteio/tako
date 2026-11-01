@@ -30,11 +30,13 @@ import com.intellij.util.EnvironmentUtil;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentBackend;
+import io.firebite.tako.agent.AgentEvent;
 import io.firebite.tako.agent.AgentException;
 import io.firebite.tako.agent.AgentHistory;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
+import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
@@ -109,6 +111,9 @@ public final class ChatService implements Disposable {
   private final PullRequestWatcher watcher;
   private final LimitResumes limits = new LimitResumes(System::currentTimeMillis, LAST_RESUMES);
   private final List<Runnable> activityListeners = new CopyOnWriteArrayList<>();
+  /** The side chat each main thread's pane shows, by main thread id. */
+  private final Map<String, String> shownSideChats = new ConcurrentHashMap<>();
+  private volatile boolean isSidePaneCovering;
   /** Serves each thread's {@link ThreadTools}, keyed by thread id. Guarded by {@code this}. */
   private @Nullable McpServer toolServer;
   private @Nullable ChatPanel panel;
@@ -254,13 +259,18 @@ public final class ChatService implements Disposable {
     this.withActiveController(controller -> controller.attachFiles(files));
   }
 
+  /** Runs on the controller of the thread on screen: the active one, or the side chat that covers it. */
   private void withActiveController(Consumer<ChatController> action) {
     ToolWindow window = this.toolWindow();
     if (window == null) {
       return;
     }
     window.activate(() -> {
-      ChatController controller = this.activeController();
+      String activeId = this.store.activeId();
+      String covering = activeId != null && this.isSidePaneCovering ? this.shownSideChats.get(activeId) : null;
+      ChatController controller = covering != null && this.controllers.containsKey(covering)
+        ? this.controllers.get(covering)
+        : this.activeController();
       if (controller != null) {
         action.accept(controller);
       }
@@ -420,9 +430,16 @@ public final class ChatService implements Disposable {
     return record;
   }
 
+  /** Selects the thread; for a side chat, its main thread with the side chat in the pane. */
   public void select(@Nullable String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
+      return;
+    }
+    ThreadStore.Record main = SideChats.mainOf(this.store, record);
+    if (main != record) {
+      this.select(main.id);
+      this.post(new ChatMessage.ShowSideChat(record.id, false));
       return;
     }
     this.store.setActiveId(record.id);
@@ -466,13 +483,17 @@ public final class ChatService implements Disposable {
     return record;
   }
 
-  /** Sends a prompt as if typed into the thread, opening it if it is not. Must run on the EDT. */
+  /**
+   * Sends a prompt as if typed into the thread, opening it if it is not. A side chat lists its main thread again, so
+   * its pane can show it. Must run on the EDT.
+   */
   void prompt(ThreadStore.Record record, String prompt) {
     ChatController controller = this.controllers.get(record.id);
     if (controller != null) {
       controller.submit(prompt);
       return;
     }
+    this.unarchive(SideChats.mainOf(this.store, record));
     this.unarchive(record);
     this.newController(record).open(prompt);
   }
@@ -526,7 +547,8 @@ public final class ChatService implements Disposable {
 
   /**
    * Lists an archived thread again, with its idle time starting anew. A snooze that ended while it was archived ends
-   * now, as unread. A snoozed parent restored this way would hide the active thread, so that one's parents wake.
+   * now, as unread. A snoozed parent restored this way would hide the active thread, so that one's parents wake. The
+   * side chats its archiving stopped come back too; their agents start once shown.
    *
    * @return the threads it changed, to post
    */
@@ -543,6 +565,11 @@ public final class ChatService implements Disposable {
       record.unread = true;
     }
     changed.add(record);
+    if (!record.sideChat) {
+      for (ThreadStore.Record sideChat : SideChats.of(this.store, record.id)) {
+        changed.addAll(this.unarchived(sideChat));
+      }
+    }
     ThreadStore.Record active = this.store.find(this.store.activeId());
     if (active != null && this.store.isSnoozeHidden(active)) {
       changed.addAll(this.store.wakeWithAncestors(active));
@@ -574,14 +601,19 @@ public final class ChatService implements Disposable {
     }
   }
 
-  /** Archives threads that are not the active one and stops their agents, saving once. */
+  /** Archives threads that are not the active one, with their side chats, and stops their agents, saving once. */
   void archiveAll(List<ThreadStore.Record> records) {
+    List<ThreadStore.Record> archived = new ArrayList<>();
     for (ThreadStore.Record record : records) {
+      archived.add(record);
+      archived.addAll(SideChats.of(this.store, record.id));
+    }
+    for (ThreadStore.Record record : archived) {
       record.archived = true;
       this.limits.dismiss(record);
       this.disposeController(record.id);
     }
-    this.postUpdates(records);
+    this.postUpdates(archived);
   }
 
   public void setPinned(String id, boolean pinned) {
@@ -590,6 +622,151 @@ public final class ChatService implements Disposable {
       record.pinned = pinned;
       this.postUpdate(record);
     }
+  }
+
+  /** Whether a shown side chat pane covers its main thread, as the chat is too narrow for both. */
+  public void setSidePaneCovering(boolean covering) {
+    this.isSidePaneCovering = covering;
+  }
+
+  /** The pane of the main thread shows the side chat, or none when null; a side chat on screen needs no balloon. */
+  public void showsSideChat(String mainId, @Nullable String sideChatId) {
+    if (sideChatId == null) {
+      this.shownSideChats.remove(mainId);
+      return;
+    }
+    this.shownSideChats.put(mainId, sideChatId);
+    ThreadStore.Record sideChat = this.store.find(sideChatId);
+    if (sideChat != null && sideChat.unread) {
+      sideChat.unread = false;
+      this.postUpdate(sideChat);
+    }
+  }
+
+  /**
+   * Starts a side chat of the thread, or of its main thread for a side chat, and shows it in the pane. Copies the main
+   * thread's session when {@code forkPrompts} is above 0 and it has one, else attaches an excerpt of its conversation.
+   * Must run on the EDT.
+   *
+   * @param forkPrompts how many prompts of the main thread's session to copy, 0 for a new session
+   * @param first       the side chat's first prompt, sent unless its text is blank, else put in its composer
+   * @return false when there is no such thread, so no side chat starts
+   */
+  public boolean startSideChat(String threadId, int forkPrompts, ChatMessage.Submit first) {
+    ThreadStore.Record found = this.store.find(threadId);
+    if (found == null) {
+      return false;
+    }
+    ThreadStore.Record main = SideChats.mainOf(this.store, found);
+    ChatController controller = this.controllers.get(main.id);
+    String sessionId = main.sessionId;
+    if (forkPrompts <= 0 || sessionId == null) {
+      this.createOrRelease(main, null, 0, first, excerpt(main, controller));
+      return true;
+    }
+    String folder = this.workFolder(main);
+    AgentBackend backend = AgentRegistry.find(main.agent(), EnvironmentUtil.getEnvironmentMap());
+    Async.inBackground(() -> {
+      String forkId = null;
+      try {
+        forkId = backend.fork(folder, sessionId, forkPrompts);
+      } catch (AgentException | RuntimeException e) {
+        LOG.warn("Could not fork thread " + main.id + " for a side chat, attaching an excerpt instead", e);
+      }
+      int inherited = forkPrompts;
+      if (forkId != null) {
+        try {
+          inherited = promptCount(backend.history(folder, forkId));
+        } catch (RuntimeException e) {
+          LOG.warn("Could not count the prompts of side chat session " + forkId, e);
+        }
+      }
+      String session = forkId;
+      int prompts = session == null ? 0 : inherited;
+      ContextItem excerpt = session == null ? excerpt(main, controller) : null;
+      Async.onEdt(() -> this.createOrRelease(main, session, prompts, first, excerpt));
+    });
+    return true;
+  }
+
+  /** Makes the side chat, else tells the main thread that it may start another. */
+  private void createOrRelease(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
+    ChatMessage.Submit first, @Nullable ContextItem excerpt) {
+    boolean isCreated = false;
+    try {
+      isCreated = this.createSideChat(main, sessionId, inheritedPrompts, first, excerpt);
+    } finally {
+      if (!isCreated) {
+        this.post(new ChatMessage.ShowSideChat(main.id, true));
+      }
+    }
+  }
+
+  private static @Nullable ContextItem excerpt(ThreadStore.Record main, @Nullable ChatController controller) {
+    return SideChats.excerpt(main.title, controller == null ? "" : controller.conversation(SideChats.EXCERPT_CHARS));
+  }
+
+  private static int promptCount(AgentHistory history) {
+    int count = 0;
+    if (history instanceof AgentHistory.Loaded loaded) {
+      for (AgentEvent event : loaded.events()) {
+        if (event instanceof AgentEvent.Prompt) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  /**
+   * Makes the side chat unless the main thread was closed or archived meanwhile, then starts it.
+   *
+   * @return whether it made one
+   */
+  private boolean createSideChat(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
+    ChatMessage.Submit first, @Nullable ContextItem excerpt) {
+    if (this.store.find(main.id) != main || main.archived) {
+      return false;
+    }
+    ThreadStore.Record record = this.store.create(sessionId, SideChats.title(first.text()), main.projectPath,
+      main.agent());
+    record.parentId = main.id;
+    record.sideChat = true;
+    record.inheritedPrompts = inheritedPrompts;
+    record.model = main.model;
+    record.mode = main.mode;
+    record.effort = main.effort;
+    record.workPath = main.workPath;
+    this.store.save();
+    this.post(new ChatMessage.ThreadAdded(record.toItem()));
+    List<ContextItem> context = new ArrayList<>(first.context());
+    if (excerpt != null) {
+      context.add(excerpt);
+    }
+    ChatController controller = this.newController(record);
+    if (first.text().isBlank()) {
+      controller.open();
+      for (ContextItem item : context) {
+        this.post(new ChatMessage.Context(item, null), record.id);
+      }
+      for (ImageAttachment image : first.images()) {
+        this.post(new ChatMessage.Image(image), record.id);
+      }
+    } else {
+      controller.open(new ChatMessage.Submit(first.text().strip(), context, first.images()));
+    }
+    this.post(new ChatMessage.ShowSideChat(record.id, true));
+    return true;
+  }
+
+  /** Starts the agent of a side chat the pane shows, unless it runs. Doesn't select it. Must run on the EDT. */
+  public void openSideChat(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null || !record.sideChat || this.controllers.containsKey(id)) {
+      return;
+    }
+    this.unarchive(record);
+    this.newController(record).open();
   }
 
   /** Gives the thread the title the person typed. Ignores a blank one. */
@@ -1013,8 +1190,16 @@ public final class ChatService implements Disposable {
   }
 
   /** Selects another thread only once all are closed, so none of them starts its agent in between. */
-  void closeAll(List<String> ids) {
+  void closeAll(List<String> closed) {
     String activeId = this.store.activeId();
+    List<String> ids = new ArrayList<>(closed);
+    for (String id : closed) {
+      for (ThreadStore.Record sideChat : SideChats.of(this.store, id)) {
+        if (!ids.contains(sideChat.id)) {
+          ids.add(sideChat.id);
+        }
+      }
+    }
     for (String id : ids) {
       ThreadStore.Record record = this.store.find(id);
       if (record != null) {
@@ -1026,6 +1211,7 @@ public final class ChatService implements Disposable {
         }
         this.disposeController(id);
         this.withdrawTools(id);
+        this.shownSideChats.remove(id);
         this.store.remove(id);
         this.post(new ChatMessage.ThreadRemoved(id));
       }
@@ -1044,8 +1230,8 @@ public final class ChatService implements Disposable {
   }
 
   /**
-   * Archives the thread and stops its agent. Selects the first open thread in place of the active one, or a new
-   * thread when none is open.
+   * Archives the thread and its side chats and stops their agents. Selects the first open thread in place of the
+   * active one, or a new thread when none is open.
    * @return what undoing it needs, or null when there is no such thread
    */
   public @Nullable Archived archive(String id) {
@@ -1053,11 +1239,12 @@ public final class ChatService implements Disposable {
     if (record == null) {
       return null;
     }
-    record.archived = true;
-    this.watcher.stop(record.id);
-    this.limits.dismiss(record);
-    this.disposeController(record.id);
-    this.postUpdate(record);
+    this.stopArchived(record);
+    for (ThreadStore.Record sideChat : SideChats.of(this.store, record.id)) {
+      if (!sideChat.archived) {
+        this.stopArchived(sideChat);
+      }
+    }
     if (!record.id.equals(this.store.activeId())) {
       return new Archived(record.id, null, false);
     }
@@ -1068,6 +1255,14 @@ public final class ChatService implements Disposable {
     }
     this.newThread(null, null, null, null);
     return new Archived(record.id, this.store.activeId(), true);
+  }
+
+  private void stopArchived(ThreadStore.Record record) {
+    record.archived = true;
+    this.watcher.stop(record.id);
+    this.limits.dismiss(record);
+    this.disposeController(record.id);
+    this.postUpdate(record);
   }
 
   /**
@@ -1142,7 +1337,8 @@ public final class ChatService implements Disposable {
 
   private @Nullable ThreadStore.Record firstOpenThread(@Nullable String except) {
     for (ThreadStore.Record record : this.store.all()) {
-      if (!record.archived && !record.id.equals(except) && !this.store.isSnoozeHidden(record)) {
+      if (!record.archived && !record.id.equals(except) && !this.store.isSnoozeHidden(record)
+        && SideChats.mainOf(this.store, record) == record) {
         return record;
       }
     }
@@ -1297,10 +1493,21 @@ public final class ChatService implements Disposable {
     }
   }
 
-  /** Whether the person sees the thread: it is the active one and the tool window shows. */
+  /**
+   * Whether the person sees the thread: the tool window shows it as the active one, unless a side chat pane covers it,
+   * or as the side chat beside the active one.
+   */
   boolean isShown(String id) {
     ToolWindow window = this.toolWindow;
-    return window != null && window.isVisible() && id.equals(this.store.activeId());
+    ThreadStore.Record record = this.store.find(id);
+    if (window == null || !window.isVisible() || record == null) {
+      return false;
+    }
+    ThreadStore.Record main = SideChats.mainOf(this.store, record);
+    boolean isOnScreen = main == record
+      ? !this.isSidePaneCovering || !this.shownSideChats.containsKey(main.id)
+      : record.id.equals(this.shownSideChats.get(main.id));
+    return main.id.equals(this.store.activeId()) && isOnScreen;
   }
 
   /** What the thread's controller tells the service, for tests; null for an unknown thread. */

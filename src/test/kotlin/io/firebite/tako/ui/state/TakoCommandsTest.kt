@@ -335,7 +335,7 @@ class TakoCommandsTest : BasePlatformTestCase() {
 
   fun testTheMenuListsTakosCommandsWithoutAgentCommands() {
     val names = this.thread.slashMenu("/").items.map { it.name }
-    assertEquals(listOf("model", "effort", "mode", "new", "archive", "title", "usage"), names)
+    assertEquals(listOf("model", "effort", "mode", "new", "archive", "title", "usage", "side", "btw"), names)
     assertTrue(this.thread.slashMenu("/").items.all { it.tako })
   }
 

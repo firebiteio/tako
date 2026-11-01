@@ -23,6 +23,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -51,7 +52,9 @@ import androidx.compose.ui.window.PopupProperties
 import com.intellij.ide.BrowserUtil
 import com.intellij.openapi.ide.CopyPasteManager
 import io.firebite.tako.ide.editor.IdeFiles
+import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
+import io.firebite.tako.ui.state.shownSideChat
 import io.firebite.tako.ui.t
 import java.awt.datatransfer.StringSelection
 import kotlinx.coroutines.delay
@@ -60,6 +63,8 @@ import org.jetbrains.jewel.ui.icon.IconKey
 
 /** Below this width the sidebar overlays the chat and closes after picking a thread. */
 val NARROW = 640.dp
+/** Below this width of the thread area a side chat covers its main thread instead of sitting beside it. */
+private val SIDE_PANE_MIN_AREA = 720.dp
 /** The width conversations and the composer keep to on wide windows, CSS's 46rem. */
 val LANE: Dp
   @Composable @ReadOnlyComposable get() = (46 * textStyle.fontSize.value).dp
@@ -136,7 +141,7 @@ private fun Main(workspace: Workspace, markdown: ChatMarkdown, actions: CodeActi
       Header(workspace, windowWidth)
       val thread = workspace.active
       if (thread != null) {
-        ThreadView(thread, markdown, actions, Modifier.weight(1f))
+        ThreadArea(thread, markdown, actions, Modifier.weight(1f))
       }
     }
     val alerts = workspace.alerts + (workspace.active?.alerts ?: emptyList())
@@ -163,6 +168,27 @@ private fun Main(workspace: Workspace, markdown: ChatMarkdown, actions: CodeActi
     }
     if (workspace.shownBench != null) {
       BenchView(workspace, Modifier.fillMaxSize())
+    }
+  }
+}
+
+/** The thread and, when its pane shows one, a side chat at its right, or over it when both don't fit. */
+@Composable
+private fun ThreadArea(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions, modifier: Modifier) {
+  val workspace = thread.workspace
+  val side = workspace.shownSideChat(thread)
+  BoxWithConstraints(modifier.fillMaxWidth()) {
+    val covers = this.maxWidth < SIDE_PANE_MIN_AREA
+    SideEffect { workspace.sidePaneCovers = covers }
+    when {
+      side == null -> ThreadView(thread, markdown, actions, Modifier.fillMaxSize())
+      covers -> SideChatPane(thread, side, markdown, actions, Modifier.fillMaxSize())
+      else -> Row(Modifier.fillMaxSize()) {
+        ThreadView(thread, markdown, actions, Modifier.weight(1f).fillMaxHeight())
+        Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
+        SideChatPane(thread, side, markdown, actions,
+          Modifier.width((this@BoxWithConstraints.maxWidth * 0.4f).coerceIn(320.dp, 480.dp)).fillMaxHeight())
+      }
     }
   }
 }

@@ -36,7 +36,9 @@ enum class TakoCommand(val id: String, val takesArgument: Boolean) {
   ARCHIVE("archive", false),
   TITLE("title", false),
   RESTART("restart", false),
-  USAGE("usage", false);
+  USAGE("usage", false),
+  SIDE("side", true),
+  BTW("btw", true);
 
   val hint: String
     get() = when (this) {
@@ -45,6 +47,7 @@ enum class TakoCommand(val id: String, val takesArgument: Boolean) {
       MODE -> t("slash.mode.hint")
       AGENT -> t("slash.agent.hint")
       NEW -> t("slash.new.hint")
+      SIDE, BTW -> t("slash.side.hint")
       else -> ""
     }
 
@@ -60,6 +63,7 @@ enum class TakoCommand(val id: String, val takesArgument: Boolean) {
       TITLE -> t("slash.title.description")
       RESTART -> t("slash.restart.description")
       USAGE -> t("slash.usage.description")
+      SIDE, BTW -> t("slash.side.description")
     }
 
   companion object {
@@ -145,6 +149,9 @@ sealed interface TakoAction {
 
   data object Usage : TakoAction
 
+  /** @param question sent in the new side chat unless empty */
+  data class SideChat(val question: String) : TakoAction
+
   /** The command cannot run; [message] says why. */
   data class Fail(val message: String) : TakoAction
 }
@@ -154,6 +161,9 @@ fun ThreadState.resolve(invocation: TakoInvocation): TakoAction {
   val command = invocation.command
   if (!command.takesArgument && invocation.argument.isNotEmpty()) {
     return TakoAction.Fail(t("slash.error.argument", command.id))
+  }
+  if (this.sideChat && !this.offersInSideChat(command)) {
+    return TakoAction.Fail(t("slash.error.side.chat", command.id))
   }
   return when (command) {
     TakoCommand.MODEL, TakoCommand.EFFORT, TakoCommand.MODE, TakoCommand.AGENT ->
@@ -168,6 +178,9 @@ fun ThreadState.resolve(invocation: TakoInvocation): TakoAction {
     }
     TakoCommand.RESTART -> this.resolveRestart()
     TakoCommand.USAGE -> TakoAction.Usage
+    TakoCommand.SIDE, TakoCommand.BTW ->
+      if (this.workspace.mainOf(this).startingSideChat) TakoAction.Fail(t("slash.error.side.starting"))
+      else TakoAction.SideChat(invocation.argument)
   }
 }
 
@@ -272,6 +285,10 @@ fun ThreadState.perform(action: TakoAction) {
     TakoAction.Title -> this.regenerateTitle()
     TakoAction.Restart -> this.controller?.restartSession()
     TakoAction.Usage -> this.workspace.showUsage()
+    is TakoAction.SideChat -> if (this.startSideChat(action.question, this.contexts.toList(), this.images.map { it.image })) {
+      this.contexts.clear()
+      this.images.clear()
+    }
     is TakoAction.Fail -> this.showAlert(action.message)
   }
 }
@@ -370,12 +387,17 @@ fun ThreadState.slashMenu(box: String): SlashMenu {
 }
 
 /** Whether the menu lists the command for this thread; typed, it is Tako's either way. */
-private fun ThreadState.offers(command: TakoCommand): Boolean = when (command) {
-  TakoCommand.AGENT -> this.canSwitchAgent
-  TakoCommand.FORK -> this.info?.capabilities?.fork == true
-  TakoCommand.RESTART -> this.info?.capabilities?.resume == true
+private fun ThreadState.offers(command: TakoCommand): Boolean = when {
+  this.sideChat && !this.offersInSideChat(command) -> false
+  command == TakoCommand.AGENT -> this.canSwitchAgent
+  command == TakoCommand.FORK -> this.info?.capabilities?.fork == true
+  command == TakoCommand.RESTART -> this.info?.capabilities?.resume == true
   else -> true
 }
+
+/** A side chat goes with its main thread: it doesn't fork, archive or take another agent on its own. */
+private fun ThreadState.offersInSideChat(command: TakoCommand): Boolean =
+  command != TakoCommand.FORK && command != TakoCommand.ARCHIVE && command != TakoCommand.AGENT
 
 /** Commands whose name has the query: exact name first, then those starting with it, Tako's before the agent's. */
 private fun ThreadState.commandItems(query: String): List<SlashItem> {

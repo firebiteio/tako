@@ -24,6 +24,7 @@ It works with:
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
 - Prompts sent while the agent works queue up. Edit, reorder or remove them, send one now, or steer the running turn with it (Claude Code, Codex)
 - Type `/` for the agent's commands and Tako's own, marked Tako: `/model`, `/effort`, `/mode`, `/new`, `/fork`, `/archive` and more. `//model` sends `/model` to the agent instead
+- Ask a side question with `/side` or `/btw` while the thread works, then bring the answer back into its composer
 - Fix Problems sends a file's inspection results to the agent
 - For Claude Code, a context meter and a usage view with cost and tokens per session
 - When Claude Code or Codex stops on a usage limit, the thread says when the limit resets and can send a continue prompt then
@@ -61,6 +62,14 @@ Claude Code continues in a copy of its session. The old session stays in the ses
 ### Usage limits
 
 When Claude Code or Codex stops because a subscription or rate limit ran out, a banner above the composer names the limit and when it resets. Resume at reset sends "Continue where you left off." a minute after the reset. Edit prompt changes that text, and Cancel resume or the X drops it. Snooze until reset hides the thread until then. Sending a message yourself, archiving or closing the thread drops it too. A command that only shows something, such as `/usage` or `/status`, keeps it. The schedule survives an IDE restart and goes out once the Tako tool window is open again, up to a day late. When several threads wait for the same agent, they resume 30 seconds apart. Agents that report no reset time, and ACP agents, get no schedule.
+
+### Side chats
+
+A side chat answers a question about a thread without adding to it. Type `/side` or `/btw` and your question, or click the side chats button in the header. The side chat opens beside the thread, or over it when the tool window is narrow, and the thread keeps working.
+
+With Claude Code the side chat continues a copy of the thread's session up to its last finished turn. Codex and ACP agents start a new session, with the thread's prompts and answers attached as a Main thread chip.
+
+Each answer in a side chat has a Bring back button, which quotes the answer in the thread's composer. Side chats show only in their thread's pane, not in the thread list. Archiving a thread stops its side chats, and closing it closes them.
 
 ### Parallel runs
 
