@@ -12,6 +12,7 @@ import io.firebite.tako.agent.EditPreview;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.ide.Async;
+import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.ui.bridge.ChatMessage;
@@ -125,7 +126,11 @@ final class Benches {
         this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.no.changes", runIndex)));
         return;
       }
-      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews));
+      List<ReviewTarget> targets = new ArrayList<>();
+      for (EditPreview preview : previews) {
+        targets.add(ReviewTarget.turn(run.thread, Path.of(run.worktree).resolve(preview.filePath()).toString()));
+      }
+      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews, targets));
     } catch (Worktrees.GitException e) {
       this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.diff", runIndex, e.getMessage())));
     }
