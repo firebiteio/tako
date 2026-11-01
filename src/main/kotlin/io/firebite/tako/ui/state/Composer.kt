@@ -286,12 +286,13 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
 }
 
 /**
- * Declines with the typed text as the reason, or the fallback without one. An agent that reads the reason also gets the
- * review comments in it, which then leave the box. See [decline] for agents without a reason.
+ * Declines with the typed text as the reason, or the fallback without one. Declining a proposed edit, without stopping,
+ * also gives the review comments as the reason, see [foldsReviews]; they then leave the box. See [decline] for agents
+ * without a reason.
  */
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
   val readsReason = this.info?.capabilities?.declineReason != false
-  val foldsReviews = readsReason && hasReviews(this.contexts)
+  val foldsReviews = foldsReviews(approval.prompt, interrupt, readsReason, this.contexts)
   val feedback = if (foldsReviews) withReviews(this.typed, this.contexts) else this.typed
   val decline = decline(approval.prompt, feedback, fallback, interrupt, readsReason)
   if (!decline.keepsFeedback) {
@@ -335,9 +336,20 @@ private fun declinedPrompt(prompt: PermissionPrompt, feedback: String): String {
   return "I declined " + tool + (if (target.isNullOrEmpty()) "." else ": $target") + "\n\n" + feedback
 }
 
-/** The typed text declines the waiting approval, or refines the plan. */
+/**
+ * Review comments go along as the reason for declining a proposed edit the IDE can show, to an agent that reads a
+ * reason. Not when declining stops the turn: the agent would not act on them, so they stay in the box.
+ */
+fun foldsReviews(prompt: PermissionPrompt, stop: Boolean, readsReason: Boolean, contexts: List<ContextItem>): Boolean =
+  !stop && readsReason && prompt.kind == PermissionPrompt.Kind.TOOL && prompt.canDiff && hasReviews(contexts)
+
+/** Enter declines the waiting approval with the review comments alone, see [foldsReviews]. */
+fun ThreadState.declinesWithReviews(approval: Approval): Boolean =
+  foldsReviews(approval.prompt, false, this.info?.capabilities?.declineReason != false, this.contexts)
+
+/** The typed text, or review comments on a proposed edit, decline the waiting approval; typed text refines the plan. */
 private fun ThreadState.declineWithFeedback(approval: Approval) {
-  if (this.typed.isEmpty()) {
+  if (this.typed.isEmpty() && !this.declinesWithReviews(approval)) {
     return
   }
   this.deny(approval, if (approval.prompt.kind == PermissionPrompt.Kind.PLAN) "Keep planning." else "Declined.")
