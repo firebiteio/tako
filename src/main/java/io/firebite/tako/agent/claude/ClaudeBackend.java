@@ -17,6 +17,7 @@ import io.firebite.tako.agent.AgentSession;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
 import io.firebite.tako.agent.Processes;
+import io.firebite.tako.agent.PromptText;
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
@@ -40,7 +41,8 @@ public final class ClaudeBackend implements AgentBackend {
   public static final String ID = "claude";
   public static final String NAME = "Claude Code";
   private static final Logger LOG = Logger.getInstance(ClaudeBackend.class);
-  private static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, true, true, true, true);
+  private static final AgentInfo.Capabilities CAPABILITIES = new AgentInfo.Capabilities(true, true, true, true, true,
+    true);
   private static final long ASK_TIMEOUT_SECONDS = 60;
 
   private final Map<String, String> environment;
@@ -149,6 +151,31 @@ public final class ClaudeBackend implements AgentBackend {
       return SessionStore.forProject(this.environment, projectPath).fork(sessionId, new PromptCut(prompts));
     } catch (IOException e) {
       throw new AgentException(TakoBundle.message("error.fork", e.getMessage()), e);
+    }
+  }
+
+  /**
+   * Checks the transcript's prompts, then copies it up to the prompt to forget into a new session, like {@link #fork}.
+   * The original stays as it is.
+   */
+  @Override
+  public String rewind(String projectPath, String sessionId, List<String> prompts) throws AgentException {
+    SessionStore store = SessionStore.forProject(this.environment, projectPath);
+    try {
+      List<String> sessionPrompts = new ArrayList<>();
+      for (SessionStore.TranscriptMessage message : store.load(sessionId)) {
+        for (AgentEvent event : ClaudeTranslator.translate(message.message(), message.change(), true)) {
+          if (event instanceof AgentEvent.Prompt prompt) {
+            sessionPrompts.add(prompt.text());
+          }
+        }
+      }
+      if (!PromptText.startsWith(sessionPrompts, prompts)) {
+        throw new AgentException(TakoBundle.message("error.rewind.mismatch"));
+      }
+      return store.fork(sessionId, new PromptCut(prompts.size() - 1));
+    } catch (IOException e) {
+      throw new AgentException(TakoBundle.message("error.rewind", e.getMessage()), e);
     }
   }
 

@@ -52,6 +52,12 @@ final class TurnChanges {
       .putIfAbsent(path, originalContent);
   }
 
+  /** Forgets every turn, for when the chat numbers its turns from the start again. */
+  void clear() {
+    this.pendingTools.clear();
+    this.originalsByTurn.clear();
+  }
+
   /** Each file the turn changed, before the turn and now, or empty when the turn changed none. Reads files. */
   List<EditPreview> previews(int turn, @Nullable String onlyPath) {
     Map<String, String> originals = this.originalsByTurn.getOrDefault(turn, Map.of());

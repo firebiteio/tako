@@ -90,7 +90,8 @@ public sealed interface ChatMessage {
     @Nullable GitInfo.PullRequest pullRequest,
     String agent,
     long firstTurnMillis,
-    @Nullable String parentId
+    @Nullable String parentId,
+    @Nullable String watching
   ) {
   }
 
@@ -309,6 +310,18 @@ public sealed interface ChatMessage {
   record BenchFailed(
     Submit prompt,
     String error
+  ) implements ThreadMessage {
+  }
+
+  /**
+   * A rewind ended.
+   *
+   * @param rewound whether the agent forgot the prompt, so it goes back into the composer
+   * @param error   what went wrong, or null
+   */
+  record Rewound(
+    boolean rewound,
+    @Nullable String error
   ) implements ThreadMessage {
   }
 }

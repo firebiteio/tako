@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ContextUsage
 import com.intellij.openapi.diagnostic.logger
+import io.firebite.tako.chat.git.ThreadGit
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.chat.thread.ThreadTitles
@@ -29,6 +30,12 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var title by mutableStateOf(item.title)
   /** Whether the agent writes the thread a new title. */
   var titling by mutableStateOf(false)
+  /** Whether a git action started from the header runs or waits for its texts. */
+  var gitRunning by mutableStateOf(false)
+  /** The git menu as last read, shown at once when it opens while it is read again. */
+  var gitMenu by mutableStateOf<ThreadGit.Menu?>(null)
+  /** Counts the reads of [gitMenu] started, so only the latest one sets it. */
+  var gitMenuReads = 0
   var archived by mutableStateOf(item.archived)
   var updatedAt by mutableLongStateOf(if (item.updatedAt > 0) item.updatedAt else System.currentTimeMillis())
   var costUsd by mutableStateOf(item.costUsd)
@@ -36,6 +43,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var branch by mutableStateOf(item.branch)
   var worktree by mutableStateOf(item.worktree)
   var pullRequest by mutableStateOf<GitInfo.PullRequest?>(item.pullRequest)
+  /** The number of the pull request the thread watches, if it does. */
+  var watching by mutableStateOf(item.watching)
+  /** Whether a watch is starting, between the click and gh's first answer. */
+  var watchStarting by mutableStateOf(false)
   var projectPath by mutableStateOf(item.projectPath)
   /** The id of the agent the thread runs. */
   var agent by mutableStateOf(item.agent)
@@ -93,6 +104,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val alerts = mutableStateListOf<Alert>()
   /** The setup of the thread's new worktree while it runs or after it failed, which the prompts wait for. */
   var setup by mutableStateOf<ChatMessage.Setup?>(null)
+  /** The prompt a running rewind goes back to before; sending waits until it is done. */
+  var rewinding by mutableStateOf<Prompt?>(null)
   /** The stashed drafts to pick from, while their menu is open. */
   var stashMenu by mutableStateOf<List<PromptStash.Entry>?>(null)
 
@@ -115,6 +128,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     this.worktree = item.worktree
     this.projectPath = item.projectPath
     this.pullRequest = item.pullRequest
+    this.watching = item.watching
     this.hasSession = item.hasSession
     this.firstTurnMillis = item.firstTurnMillis
     if (item.agent.isNotEmpty() && item.agent != this.agent) {

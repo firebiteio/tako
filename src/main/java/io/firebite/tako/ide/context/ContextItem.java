@@ -30,6 +30,7 @@ public record ContextItem(
     @SerializedName("selection") SELECTION,
     @SerializedName("file") FILE,
     @SerializedName("problems") PROBLEMS,
-    @SerializedName("thread") THREAD
+    @SerializedName("thread") THREAD,
+    @SerializedName("review") REVIEW
   }
 }

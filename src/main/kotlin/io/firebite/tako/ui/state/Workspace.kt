@@ -16,6 +16,8 @@ import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.project.Project
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.chat.ChatService
+import io.firebite.tako.chat.git.ThreadGit
+import io.firebite.tako.ide.project.GitCommands
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.samePath
 import io.firebite.tako.ui.t
@@ -206,6 +208,18 @@ class Workspace(val service: ChatService, val project: Project) {
     this.service.regenerateTitle(thread.id, thread.conversation()).thenRun { thread.titling = false }
   }
 
+  /** Runs a git action from the thread's header. The thread counts as running one until it ended or was cancelled. */
+  fun runGitAction(thread: ThreadState, option: ThreadGit.Option, status: GitCommands.Status) {
+    val controller = thread.controller ?: return
+    thread.gitRunning = true
+    try {
+      controller.runGitAction(option, status).whenComplete { _, _ -> thread.gitRunning = false }
+    } catch (e: RuntimeException) {
+      thread.gitRunning = false
+      throw e
+    }
+  }
+
   fun receive(message: ChatMessage.WorkspaceMessage) {
     when (message) {
       is ChatMessage.Project -> {
@@ -249,6 +263,7 @@ class Workspace(val service: ChatService, val project: Project) {
       is ChatMessage.Error -> thread.onError(message.text)
       is ChatMessage.Notice -> thread.showAlert(message.text)
       is ChatMessage.Setup -> thread.onSetup(message)
+      is ChatMessage.Rewound -> thread.onRewound(message.rewound, message.error)
     }
   }
 

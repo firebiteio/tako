@@ -29,13 +29,15 @@ public record AgentInfo(
    * @param fork    {@link AgentBackend#fork} copies the session
    * @param declineReason the agent reads {@link PermissionAnswer#message} when a permission prompt is declined
    * @param resume  a new process can resume the session, so the thread can restart its agent
+   * @param rewind  {@link AgentBackend#rewind} makes the session forget its later prompts
    */
   public record Capabilities(
     boolean images,
     boolean compact,
     boolean fork,
     boolean declineReason,
-    boolean resume
+    boolean resume,
+    boolean rewind
   ) {
   }
 

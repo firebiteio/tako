@@ -9,6 +9,8 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.agent.claude.ClaudeBackend;
+import io.firebite.tako.chat.watch.PullRequestWatch;
+import io.firebite.tako.chat.watch.PullRequestWatcher;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
@@ -36,7 +38,7 @@ public final class ThreadStore {
     this(Path.of(PathManager.getSystemPath(), "tako", "threads-" + project.getLocationHash() + ".json"));
   }
 
-  ThreadStore(Path file) {
+  public ThreadStore(Path file) {
     this.file = file;
     this.data = load(file);
   }
@@ -241,6 +243,8 @@ public final class ThreadStore {
     public long firstTurnMillis;
     /** The worktree setup that has to run before the thread's next prompt; null once it ran or was skipped. */
     public @Nullable PendingSetup pendingSetup;
+    /** The pull request the thread watches, see {@link PullRequestWatcher}. Swapped whole, never changed in place. */
+    public volatile @Nullable PullRequestWatch watch;
 
     /** The folder the thread works in: its {@link #workPath}, its {@link #projectPath} or else {@code basePath}. */
     public @Nullable String folder(@Nullable String basePath) {
@@ -264,9 +268,11 @@ public final class ThreadStore {
     }
 
     public ChatMessage.ThreadItem toItem() {
+      PullRequestWatch watched = this.watch;
       return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
-        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId);
+        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId,
+        watched == null ? null : watched.number);
     }
   }
 
