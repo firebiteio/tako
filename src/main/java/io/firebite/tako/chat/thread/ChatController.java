@@ -224,7 +224,9 @@ public final class ChatController implements Disposable {
 
   /**
    * Re-reads branch and worktree, which is local and cheap. Asks for the pull request only when the branch changed or
-   * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. Call off the EDT.
+   * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. A thread in a folder of its own keeps its pull
+   * request when none is found, e.g. once the merge deleted the branch, so auto archive still sees how it ended. Call
+   * off the EDT.
    */
   public void refreshGit() {
     String directory = this.gitFolder();
@@ -241,6 +243,9 @@ public final class ChatController implements Disposable {
     } else if (branchChanged || now - this.lastPullRequestCheck > PULL_REQUEST_INTERVAL_MILLIS) {
       this.lastPullRequestCheck = now;
       pullRequest = GitInfo.pullRequest(Path.of(directory), environment);
+    }
+    if (pullRequest == null && this.record.workPath != null) {
+      pullRequest = this.record.pullRequest;
     }
     if (!branchChanged && Objects.equals(info.worktree(), this.record.worktree)
       && Objects.equals(pullRequest, this.record.pullRequest)) {

@@ -14,6 +14,7 @@ import io.firebite.tako.agent.claude.FakeClaude;
 import io.firebite.tako.agent.codex.CodexBackend;
 import io.firebite.tako.agent.codex.FakeCodex;
 import io.firebite.tako.chat.store.ThreadStore;
+import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.settings.AuthMode;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.bridge.ChatMessage;
@@ -36,6 +37,8 @@ public class ChatControllerTest extends BasePlatformTestCase {
   private ChatHost host;
   private ChatController controller;
   private String title;
+  /** What each look the controller asked for was about: true for a question, false for a turn's end. */
+  private final List<Boolean> looks = new ArrayList<>();
 
   @Override
   protected void setUp() throws Exception {
@@ -59,6 +62,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
       @Override
       public void needsLook(boolean asks) {
+        ChatControllerTest.this.looks.add(asks);
       }
 
       @Override
@@ -170,6 +174,29 @@ public class ChatControllerTest extends BasePlatformTestCase {
         break;
       }
     }
+    PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+    assertEquals("the question asks for a look, then the turn's end", List.of(true, false), this.looks);
+  }
+
+  public void testThreadInItsOwnFolderKeepsItsPullRequestWhenTheBranchIsGone() throws Exception {
+    GitInfo.PullRequest merged = new GitInfo.PullRequest("#7", "Fix", "https://github.com/o/r/pull/7", "merged");
+    this.record.workPath = Files.createTempDirectory("tako-worktree").toString();
+    this.record.branch = "fix";
+    this.record.pullRequest = merged;
+
+    this.controller.refreshGit();
+
+    assertNull(this.record.branch);
+    assertEquals(merged, this.record.pullRequest);
+  }
+
+  public void testThreadInTheSharedCheckoutDropsThePullRequestOfAGoneBranch() {
+    this.record.branch = "fix";
+    this.record.pullRequest = new GitInfo.PullRequest("#7", "Fix", "https://github.com/o/r/pull/7", "open");
+
+    this.controller.refreshGit();
+
+    assertNull(this.record.pullRequest);
   }
 
   public void testFirstPromptIsSubmittedOnceTheAgentIsReadyAndStateFollowsTheTurn() throws Exception {
