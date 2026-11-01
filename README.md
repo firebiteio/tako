@@ -20,6 +20,7 @@ It works with:
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
+- Ask a side question with `/side` or `/btw` while the thread works, then bring the answer back into its composer
 - Fix Problems sends a file's inspection results to the agent
 - For Claude Code, a context meter and a usage view with cost and tokens per session
 - Optional parallel runs: one prompt goes to several agents or models at once, each in its own git worktree. Compare what each changed, cost and took, then apply the best one
@@ -46,6 +47,14 @@ Hover over a prompt you sent and click the rewind button. Rewind conversation ma
 For the files, Tako snapshots the thread's folder in git each time you send a prompt while the agent is idle. The snapshots are commits under `refs/tako/checkpoints/<thread>`, outside your branches and index, and are deleted when the thread is closed. Ignored files are not part of them. Before it restores files, Tako keeps the state it replaces under `refs/tako/backup/<thread>`. Without a git repository only the conversation can be rewound.
 
 Claude Code continues in a copy of its session. The old session stays in the session history. Codex reverts the thread in place, which needs a Codex version with `thread/revert`. ACP agents can't rewind.
+
+### Side chats
+
+A side chat answers a question about a thread without adding to it. Type `/side` or `/btw` and your question, or click the side chats button in the header. The side chat opens beside the thread, or over it when the tool window is narrow, and the thread keeps working.
+
+With Claude Code the side chat continues a copy of the thread's session up to its last finished turn. Codex and ACP agents start a new session, with the thread's prompts and answers attached as a Main thread chip.
+
+Each answer in a side chat has a Bring back button, which quotes the answer in the thread's composer. Side chats show only in their thread's pane, not in the thread list. Archiving a thread stops its side chats, and closing it closes them.
 
 ### Parallel runs
 
