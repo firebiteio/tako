@@ -377,7 +377,12 @@ private fun FoldHeadView(fold: Fold) {
 private fun WorkingRow(thread: ThreadState) {
   val since = elapsed(thread.startedAt, thread.workspace.now)
   Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-    Text(if (thread.approvals.isNotEmpty()) t("timeline.working.waiting", since) else t("timeline.working", since),
+    val text = when {
+      thread.approvals.isNotEmpty() -> t("timeline.working.waiting", since)
+      thread.setup != null -> t("timeline.working.setup", since)
+      else -> t("timeline.working", since)
+    }
+    Text(text,
       Modifier.padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 8.dp), color = colors.muted,
       style = textStyle.copy(fontFeatureSettings = "tnum"))
     Rule()

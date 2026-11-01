@@ -5,6 +5,7 @@ import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.ide.context.ContextItem
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.t
 
@@ -409,6 +410,26 @@ private fun ThreadState.takeQueued(no: Int, startsTurn: Boolean) {
     turn.items.add(TurnItem.FollowUp(queued.prompt))
   }
   this.setBusy(true)
+}
+
+/**
+ * Shows the worktree setup's card while it runs or failed. Once it is through, the card goes and the prompt's turn that
+ * waited for it gets a note.
+ */
+fun ThreadState.onSetup(setup: ChatMessage.Setup) {
+  val note = when (setup.phase) {
+    ChatMessage.SetupPhase.RUNNING, ChatMessage.SetupPhase.FAILED -> {
+      this.setup = setup
+      return
+    }
+    ChatMessage.SetupPhase.DONE -> t("timeline.setup.done", duration(setup.endedAt - setup.startedAt))
+    ChatMessage.SetupPhase.SKIPPED -> t("timeline.setup.skipped")
+  }
+  this.setup = null
+  val turn = this.turn
+  if (setup.steps > 0 && turn != null && !turn.done && turn.prompt != null) {
+    turn.items.add(TurnItem.Note(note))
+  }
 }
 
 fun ThreadState.onError(text: String) {

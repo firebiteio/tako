@@ -1,5 +1,6 @@
 package io.firebite.tako.chat.thread;
 
+import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
@@ -88,6 +89,8 @@ public final class ChatController implements Disposable {
   private volatile boolean isTitled;
   /** Set by {@link #restartSession} until the next launch, whose session's past the chat already shows. */
   private volatile boolean keepsTimeline;
+  /** The setup of the thread's new worktree, which its prompts wait for, while it has not run yet. */
+  private final @Nullable WorktreeSetup setup;
 
   public ChatController(Project project, ChatView view, ChatHost host, ThreadStore.Record record,
     AgentBackend backend) {
@@ -98,6 +101,11 @@ public final class ChatController implements Disposable {
     this.backend = backend;
     this.isTitled = record.sessionId != null || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
+    ThreadStore.PendingSetup pending = record.pendingSetup;
+    this.setup = pending == null
+      ? null
+      : new WorktreeSetup(pending, new SetupListener(),
+        () -> TrustedProjects.isProjectTrusted(project), WorktreeSetup.TIMEOUT_MILLIS);
   }
 
   /** Replays the thread's past, if it has one, and starts its agent. */
@@ -133,6 +141,9 @@ public final class ChatController implements Disposable {
             this.recordChanged();
           }
         }
+        if (this.setup != null) {
+          this.setup.start();
+        }
         this.launch(resume);
       } finally {
         this.opened.complete(null);
@@ -148,8 +159,34 @@ public final class ChatController implements Disposable {
     this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of()));
   }
 
+  /**
+   * Interrupts the agent's turn. While prompts wait for the worktree setup it cancels the setup instead, and while
+   * they wait after it failed it does nothing: the setup's card offers the way on.
+   */
   public void interrupt() {
+    if (this.setup != null && (this.setup.holdsFailed() || this.setup.cancelHeld())) {
+      return;
+    }
     this.connection.ifLive(AgentSession::interrupt);
+  }
+
+  public void retrySetup() {
+    if (this.setup != null) {
+      this.setup.retry();
+    }
+  }
+
+  /** Sends the prompts that wait for the worktree setup without it. */
+  public void skipSetup() {
+    if (this.setup != null) {
+      this.setup.skip();
+    }
+  }
+
+  public void cancelSetup() {
+    if (this.setup != null) {
+      this.setup.cancel();
+    }
   }
 
   /**
@@ -320,7 +357,23 @@ public final class ChatController implements Disposable {
       this.isDisposed = true;
       this.stateLock.notifyAll();
     }
+    if (this.setup != null) {
+      this.disposeSetup(this.setup);
+    }
     this.connection.stop();
+  }
+
+  /** Stops the setup and clears what the chat shows of it: its card, and the turn of a prompt that waited for it. */
+  private void disposeSetup(WorktreeSetup worktreeSetup) {
+    boolean holds = worktreeSetup.holds();
+    boolean showsCard = worktreeSetup.showsCard();
+    worktreeSetup.dispose();
+    if (showsCard) {
+      this.view.post(new ChatMessage.Setup(ChatMessage.SetupPhase.DONE, 0, 0, "", "", null, 0, 0));
+    }
+    if (holds) {
+      this.view.post(new ChatMessage.Exit(0, ""));
+    }
   }
 
   private void setState(State state) {
@@ -372,6 +425,8 @@ public final class ChatController implements Disposable {
       this.refreshContext();
       if (prompt != null) {
         this.submit(prompt);
+      } else if (!forPrompt && this.setup != null) {
+        this.setup.settle(() -> this.setState(State.IDLE));
       } else if (!forPrompt) {
         this.setState(State.IDLE);
       }
@@ -404,6 +459,17 @@ public final class ChatController implements Disposable {
 
   private void sendPrompt(String typed, String prompt, List<ImageAttachment> images, int turn) {
     this.opened.join();
+    if (this.setup != null) {
+      this.setup.whenReady(() -> this.sendReady(typed, prompt, images, turn));
+    } else {
+      this.sendReady(typed, prompt, images, turn);
+    }
+  }
+
+  private void sendReady(String typed, String prompt, List<ImageAttachment> images, int turn) {
+    if (this.isDisposed) {
+      return;
+    }
     AgentSession session = this.connection.live();
     if (session == null) {
       this.launch(this.record.sessionId, true).whenComplete((ready, error) -> this.promptStarted(typed, prompt, images,
@@ -668,6 +734,9 @@ public final class ChatController implements Disposable {
 
   private void stopped(@Nullable String error) {
     this.untakenTurns.clear();
+    if (this.setup != null) {
+      this.setup.dropHeld();
+    }
     this.setState(State.STOPPED);
     this.error = error;
   }
@@ -693,6 +762,37 @@ public final class ChatController implements Disposable {
     /** Starting or working, so a prompt or a wait for its answer is premature. */
     public boolean isBusy() {
       return this == STARTING || this == WORKING;
+    }
+  }
+
+  /** Shows the setup in the chat and keeps the thread working, or waiting for the person, while prompts wait for it. */
+  private final class SetupListener implements WorktreeSetup.Listener {
+    @Override
+    public void changed(ChatMessage.Setup setup) {
+      ChatController.this.view.post(setup);
+    }
+
+    @Override
+    public void held(@Nullable String failure) {
+      if (failure != null) {
+        ChatController.this.error = TakoBundle.message("setup.failed", failure);
+        ChatController.this.setState(State.WAITING);
+      } else {
+        ChatController.this.error = null;
+        ChatController.this.setState(State.WORKING);
+      }
+    }
+
+    @Override
+    public void finished() {
+      ChatController.this.record.pendingSetup = null;
+      ChatController.this.recordChanged();
+    }
+
+    @Override
+    public void failed(String reason) {
+      String text = TakoBundle.message("setup.failed", reason);
+      Async.onEdt(() -> ChatController.this.host.requestAttention(text));
     }
   }
 

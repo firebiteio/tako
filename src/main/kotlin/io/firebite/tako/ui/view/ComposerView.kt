@@ -288,6 +288,7 @@ fun Dock(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
     contentAlignment = Alignment.TopCenter) {
     Column(Modifier.widthIn(max = LANE).fillMaxWidth()) {
       TasksTray(thread)
+      thread.setup?.let { SetupCard(thread, it) }
       thread.approvals.firstOrNull()?.let { Drawer(thread, it) }
       Composer(thread)
     }
@@ -859,7 +860,7 @@ private fun RunMenu(thread: ThreadState, index: Int, onDismiss: () -> Unit) {
 @Composable
 private fun SendButton(thread: ThreadState) {
   val hasText = thread.typed.isNotEmpty() || (thread.images.isNotEmpty() && thread.approvals.isEmpty())
-  val isStop = thread.busy && !hasText && thread.approvals.isEmpty()
+  val isStop = thread.busy && !hasText && thread.approvals.isEmpty() && !thread.setupFailed
   val enabled = isStop || hasText || (thread.question?.selected?.isNotEmpty() == true)
   val tip = when {
     isStop -> t("composer.stop")

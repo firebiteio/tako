@@ -84,6 +84,9 @@ fun threadStatus(thread: ThreadState, now: Long): ThreadStatus {
       else -> t("sidebar.status.approval")
     })
   }
+  if (thread.setupFailed) {
+    return ThreadStatus(StatusKind.INPUT, t("sidebar.status.setup.failed"))
+  }
   if (thread.busy) {
     return ThreadStatus(StatusKind.WORKING, t("sidebar.status.working", elapsed(thread.startedAt, now)))
   }
@@ -110,7 +113,7 @@ private fun rememberStatus(workspace: Workspace, thread: ThreadState): ThreadSta
 
 /** Threads needing a look that are not shown, for the sidebar toggle's badge. */
 fun waitingThreads(workspace: Workspace): Int = workspace.threads.values.count {
-  !it.archived && it !== workspace.active && (it.approvals.isNotEmpty() || it.unread)
+  !it.archived && it !== workspace.active && (it.approvals.isNotEmpty() || it.setupFailed || it.unread)
 }
 
 /** The thread list: threads grouped by project folder, archived ones apart, each with its live status. */

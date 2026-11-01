@@ -41,7 +41,7 @@ final class ThreadTools implements McpTools {
   private static final String CONVERSATION = "conversation";
   private static final String NOTE = "note";
   private static final String STATES = "starting, working, waiting (for the person to answer a permission prompt or "
-    + "question), idle (done, waiting for a prompt), stopped (the agent failed or exited) or closed (not open in Tako)";
+    + "question, or to retry a failed worktree setup), idle (done, waiting for a prompt), stopped (the agent failed or exited) or closed (not open in Tako)";
 
   private final ChatService service;
   private final ThreadStore store;
@@ -68,7 +68,8 @@ final class ThreadTools implements McpTools {
       + "\"Skeletal animation\". With worktree, it also names the branch."));
     createProperties.add("worktree", property("boolean", "Work in a new git worktree on a new branch, checked out "
       + "from the commit you are on. Uncommitted changes do not carry over. Use it when threads would edit the same "
-      + "files at once. Defaults to false: the thread works in your folder."));
+      + "files at once. Tako first runs the repository's .worktreesetup commands in it, if it has them, such as "
+      + "installing dependencies. Defaults to false: the thread works in your folder."));
     JsonObject agent = property("string", "The agent to run. Defaults to yours.");
     agent.add("enum", agents);
     createProperties.add("agent", agent);
@@ -98,7 +99,7 @@ final class ThreadTools implements McpTools {
 
     return List.of(
       new Tool(CREATE, "Starts a new Tako chat thread that works on a task alongside you. Its agent starts on the "
-        + "prompt at once. The person sees the thread in Tako and answers its permission prompts. Threads in the same "
+        + "prompt at once, or in a new worktree once Tako ran its setup. The person sees the thread in Tako and answers its permission prompts. Threads in the same "
         + "folder edit the same files, so give overlapping tasks a worktree each. Returns the new thread's id.",
         schema(createProperties, "prompt", "title")),
       new Tool(LIST, "Lists the project's chat threads in Tako with their state: " + STATES + ".",
@@ -112,7 +113,8 @@ final class ThreadTools implements McpTools {
       new Tool(WAIT, "Waits until another thread is done working: idle, waiting for the person, stopped or closed. "
         + "Returns what get_thread does, with timedOut set when the thread still works after the timeout. Call it "
         + "again to keep waiting.", schema(waitProperties, THREAD_ID)),
-      new Tool(STOP, "Interrupts another thread's running turn. The thread stays open and takes new prompts.",
+      new Tool(STOP, "Interrupts another thread's running turn, or cancels the worktree setup "
+        + "its prompt waits for. The thread stays open and takes new prompts.",
         schema(threadIdProperties, THREAD_ID)));
   }
 
@@ -156,7 +158,8 @@ final class ThreadTools implements McpTools {
       orDefault(Json.string(arguments, "model"), isSameAgent ? parent.model : ""),
       orDefault(Json.string(arguments, "mode"), isSameAgent ? parent.mode : ""),
       orDefault(Json.string(arguments, "effort"), isSameAgent ? parent.effort : ""),
-      worktree != null ? worktree.folder().toString() : parent.workPath);
+      worktree != null ? worktree.folder().toString() : parent.workPath,
+      worktree != null ? ThreadStore.PendingSetup.of(worktree.repository(), worktree.folder()) : null);
     AtomicReference<ThreadStore.Record> created = new AtomicReference<>();
     ApplicationManager.getApplication().invokeAndWait(() -> created.set(this.service.spawn(parent, spec)));
 
@@ -338,7 +341,10 @@ final class ThreadTools implements McpTools {
     return schema;
   }
 
-  /** @param workPath the folder to work in instead of the parent's project folder, see {@link ThreadStore.Record} */
+  /**
+   * @param workPath the folder to work in instead of the parent's project folder, see {@link ThreadStore.Record}
+   * @param setup    the setup to run first in the worktree made for the thread
+   */
   record NewThread(
     String title,
     String prompt,
@@ -346,7 +352,8 @@ final class ThreadTools implements McpTools {
     String model,
     String mode,
     String effort,
-    @Nullable String workPath
+    @Nullable String workPath,
+    ThreadStore.@Nullable PendingSetup setup
   ) {
   }
 }
