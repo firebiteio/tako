@@ -32,6 +32,7 @@ import java.util.Map;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
+import org.jetbrains.annotations.Nullable;
 
 public class ChatControllerTest extends BasePlatformTestCase {
   private static final long TIMEOUT_MILLIS = 20000;
@@ -44,6 +45,8 @@ public class ChatControllerTest extends BasePlatformTestCase {
   private String title;
   /** What each look the controller asked for was about: true for a question, false for a turn's end. */
   private final List<Boolean> looks = new ArrayList<>();
+  /** What the controller told its host about prompts and limits, in order. */
+  private final List<String> hostCalls = new ArrayList<>();
 
   @Override
   protected void setUp() throws Exception {
@@ -80,6 +83,16 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
       @Override
       public void stateChanged() {
+      }
+
+      @Override
+      public void prompted(String typed) {
+        ChatControllerTest.this.hostCalls.add("prompted " + typed);
+      }
+
+      @Override
+      public void limitReached(@Nullable String label, @Nullable Long resetsAt, boolean namesReset) {
+        ChatControllerTest.this.hostCalls.add("limit " + label + " " + resetsAt);
       }
 
       @Override
@@ -329,6 +342,35 @@ public class ChatControllerTest extends BasePlatformTestCase {
       assertNull("the chat keeps its timeline", find(resumed, ChatMessage.Replay.class));
       assertNull("the thread was resumed", find(resumed, ChatMessage.Notice.class));
       assertEquals(session, this.record.sessionId);
+    } finally {
+      thread.dispose();
+    }
+  }
+
+  public void testATurnStoppedByALimitTellsTheHostAfterThePromptAndAFinishedTurnDoesNot() throws Exception {
+    Path codex = FakeExecutable.write("codex", FakeCodex.class);
+    ChatController thread = new ChatController(this.getProject(), this.posted::add, this.host, this.record,
+      new CodexBackend(codex.toString(), AgentDefaults.NONE, Map.of()));
+    try {
+      thread.open();
+      this.awaitPost(ChatMessage.Init.class);
+      assertEquals(ChatController.State.IDLE, thread.awaitSettled(TIMEOUT_MILLIS));
+
+      thread.send(FakeCodex.LIMIT_PROMPT, List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
+      while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+      }
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+      assertEquals(List.of("prompted " + FakeCodex.LIMIT_PROMPT, "limit 5h " + FakeCodex.LIMIT_RESETS_AT * 1000),
+        this.hostCalls);
+
+      this.hostCalls.clear();
+      thread.send("list files", List.of(), List.of(), 2, 1, QueuedPrompts.Delivery.QUEUE);
+      ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
+      thread.answer(permission.requestId(), true, null, false, null, null);
+      while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+      }
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+      assertEquals(List.of("prompted list files"), this.hostCalls);
     } finally {
       thread.dispose();
     }

@@ -64,6 +64,44 @@ public class ThreadStoreTest {
   }
 
   @Test
+  public void aScheduledResumeSurvivesARestart() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record record = store.create(null, null, null, "claude");
+    ThreadStore.Record plain = store.create(null, null, null, "codex");
+    ThreadStore.LimitStop stop = new ThreadStore.LimitStop();
+    stop.label = "7d Opus";
+    stop.resetsAt = 1_900_000_000_000L;
+    stop.hitAt = 1_899_990_000_000L;
+    stop.scheduled = true;
+    stop.prompt = "Weiter 🐙";
+    record.limit = stop;
+    store.save();
+
+    ThreadStore reloaded = new ThreadStore(file);
+
+    ThreadStore.LimitStop restored = reloaded.find(record.id).limit;
+    assertEquals("7d Opus", restored.label);
+    assertEquals(1_900_000_000_000L, restored.resetsAt);
+    assertEquals(1_899_990_000_000L, restored.hitAt);
+    assertTrue(restored.scheduled);
+    assertEquals("Weiter 🐙", restored.prompt);
+    assertNull(reloaded.find(plain.id).limit);
+    assertEquals(new ChatMessage.LimitItem("7d Opus", 1_900_000_000_000L, true, "Weiter 🐙",
+      1_900_000_000_000L + ThreadStore.LimitStop.GRACE_MILLIS), restored.item("Continue"));
+    restored.prompt = null;
+    assertEquals("Continue", restored.item("Continue").prompt());
+  }
+
+  @Test
+  public void threadsFromBeforeLimitsLoadWithoutOne() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    Files.writeString(file, "{\"threads\":[{\"id\":\"a\",\"title\":\"Old\",\"agent\":\"claude\"}]}");
+
+    assertNull(new ThreadStore(file).find("a").limit);
+  }
+
+  @Test
   public void removedThreadIsGoneAfterReload() throws Exception {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     ThreadStore store = new ThreadStore(file);
