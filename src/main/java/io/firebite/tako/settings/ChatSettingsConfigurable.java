@@ -41,8 +41,8 @@ public final class ChatSettingsConfigurable implements Configurable {
     this.parallelRunsBox = new JBCheckBox(TakoBundle.message("settings.tako.parallel.runs"));
     this.settlePullRequestBox = new JBCheckBox(TakoBundle.message("settings.tako.settle.pull.request"));
     this.settleIdleBox = new JBCheckBox(TakoBundle.message("settings.tako.settle.idle"));
-    this.settleDaysSpinner = new JBIntSpinner(ThreadUpkeep.Rules.DEFAULT_IDLE_DAYS, ThreadUpkeep.Rules.MIN_IDLE_DAYS,
-      ThreadUpkeep.Rules.MAX_IDLE_DAYS);
+    this.settleDaysSpinner = new JBIntSpinner(ChatSettings.DEFAULT_IDLE_DAYS, ChatSettings.MIN_IDLE_DAYS,
+      ChatSettings.MAX_IDLE_DAYS);
     this.settleIdleBox.addActionListener(event -> this.settleDaysSpinner.setEnabled(this.settleIdleBox.isSelected()));
     JPanel idleRow = new JPanel(new FlowLayout(FlowLayout.LEFT, JBUI.scale(4), 0));
     idleRow.add(this.settleIdleBox);

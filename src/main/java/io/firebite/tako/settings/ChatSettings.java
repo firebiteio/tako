@@ -7,7 +7,6 @@ import com.intellij.openapi.components.State;
 import com.intellij.openapi.components.Storage;
 import com.intellij.util.xmlb.annotations.OptionTag;
 import io.firebite.tako.agent.AgentDefaults;
-import io.firebite.tako.chat.ThreadUpkeep;
 import org.jetbrains.annotations.NotNull;
 
 /**
@@ -17,6 +16,10 @@ import org.jetbrains.annotations.NotNull;
 @Service(Service.Level.APP)
 @State(name = "TakoSettings", storages = @Storage("tako.xml"))
 public final class ChatSettings implements PersistentStateComponent<ChatSettings.Data> {
+  public static final int DEFAULT_IDLE_DAYS = 7;
+  public static final int MIN_IDLE_DAYS = 1;
+  public static final int MAX_IDLE_DAYS = 365;
+
   private Data data = new Data();
 
   public static ChatSettings getInstance() {
@@ -47,7 +50,7 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
     public boolean settleOnPullRequest;
     /** Archives a thread after {@link #settleIdleDays} without activity. */
     public boolean settleIdle;
-    public int settleIdleDays = ThreadUpkeep.Rules.DEFAULT_IDLE_DAYS;
+    public int settleIdleDays = DEFAULT_IDLE_DAYS;
 
     @OptionTag("executablePath")
     public String claudePath = "";
