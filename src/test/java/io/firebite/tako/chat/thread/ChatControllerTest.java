@@ -58,6 +58,10 @@ public class ChatControllerTest extends BasePlatformTestCase {
       }
 
       @Override
+      public void needsLook(boolean asks) {
+      }
+
+      @Override
       public void recordChanged() {
       }
 

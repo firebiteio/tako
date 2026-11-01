@@ -10,6 +10,13 @@ public interface ChatHost {
   /** The agent waits for the person, e.g. on a permission prompt. */
   void requestAttention(String reason);
 
+  /**
+   * The agent ended its turn or waits for the person, so the thread is unread unless shown.
+   *
+   * @param asks whether it waits for an answer, which ends a snooze early
+   */
+  void needsLook(boolean asks);
+
   /** The thread's record changed and must be saved, e.g. its session id, model, mode or effort. */
   void recordChanged();
 

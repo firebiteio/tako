@@ -734,6 +734,7 @@ public final class ChatController implements Disposable {
   private void onTurnEnded(AgentEvent.TurnEnded ended) {
     if (this.untakenTurns.isEmpty()) {
       this.setState(State.IDLE);
+      Async.onEdt(() -> this.host.needsLook(false));
     }
     this.error = ended.error();
     this.refreshContext();
@@ -756,7 +757,10 @@ public final class ChatController implements Disposable {
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
       ? TakoBundle.message("notification.question", agent)
       : TakoBundle.message("notification.tool", agent, prompt.toolName());
-    Async.onEdt(() -> this.host.requestAttention(reason));
+    Async.onEdt(() -> {
+      this.host.needsLook(true);
+      this.host.requestAttention(reason);
+    });
   }
 
   private void stopped(@Nullable String error) {
