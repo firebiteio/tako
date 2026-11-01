@@ -38,7 +38,10 @@ import io.firebite.tako.chat.git.ThreadGit
 import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.state.ThreadState
+import io.firebite.tako.ui.state.WatchButton
 import io.firebite.tako.ui.state.Workspace
+import io.firebite.tako.ui.state.toggleWatch
+import io.firebite.tako.ui.state.watchButton
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
 import kotlinx.coroutines.CancellationException
@@ -110,6 +113,7 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
               browse(pr.url)
             }
           }
+          watchButton(pr, thread.watching, thread.watchStarting)?.let { WatchToggle(thread, it) }
         }
         if (thread.branch != null) {
           GitActionsButton(workspace, thread)
@@ -165,6 +169,20 @@ private fun RestartButton(thread: ThreadState) {
     else -> t("header.restart", thread.agentName)
   }
   IconBtn(Icons.refresh, tip, enabled = canResume && isIdle && !thread.stopped) { thread.controller?.restartSession() }
+}
+
+/** Starts or stops watching the thread's pull request, see [io.firebite.tako.chat.watch.PullRequestWatcher]. */
+@Composable
+private fun WatchToggle(thread: ThreadState, button: WatchButton) {
+  val tip = when {
+    button.watching -> t("header.watch.on", button.number)
+    button.starting -> t("header.watch.starting", button.number)
+    else -> t("header.watch", thread.agentName)
+  }
+  IconBtn(Icons.eye, tip, iconSize = 14.dp, color = if (button.watching) colors.add else colors.muted,
+    enabled = !button.starting) {
+    thread.toggleWatch()
+  }
 }
 
 /**

@@ -61,15 +61,18 @@ import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
+import io.firebite.tako.ui.state.canActOn
 import io.firebite.tako.ui.state.canMoveUp
 import io.firebite.tako.ui.state.canQuote
 import io.firebite.tako.ui.state.canRewind
 import io.firebite.tako.ui.state.canSteer
 import io.firebite.tako.ui.state.editQueued
+import io.firebite.tako.ui.state.implementElsewhere
 import io.firebite.tako.ui.state.moveQueuedUp
 import io.firebite.tako.ui.state.promptsUpTo
 import io.firebite.tako.ui.state.removeQueued
 import io.firebite.tako.ui.state.rewind
+import io.firebite.tako.ui.state.savePlan
 import io.firebite.tako.ui.state.sendQueuedNow
 import io.firebite.tako.ui.state.steerQueued
 import io.firebite.tako.ui.t
@@ -263,7 +266,7 @@ private fun TurnItemView(thread: ThreadState, item: TurnItem, forkPrompts: Int?,
     is TurnItem.Group -> GroupView(item.group, markdown, actions)
     is TurnItem.Task -> TaskRowView(item.card)
     is TurnItem.Completion -> CompletionRowView(item.card)
-    is TurnItem.Plan -> PlanCard(item.plan, markdown, actions)
+    is TurnItem.Plan -> PlanCard(thread, item, markdown, actions)
     is TurnItem.FollowUp -> UserRow(thread, item.prompt)
   }
 }
@@ -480,7 +483,12 @@ private fun FoldHeadView(fold: Fold) {
 private fun WorkingRow(thread: ThreadState) {
   val since = elapsed(thread.startedAt, thread.workspace.now)
   Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
-    Text(if (thread.approvals.isNotEmpty()) t("timeline.working.waiting", since) else t("timeline.working", since),
+    val text = when {
+      thread.approvals.isNotEmpty() || thread.setupFailed -> t("timeline.working.waiting", since)
+      thread.setup != null -> t("timeline.working.setup", since)
+      else -> t("timeline.working", since)
+    }
+    Text(text,
       Modifier.padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 8.dp), color = colors.muted,
       style = textStyle.copy(fontFeatureSettings = "tnum"))
     Rule()
@@ -536,9 +544,36 @@ private fun ChangesCard(thread: ThreadState, turn: Turn) {
   }
 }
 
+/** The menu entries that hand the plan to a new thread; none for a blank plan. */
+fun implementElsewhereEntries(thread: ThreadState, plan: TurnItem.Plan): List<MenuEntry> {
+  if (plan.plan.isBlank()) {
+    return emptyList()
+  }
+  val enabled = thread.canActOn(plan)
+  return listOf(
+    MenuEntry(t("plan.implement.thread"), icon = Icons.thread, enabled = enabled) {
+      thread.implementElsewhere(plan, false)
+    },
+    MenuEntry(t("plan.implement.worktree"), icon = Icons.worktree, enabled = enabled) {
+      thread.implementElsewhere(plan, true)
+    })
+}
+
+@Composable
+private fun PlanMenuButton(thread: ThreadState, item: TurnItem.Plan) {
+  var open by remember { mutableStateOf(false) }
+  Box {
+    IconBtn(Icons.more, t("plan.more"), iconSize = 14.dp) { open = true }
+    if (open) {
+      MenuPopup(implementElsewhereEntries(thread, item), alignment = Alignment.End) { open = false }
+    }
+  }
+}
+
 /** A plan the agent proposes, long ones collapsed. */
 @Composable
-private fun PlanCard(plan: String, markdown: ChatMarkdown, actions: CodeActions) {
+private fun PlanCard(thread: ThreadState, item: TurnItem.Plan, markdown: ChatMarkdown, actions: CodeActions) {
+  val plan = item.plan
   val long = plan.count { it == '\n' } >= PLAN_COLLAPSE_LINES
   var collapsed by remember(plan) { mutableStateOf(long) }
   val shape = RoundedCornerShape(22.dp)
@@ -549,7 +584,13 @@ private fun PlanCard(plan: String, markdown: ChatMarkdown, actions: CodeActions)
       Text(t("timeline.plan"), Modifier.clip(RoundedCornerShape(6.dp)).background(colors.hover)
         .padding(horizontal = 8.dp, vertical = 1.dp), style = tinyStyle, fontWeight = FontWeight.Medium)
       Text(t("timeline.plan.title"), Modifier.weight(1f))
+      if (plan.isNotBlank()) {
+        IconBtn(Icons.download, t("plan.save"), iconSize = 14.dp) { thread.savePlan(item) }
+      }
       IconBtn(Icons.copy, t("timeline.plan.copy"), iconSize = 14.dp) { actions.copy(plan) }
+      if (plan.isNotBlank()) {
+        PlanMenuButton(thread, item)
+      }
     }
     Box(if (collapsed) Modifier.heightIn(max = cssRem * 22).clip(RoundedCornerShape(0.dp)) else Modifier) {
       MarkdownText(markdown, plan, true, actions)

@@ -18,6 +18,7 @@ It works with:
 - Comment on lines in those diffs, or in any file, and send the comments to the agent together
 - Rewind a thread to before one of your prompts and edit it, with or without putting the files back (Claude Code and Codex)
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
+- Pin, rename, snooze or mark threads unread from their menu. A thread whose agent finished or asked something while you looked elsewhere gets a dot until you open it. Optionally archive threads automatically once their pull request is merged or after some days without activity (Settings > Tools > Tako)
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
 - Prompts sent while the agent works queue up. Edit, reorder or remove them, send one now, or steer the running turn with it (Claude Code, Codex)
@@ -56,9 +57,11 @@ Claude Code continues in a copy of its session. The old session stays in the ses
 
 ### Parallel runs
 
-Turn on Parallel runs under Settings > Tools > Tako. A new thread's composer then has a runs picker. Choose how many runs to start, and optionally a different agent and model for each. Sending creates one git worktree per run from the last commit, in a `<repo>-tako` folder beside the repository, and one thread per run, grouped in the sidebar. Uncommitted changes are not copied into the worktrees. Each worktree is a fresh checkout, so dependencies and build output have to be set up again in it.
+Turn on Parallel runs under Settings > Tools > Tako. A new thread's composer then has a runs picker. Choose how many runs to start, and optionally a different agent and model for each. Sending creates one git worktree per run from the last commit, in a `<repo>-tako` folder beside the repository, and one thread per run, grouped in the sidebar. Uncommitted changes are not copied into the worktrees. Each worktree is a fresh checkout without dependencies or build output; a `.worktreesetup` file sets them up, see below.
 
 Local config can come along: list gitignored files like `.env` or `.mcp.json` in a `.worktreeinclude` file in the repository root, in `.gitignore` syntax, as for Claude Code. Tako copies them into every worktree it creates, for parallel runs and for threads an agent starts in a new worktree. Tracked files and files the worktree already has are left alone. Folders git ignores as a whole, like `build`, are only searched when a pattern names them or a path in them.
+
+To install dependencies or build in each new worktree, put shell commands in a `.worktreesetup` file in the repository root, one per line, e.g. `npm ci`. Lines starting with `#` are comments. Tako runs them in order in the worktree's top folder before it starts the agent, with `cmd.exe` on Windows and `/bin/sh` elsewhere, and shows their progress and output above the composer. Each line runs in its own shell, so `cd` does not carry over. `TAKO_WORKTREE` and `TAKO_REPOSITORY` hold the paths of the worktree and of the main checkout. The worktree's own copy of the file is used if it has one, else the main checkout's, so the file can be committed or gitignored. When a command fails, or the setup takes more than 20 minutes, the prompt waits: Retry runs the file again, Start without setup sends the prompt anyway. Stop cancels the setup. Tako only runs the file in trusted projects. Keep what the commands create gitignored, or it counts as the run's changes.
 
 The group's compare button lists each run's changed files, lines, cost, tokens and time. Diff opens a run's changes in the IDE diff viewer. Apply puts a run's changes into your checkout as uncommitted changes, then removes all the bench's worktrees, branches and threads. Discard removes them without applying anything.
 

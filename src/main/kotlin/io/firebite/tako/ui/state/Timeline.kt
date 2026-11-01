@@ -6,6 +6,7 @@ import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.ide.context.ContextItem
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.t
 
@@ -112,9 +113,6 @@ private fun ThreadState.onTurnEnded(event: AgentEvent.TurnEnded) {
   }
   this.setBusy(false)
   this.finished = true
-  if (!this.isActive) {
-    this.unread = true
-  }
 }
 
 fun ThreadState.setBusy(busy: Boolean) {
@@ -210,6 +208,7 @@ private fun ThreadState.addToolUse(tool: AgentEvent.ToolStarted) {
   if (entry.category == ToolKind.TODO || entry.category == ToolKind.PLAN) {
     turn.group = null
     turn.items.add(TurnItem.Single(entry))
+    this.replayedPlan(tool)?.let { turn.items.add(it) }
     return
   }
   val group = turn.group ?: WorkGroup(this).also {
@@ -217,6 +216,18 @@ private fun ThreadState.addToolUse(tool: AgentEvent.ToolStarted) {
     turn.items.add(TurnItem.Group(it))
   }
   group.entries.add(entry)
+}
+
+/**
+ * The plan of a replayed Claude Code ExitPlanMode call, so its card comes back with the history. A live one comes with
+ * its approval instead.
+ */
+private fun ThreadState.replayedPlan(tool: AgentEvent.ToolStarted): TurnItem.Plan? {
+  val plan = tool.input.string("plan")
+  if (!this.replaying || tool.name != Tool.EXIT_PLAN_MODE || plan.isNullOrBlank()) {
+    return null
+  }
+  return TurnItem.Plan(plan)
 }
 
 private fun ThreadState.attachResult(result: AgentEvent.ToolFinished) {
@@ -292,7 +303,7 @@ fun ThreadState.finishTurn(result: AgentEvent.TurnEnded?) {
 
 /**
  * Folds a finished turn's work under "Worked for …", one fold per stretch between follow-ups, leaving each stretch's
- * last text visible.
+ * last text and the plans visible.
  */
 private fun ThreadState.foldWork(turn: Turn, took: Long?) {
   val folds = ArrayList<Fold>()
@@ -303,7 +314,7 @@ private fun ThreadState.foldWork(turn: Turn, took: Long?) {
       fold(stretch, took?.let { item.prompt.at - from }, false)?.let { folds.add(it) }
       stretch = ArrayList()
       from = item.prompt.at
-    } else if (item !is TurnItem.Completion &&
+    } else if (item !is TurnItem.Completion && item !is TurnItem.Plan &&
       !(item is TurnItem.Task && this.cardState(item.card) == TaskState.RUNNING)) {
       stretch.add(item)
     }
@@ -425,6 +436,26 @@ private fun ThreadState.takeQueued(no: Int, startsTurn: Boolean) {
   turn.group = null
   turn.items.add(TurnItem.FollowUp(queued.prompt))
   this.setBusy(true)
+}
+
+/**
+ * Shows the worktree setup's card while it runs or failed. Once it is through, the card goes and the prompt's turn that
+ * waited for it gets a note.
+ */
+fun ThreadState.onSetup(setup: ChatMessage.Setup) {
+  val note = when (setup.phase) {
+    ChatMessage.SetupPhase.RUNNING, ChatMessage.SetupPhase.FAILED -> {
+      this.setup = setup
+      return
+    }
+    ChatMessage.SetupPhase.DONE -> t("timeline.setup.done", duration(setup.endedAt - setup.startedAt))
+    ChatMessage.SetupPhase.SKIPPED -> t("timeline.setup.skipped")
+  }
+  this.setup = null
+  val turn = this.turn
+  if (setup.steps > 0 && turn != null && !turn.done && turn.prompt != null) {
+    turn.items.add(TurnItem.Note(note))
+  }
 }
 
 fun ThreadState.onError(text: String) {

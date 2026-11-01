@@ -87,4 +87,25 @@ public class ThreadTitlesTest {
     assertEquals(List.of(new ThreadTitles.Message(true, "Rename the class"),
       new ThreadTitles.Message(false, "Renamed it")), conversation);
   }
+
+  @Test
+  public void typedTitleIsOneTrimmedLine() {
+    assertEquals("Fix the login bug", ThreadTitles.manual("  Fix the\n login\t bug \r\n"));
+    assertEquals("Ünïcödé 🐙 タコ", ThreadTitles.manual("Ünïcödé 🐙 タコ"));
+  }
+
+  @Test
+  public void blankTypedTitleIsNone() {
+    assertNull(ThreadTitles.manual(""));
+    assertNull(ThreadTitles.manual(" \n\t  "));
+  }
+
+  @Test
+  public void longTypedTitleIsCutWithoutSplittingAnEmoji() {
+    String title = ThreadTitles.manual("a".repeat(198) + "🐙" + "b".repeat(10_000));
+
+    assertEquals("a".repeat(198) + "…", title);
+    assertEquals(199, title.length());
+    assertEquals(200, ThreadTitles.manual("c".repeat(10_000)).length());
+  }
 }

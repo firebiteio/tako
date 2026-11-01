@@ -28,3 +28,22 @@ fun <T> threadTree(threads: List<T>, id: (T) -> String, parentId: (T) -> String?
   fun node(thread: T): ThreadNode<T> = ThreadNode(thread, children[id(thread)].orEmpty().map(::node))
   return roots.map(::node)
 }
+
+/** The pinned threads, then the others, each in the list's order; [threadTree] keeps that among siblings too. */
+fun <T> pinnedFirst(threads: List<T>, pinned: (T) -> Boolean): List<T> {
+  val (first, rest) = threads.partition(pinned)
+  return first + rest
+}
+
+/**
+ * Whether a snooze hides the thread: its own or one of its parents'. An archived thread is never hidden, and an
+ * archived or missing parent ends the walk, as the list does not nest the thread under it. Stops on a parent cycle.
+ */
+fun <T : Any> isSnoozeHidden(thread: T, parent: (T) -> T?, snoozed: (T) -> Boolean, archived: (T) -> Boolean): Boolean =
+  lineage(thread, parent).takeWhile { !archived(it) }.any(snoozed)
+
+/** The thread and its parents, nearest first, ending at a missing parent or where the parents loop. */
+fun <T : Any> lineage(thread: T, parent: (T) -> T?): Sequence<T> {
+  val seen = HashSet<T>()
+  return generateSequence(thread, parent).takeWhile { seen.add(it) }
+}

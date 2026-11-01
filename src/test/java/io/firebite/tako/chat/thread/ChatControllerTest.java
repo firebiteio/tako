@@ -17,6 +17,7 @@ import io.firebite.tako.agent.codex.CodexBackend;
 import io.firebite.tako.agent.codex.FakeCodex;
 import io.firebite.tako.chat.store.PromptStash;
 import io.firebite.tako.chat.store.ThreadStore;
+import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.settings.AuthMode;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.bridge.ChatMessage;
@@ -39,6 +40,8 @@ public class ChatControllerTest extends BasePlatformTestCase {
   private ChatHost host;
   private ChatController controller;
   private String title;
+  /** What each look the controller asked for was about: true for a question, false for a turn's end. */
+  private final List<Boolean> looks = new ArrayList<>();
 
   @Override
   protected void setUp() throws Exception {
@@ -58,6 +61,11 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
       @Override
       public void requestAttention(String reason) {
+      }
+
+      @Override
+      public void needsLook(boolean asks) {
+        ChatControllerTest.this.looks.add(asks);
       }
 
       @Override
@@ -179,6 +187,43 @@ public class ChatControllerTest extends BasePlatformTestCase {
         break;
       }
     }
+    PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+    assertEquals("the question asks for a look, then the turn's end", List.of(true, false), this.looks);
+  }
+
+  public void testThreadInItsOwnFolderKeepsItsPullRequestWhenTheBranchIsGone() throws Exception {
+    GitInfo.PullRequest merged = new GitInfo.PullRequest("#7", "Fix", "https://github.com/o/r/pull/7", "merged");
+    this.record.workPath = Files.createTempDirectory("tako-worktree").toString();
+    this.record.branch = "fix";
+    this.record.pullRequest = merged;
+
+    this.controller.refreshGit();
+
+    assertNull(this.record.branch);
+    assertEquals(merged, this.record.pullRequest);
+  }
+
+  public void testThreadInItsOwnFolderDropsThePullRequestOnAnotherBranch() throws Exception {
+    Path worktree = Files.createTempDirectory("tako-worktree");
+    Process init = new ProcessBuilder("git", "init", "-q", "-b", "feat-b").directory(worktree.toFile()).start();
+    assertEquals(0, init.waitFor());
+    this.record.workPath = worktree.toString();
+    this.record.branch = "feat-a";
+    this.record.pullRequest = new GitInfo.PullRequest("#5", "A", "https://github.com/o/r/pull/5", "merged");
+
+    this.controller.refreshGit();
+
+    assertEquals("feat-b", this.record.branch);
+    assertNull(this.record.pullRequest);
+  }
+
+  public void testThreadInTheSharedCheckoutDropsThePullRequestOfAGoneBranch() {
+    this.record.branch = "fix";
+    this.record.pullRequest = new GitInfo.PullRequest("#7", "Fix", "https://github.com/o/r/pull/7", "open");
+
+    this.controller.refreshGit();
+
+    assertNull(this.record.pullRequest);
   }
 
   public void testFirstPromptIsSubmittedOnceTheAgentIsReadyAndStateFollowsTheTurn() throws Exception {
@@ -634,6 +679,109 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.record.sessionId = "s0";
     return new ChatController(this.getProject(), this.posted::add, this.host, this.record,
       new AcpBackend("Fake", List.of(agent.toString()), Map.of()));
+  }
+
+  public void testAPassingWorktreeSetupRunsBeforeThePromptReachesTheAgent() throws Exception {
+    ChatController thread = this.setupController("echo ok> setup.txt");
+    try {
+      thread.open();
+      thread.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
+
+      List<ChatMessage.ThreadMessage> posts = this.postsUntil(ChatMessage.Permission.class);
+
+      assertNotNull("the setup showed before the agent got the prompt", find(posts, ChatMessage.Setup.class));
+      assertTrue(Files.exists(Path.of(this.record.workPath, "setup.txt")));
+      assertNull(this.record.pendingSetup);
+      assertEquals(ChatController.State.WAITING, thread.state());
+    } finally {
+      thread.dispose();
+    }
+  }
+
+  public void testAFailedWorktreeSetupHoldsThePromptUntilTheAgentStartsWithoutIt() throws Exception {
+    ChatController thread = this.setupController("exit 1");
+    try {
+      thread.open();
+      thread.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
+      List<ChatMessage.ThreadMessage> posts = new ArrayList<>(this.postsUntil(ChatMessage.Setup.class));
+      while (!(posts.getLast() instanceof ChatMessage.Setup setup && setup.phase() == ChatMessage.SetupPhase.FAILED)) {
+        posts.addAll(this.postsUntil(ChatMessage.Setup.class));
+      }
+      this.awaitState(thread, ChatController.State.WAITING);
+      Thread.sleep(500);
+      ChatMessage.ThreadMessage late;
+      while ((late = this.posted.poll()) != null) {
+        posts.add(late);
+      }
+      assertNull("the agent waits for the setup too: " + posts, find(posts, ChatMessage.Init.class));
+      assertTrue(thread.error(), thread.error().startsWith(TakoBundle.message("setup.failed", "")));
+      assertNotNull("a failed setup keeps its record", this.record.pendingSetup);
+
+      thread.interrupt();
+      thread.retrySetup();
+      this.awaitSetup(ChatMessage.SetupPhase.FAILED);
+      this.awaitState(thread, ChatController.State.WAITING);
+
+      thread.skipSetup();
+
+      assertNotNull(this.awaitPost(ChatMessage.Permission.class));
+      assertNull(this.record.pendingSetup);
+    } finally {
+      thread.dispose();
+    }
+  }
+
+  public void testStopCancelsTheSetupAndClosingClearsWhatTheChatShows() throws Exception {
+    ChatController thread = this.setupController(SystemInfo.isWindows ? "ping -n 61 127.0.0.1 > nul" : "sleep 60");
+    thread.open();
+    thread.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
+    this.awaitState(thread, ChatController.State.WORKING);
+    while (this.awaitPost(ChatMessage.Setup.class).step() != 1) {
+    }
+
+    thread.interrupt();
+
+    ChatMessage.Setup failed = this.awaitSetup(ChatMessage.SetupPhase.FAILED);
+    assertEquals(TakoBundle.message("setup.error.cancelled"), failed.error());
+    this.awaitState(thread, ChatController.State.WAITING);
+
+    thread.dispose();
+
+    List<ChatMessage.ThreadMessage> posts = this.postsUntil(ChatMessage.Exit.class);
+    ChatMessage.Setup cleared = find(posts, ChatMessage.Setup.class);
+    assertNotNull("the card goes", cleared);
+    assertEquals(ChatMessage.SetupPhase.DONE, cleared.phase());
+    assertEquals(0, cleared.steps());
+    assertNotNull("archiving keeps the setup for the next open", this.record.pendingSetup);
+  }
+
+  /** A thread in a new worktree whose main checkout's {@code .worktreesetup} holds {@code command}. */
+  private ChatController setupController(String command) throws Exception {
+    Path repository = Files.createTempDirectory("tako-main");
+    Files.writeString(repository.resolve(".worktreesetup"), command + "\n", StandardCharsets.UTF_8);
+    Path worktree = Path.of(this.record.projectPath);
+    this.record.workPath = worktree.toString();
+    this.record.pendingSetup = ThreadStore.PendingSetup.of(repository, worktree);
+    return new ChatController(this.getProject(), this.posted::add, this.host, this.record,
+      new ClaudeBackend(Map.of()));
+  }
+
+  private ChatMessage.Setup awaitSetup(ChatMessage.SetupPhase phase) throws InterruptedException {
+    while (true) {
+      ChatMessage.Setup setup = this.awaitPost(ChatMessage.Setup.class);
+      if (setup.phase() == phase) {
+        return setup;
+      }
+    }
+  }
+
+  private void awaitState(ChatController thread, ChatController.State state) throws InterruptedException {
+    long deadline = System.currentTimeMillis() + TIMEOUT_MILLIS;
+    while (thread.state() != state && System.currentTimeMillis() < deadline) {
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+      Thread.sleep(20);
+    }
+    assertEquals(state, thread.state());
   }
 
   /** Restarts the idle agent and waits until the chat learns it stopped. */

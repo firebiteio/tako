@@ -12,6 +12,9 @@ import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.chat.thread.Conversation;
+import io.firebite.tako.chat.watch.PullRequestStatus;
+import io.firebite.tako.chat.watch.PullRequestWatcher;
+import io.firebite.tako.chat.watch.WatchException;
 import io.firebite.tako.ide.project.GitWorktree;
 import io.firebite.tako.json.Json;
 import io.firebite.tako.mcp.McpToolException;
@@ -24,7 +27,10 @@ import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jetbrains.annotations.Nullable;
 
-/** What Tako offers one thread's agent over MCP: starting threads of its own, and following and steering any thread. */
+/**
+ * What Tako offers one thread's agent over MCP: starting threads of its own, following and steering any thread, and
+ * watching its pull request.
+ */
 final class ThreadTools implements McpTools {
   static final String CREATE = "create_thread";
   static final String LIST = "list_threads";
@@ -32,6 +38,8 @@ final class ThreadTools implements McpTools {
   static final String SEND = "send_to_thread";
   static final String WAIT = "wait_for_thread";
   static final String STOP = "stop_thread";
+  static final String WATCH = "watch_pull_request";
+  static final String UNWATCH = "unwatch_pull_request";
   private static final long DEFAULT_WAIT_SECONDS = 300;
   private static final long MAX_WAIT_SECONDS = 3600;
   /** About 10k tokens, below what agents take from one tool result. */
@@ -41,7 +49,7 @@ final class ThreadTools implements McpTools {
   private static final String CONVERSATION = "conversation";
   private static final String NOTE = "note";
   private static final String STATES = "starting, working, waiting (for the person to answer a permission prompt or "
-    + "question), idle (done, waiting for a prompt), stopped (the agent failed or exited) or closed (not open in Tako)";
+    + "question, or to retry a failed worktree setup), idle (done, waiting for a prompt), stopped (the agent failed or exited) or closed (not open in Tako)";
 
   private final ChatService service;
   private final ThreadStore store;
@@ -68,7 +76,8 @@ final class ThreadTools implements McpTools {
       + "\"Skeletal animation\". With worktree, it also names the branch."));
     createProperties.add("worktree", property("boolean", "Work in a new git worktree on a new branch, checked out "
       + "from the commit you are on. Uncommitted changes do not carry over. Use it when threads would edit the same "
-      + "files at once. Defaults to false: the thread works in your folder."));
+      + "files at once. Tako first runs the repository's .worktreesetup commands in it, if it has them, such as "
+      + "installing dependencies. Defaults to false: the thread works in your folder."));
     JsonObject agent = property("string", "The agent to run. Defaults to yours.");
     agent.add("enum", agents);
     createProperties.add("agent", agent);
@@ -96,9 +105,21 @@ final class ThreadTools implements McpTools {
     waitProperties.add("timeoutSeconds", property("integer", "How long to wait at most, from 1 to " + MAX_WAIT_SECONDS
       + ". Defaults to " + DEFAULT_WAIT_SECONDS + "."));
 
+    JsonObject watchProperties = new JsonObject();
+    watchProperties.add("url", property("string", "The pull request's address, e.g. "
+      + "https://github.com/owner/repo/pull/12. Defaults to the open pull request of your branch."));
+
     return List.of(
+      new Tool(WATCH, "Watches a GitHub pull request for your thread. Tako checks it every 2 minutes with gh and wakes "
+        + "you with a prompt when checks fail or all pass, someone reviews or writes a review comment, the branch "
+        + "gets merge conflicts, or it is merged or closed. Only changes after this call wake you; the result tells "
+        + "the current state. Use it after you push or open a pull request and should follow up on CI and reviews. "
+        + "The watch ends when the pull request is merged or closed. Call unwatch_pull_request when you hand the work "
+        + "back to the person.", schema(watchProperties)),
+      new Tool(UNWATCH, "Stops watching your thread's pull request, so Tako no longer wakes you about it.",
+        schema(new JsonObject())),
       new Tool(CREATE, "Starts a new Tako chat thread that works on a task alongside you. Its agent starts on the "
-        + "prompt at once. The person sees the thread in Tako and answers its permission prompts. Threads in the same "
+        + "prompt at once, or in a new worktree once Tako ran its setup. The person sees the thread in Tako and answers its permission prompts. Threads in the same "
         + "folder edit the same files, so give overlapping tasks a worktree each. Returns the new thread's id.",
         schema(createProperties, "prompt", "title")),
       new Tool(LIST, "Lists the project's chat threads in Tako with their state: " + STATES + ".",
@@ -116,7 +137,8 @@ final class ThreadTools implements McpTools {
       new Tool(WAIT, "Waits until another thread is done working: idle, waiting for the person, stopped or closed. "
         + "Returns what get_thread does, with timedOut set when the thread still works after the timeout. Call it "
         + "again to keep waiting.", schema(waitProperties, THREAD_ID)),
-      new Tool(STOP, "Interrupts another thread's running turn. The thread stays open and takes new prompts.",
+      new Tool(STOP, "Interrupts another thread's running turn, or cancels the worktree setup "
+        + "its prompt waits for. The thread stays open and takes new prompts.",
         schema(threadIdProperties, THREAD_ID)));
   }
 
@@ -129,6 +151,8 @@ final class ThreadTools implements McpTools {
       case SEND -> this.send(arguments);
       case WAIT -> this.await(arguments);
       case STOP -> this.stop(arguments);
+      case WATCH -> this.watch(arguments);
+      case UNWATCH -> this.unwatch();
       default -> throw new McpToolException("Unknown tool " + name);
     };
   }
@@ -160,7 +184,8 @@ final class ThreadTools implements McpTools {
       orDefault(Json.string(arguments, "model"), isSameAgent ? parent.model : ""),
       orDefault(Json.string(arguments, "mode"), isSameAgent ? parent.mode : ""),
       orDefault(Json.string(arguments, "effort"), isSameAgent ? parent.effort : ""),
-      worktree != null ? worktree.folder().toString() : parent.workPath);
+      worktree != null ? worktree.folder().toString() : parent.workPath,
+      worktree != null ? ThreadStore.PendingSetup.of(worktree.repository(), worktree.folder()) : null);
     AtomicReference<ThreadStore.Record> created = new AtomicReference<>();
     ApplicationManager.getApplication().invokeAndWait(() -> created.set(this.service.spawn(parent, spec)));
 
@@ -269,6 +294,49 @@ final class ThreadTools implements McpTools {
     return GSON.toJson(this.describe(record, controller));
   }
 
+  private String watch(JsonObject arguments) throws McpToolException {
+    PullRequestWatcher.Started started;
+    try {
+      started = this.service.watcher().start(this.threadId, Json.string(arguments, "url"), true);
+    } catch (WatchException e) {
+      throw new McpToolException(e.getMessage());
+    }
+    return GSON.toJson(watchResult(started));
+  }
+
+  static JsonObject watchResult(PullRequestWatcher.Started started) {
+    PullRequestStatus status = started.status();
+    JsonObject result = Json.of("watching", status.label());
+    result.addProperty("url", status.url());
+    result.addProperty("title", status.title());
+    JsonArray failed = new JsonArray();
+    for (PullRequestStatus.Check check : status.checks()) {
+      if (check.outcome() == PullRequestStatus.Outcome.FAILED) {
+        failed.add(check.name());
+      }
+    }
+    JsonObject checks = new JsonObject();
+    checks.addProperty("total", status.checks().size());
+    checks.addProperty("pending", status.count(PullRequestStatus.Outcome.PENDING));
+    checks.add("failed", failed);
+    result.add("checks", checks);
+    result.addProperty("conflicting", "CONFLICTING".equals(status.mergeable()));
+    result.addProperty(NOTE, started.kept()
+      ? "You already watched it. Nothing changed about the watch."
+      : "Only changes from now on wake you. Use the state above to act on what is already there.");
+    return result;
+  }
+
+  private String unwatch() {
+    String stopped = this.service.watcher().stop(this.threadId);
+    JsonObject result = new JsonObject();
+    result.addProperty("watching", false);
+    if (stopped != null) {
+      result.addProperty("stopped", stopped);
+    }
+    return GSON.toJson(result);
+  }
+
   private ThreadStore.Record find(JsonObject arguments) throws McpToolException {
     String id = required(arguments, THREAD_ID);
     ThreadStore.Record record = this.store.find(id);
@@ -346,7 +414,10 @@ final class ThreadTools implements McpTools {
     return schema;
   }
 
-  /** @param workPath the folder to work in instead of the parent's project folder, see {@link ThreadStore.Record} */
+  /**
+   * @param workPath the folder to work in instead of the parent's project folder, see {@link ThreadStore.Record}
+   * @param setup    the setup to run first in the worktree made for the thread
+   */
   record NewThread(
     String title,
     String prompt,
@@ -354,7 +425,8 @@ final class ThreadTools implements McpTools {
     String model,
     String mode,
     String effort,
-    @Nullable String workPath
+    @Nullable String workPath,
+    ThreadStore.@Nullable PendingSetup setup
   ) {
   }
 }

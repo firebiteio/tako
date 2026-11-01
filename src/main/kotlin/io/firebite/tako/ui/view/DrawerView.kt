@@ -34,6 +34,7 @@ import androidx.compose.ui.unit.dp
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.ui.state.Approval
 import io.firebite.tako.ui.state.ThreadState
+import io.firebite.tako.ui.state.TurnItem
 import io.firebite.tako.ui.state.advanceQuestion
 import io.firebite.tako.ui.state.answer
 import io.firebite.tako.ui.state.approvalDetail
@@ -105,15 +106,16 @@ private fun Actions(content: @Composable () -> Unit) {
   }
 }
 
+/** @param extra entries between the approve suggestions and declining */
 @Composable
-private fun MoreButton(thread: ThreadState, approval: Approval) {
+private fun MoreButton(thread: ThreadState, approval: Approval, extra: List<MenuEntry> = emptyList()) {
   var open by remember { mutableStateOf(false) }
   Box {
     IconBtn(Icons.more, t("approvals.more"), iconSize = 14.dp) { open = true }
     if (open) {
       val entries = approval.prompt.suggestions.mapIndexed { index, suggestion ->
         MenuEntry(suggestion.label, icon = Icons.check) { thread.answer(approval, true, suggestion = index) }
-      } + MenuEntry(t("approvals.decline.and.stop"), icon = Icons.closeSmall) {
+      } + extra + MenuEntry(t("approvals.decline.and.stop"), icon = Icons.closeSmall) {
         thread.deny(approval, "The user declined and stopped.", true)
       }
       MenuPopup(entries, alignment = Alignment.End) { open = false }
@@ -150,7 +152,8 @@ private fun PlanDrawer(thread: ThreadState, approval: Approval) {
   DrawerFrame(thread, Icons.plan, t("approvals.plan"), colors.warn) {
     Text(t("approvals.plan.description"), Modifier.padding(top = 2.dp), color = colors.muted, style = smallStyle)
     Actions {
-      MoreButton(thread, approval)
+      MoreButton(thread, approval, implementElsewhereEntries(thread, TurnItem.Plan(approval.prompt.plan ?: "",
+        approval.requestId)))
       OutlineButton(t("approvals.refine")) { thread.deny(approval, "Keep planning.") }
       PrimaryButton(t("approvals.implement")) { thread.answer(approval, true) }
     }

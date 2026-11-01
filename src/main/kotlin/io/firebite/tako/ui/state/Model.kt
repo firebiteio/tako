@@ -118,8 +118,8 @@ sealed interface TurnItem {
   /** A task that ended after its turn, said at the end of the conversation. */
   class Completion(val card: TaskCard) : TurnItem
 
-  /** A plan the agent proposes. */
-  class Plan(val plan: String) : TurnItem
+  /** A plan the agent proposes. @param requestId the approval it waits for, null for a replayed plan */
+  class Plan(val plan: String, val requestId: String? = null) : TurnItem
 
   /** A prompt sent while the turn ran, which the agent took into it. */
   class FollowUp(val prompt: Prompt) : TurnItem

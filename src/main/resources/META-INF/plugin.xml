@@ -32,6 +32,7 @@
     <notificationGroup id="Tako" displayType="BALLOON" key="notification.group.tako"/>
     <statusBarWidgetFactory id="Tako.Status" implementation="io.firebite.tako.ide.status.TakoStatusWidgetFactory"/>
     <actionPromoter implementation="io.firebite.tako.ui.view.StashActionPromoter"/>
+    <postStartupActivity implementation="io.firebite.tako.chat.WatchStartup"/>
   </extensions>
 
   <applicationListeners>

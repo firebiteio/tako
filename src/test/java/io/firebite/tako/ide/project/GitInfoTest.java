@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 
 import java.nio.file.Path;
+import java.util.List;
 import org.junit.Test;
 
 public class GitInfoTest {
@@ -47,5 +48,23 @@ public class GitInfoTest {
   public void noPullRequestWhenCliPrintsNothing() {
     assertNull(GitInfo.parseGitHub(null));
     assertNull(GitInfo.parseGitLab("not json"));
+  }
+
+  @Test
+  public void knownPullRequestIsAskedForByItsUrlOrNumber() {
+    assertEquals(List.of("gh", "pr", "view", "https://github.com/o/r/pull/7", "--json", "number,title,url,state"),
+      GitInfo.viewCommand(new GitInfo.PullRequest("#7", "Fix", "https://github.com/o/r/pull/7", "open")));
+    assertEquals(List.of("glab", "mr", "view", "12", "-F", "json"),
+      GitInfo.viewCommand(new GitInfo.PullRequest("!12", "Fix", "https://gitlab.com/o/r/-/merge_requests/12",
+        "open")));
+  }
+
+  @Test
+  public void strangePullRequestIsNotAskedFor() {
+    assertNull(GitInfo.viewCommand(new GitInfo.PullRequest("#7", "Fix", "--web", "open")));
+    assertNull(GitInfo.viewCommand(new GitInfo.PullRequest("!-1", "Fix", "https://gitlab.com/x", "open")));
+    assertNull(GitInfo.viewCommand(new GitInfo.PullRequest("#null", "Fix", "https://github.com/x", "open")));
+    assertNull(GitInfo.viewCommand(new GitInfo.PullRequest("#", "Fix", "https://github.com/x", "open")));
+    assertNull(GitInfo.viewCommand(new GitInfo.PullRequest("7", "Fix", "https://github.com/x", "open")));
   }
 }

@@ -144,6 +144,7 @@ object Icons {
   val closeSmall: IconKey = lucide("x")
   val chevronRight: IconKey = lucide("chevron-right")
   val chevronDown: IconKey = lucide("chevron-down")
+  val download: IconKey = lucide("download")
   val copy: IconKey = lucide("copy")
   val insert: IconKey = lucide("square-pen")
   val diff: IconKey = lucide("file-diff")
@@ -171,6 +172,7 @@ object Icons {
   val search: IconKey = lucide("search")
   val pullRequest: IconKey = lucide("git-pull-request")
   val merged: IconKey = lucide("git-merge")
+  val eye: IconKey = lucide("eye")
   val commit: IconKey = lucide("git-commit-horizontal")
   val refresh: IconKey = lucide("refresh-cw")
   val more: IconKey = lucide("ellipsis")
@@ -185,6 +187,10 @@ object Icons {
   val todoDone: IconKey = lucide("square-check-big")
   val todoActive: IconKey = lucide("circle-dot")
   val todoPending: IconKey = lucide("circle")
+  val pin: IconKey = lucide("pin")
+  val snooze: IconKey = lucide("alarm-clock")
+  val unread: IconKey = lucide("circle-dot")
+  val rename: IconKey = lucide("pen-line")
 
   fun category(kind: ToolKind): IconKey = when (kind) {
     ToolKind.READ -> lucide("eye")
