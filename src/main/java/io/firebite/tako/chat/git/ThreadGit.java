@@ -9,7 +9,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
@@ -23,7 +22,8 @@ import org.jetbrains.annotations.Nullable;
  * Only one action runs per repository at a time, whichever thread started it.
  */
 public final class ThreadGit {
-  private static final Set<String> RUNNING = ConcurrentHashMap.newKeySet();
+  /** The top folders of the repositories a git action runs in, each with what completes when it ended. */
+  private static final Map<String, CompletableFuture<Void>> RUNNING = new ConcurrentHashMap<>();
   /** How long a logged-in {@code gh} is trusted without asking again. */
   private static final long GH_READY_MILLIS = 300_000;
   /**
@@ -69,7 +69,7 @@ public final class ThreadGit {
     Busy working = topLevel == null ? null : this.busy.apply(topLevel);
     GitCommands.GitHubRepo repository = status.gitHub();
     GitHubCli.State gh = repository == null ? null : knownState(repository.host());
-    boolean running = topLevel != null && RUNNING.contains(topLevel);
+    boolean running = topLevel != null && RUNNING.containsKey(topLevel);
     boolean isSameBranch = status.branch() != null && status.branch().equals(storedBranch);
     return new Menu(status, options(status, gh, running, working == null ? null : working.blocker(),
       isSameBranch ? stored : null), working == null ? null : working.name());
@@ -142,14 +142,44 @@ public final class ThreadGit {
     if (topLevel == null || directory == null) {
       throw new ActionException(Failure.NOT_REPOSITORY, "", Result.NONE);
     }
-    if (!RUNNING.add(topLevel)) {
+    CompletableFuture<Void> done = new CompletableFuture<>();
+    if (RUNNING.putIfAbsent(topLevel, done) != null) {
       throw new ActionException(Failure.ALREADY_RUNNING, "", Result.NONE);
     }
     try {
       return this.runSteps(option, status, draft, directory, progress, cancelled);
     } finally {
-      RUNNING.remove(topLevel);
+      RUNNING.remove(topLevel, done);
+      done.complete(null);
     }
+  }
+
+  /**
+   * Waits until no git action runs in a repository holding {@code folder}, or held in it, so an agent does not change
+   * files while they are committed. The caller must count as busy before, so an action that has not checked yet
+   * stops instead, see {@link Failure#BUSY}.
+   */
+  public static void awaitActions(Path folder) {
+    for (CompletableFuture<Void> action : actionsAround(folder)) {
+      action.join();
+    }
+  }
+
+  /** Whether a git action runs in a repository holding {@code folder}, or held in it. */
+  public static boolean hasActions(Path folder) {
+    return !actionsAround(folder).isEmpty();
+  }
+
+  private static List<CompletableFuture<Void>> actionsAround(Path folder) {
+    Path normalized = folder.toAbsolutePath().normalize();
+    List<CompletableFuture<Void>> actions = new ArrayList<>();
+    for (Map.Entry<String, CompletableFuture<Void>> running : RUNNING.entrySet()) {
+      Path topLevel = Path.of(running.getKey());
+      if (normalized.startsWith(topLevel) || topLevel.startsWith(normalized)) {
+        actions.add(running.getValue());
+      }
+    }
+    return actions;
   }
 
   /** Reads the status again, since the menu may show one read a while ago, and acts on that. */

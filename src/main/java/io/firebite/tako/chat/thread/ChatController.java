@@ -9,6 +9,7 @@ import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.EnvironmentUtil;
+import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentBackend;
 import io.firebite.tako.agent.AgentEvent;
@@ -79,6 +80,9 @@ public final class ChatController implements Disposable {
   private final StringBuilder answer = new StringBuilder();
   private final Conversation conversation = new Conversation();
   private final ThreadGit git;
+  private final Object heldLock = new Object();
+  /** Done once the prompts held for a git action went out. Guarded by {@link #heldLock}. */
+  private CompletableFuture<Void> held = CompletableFuture.completedFuture(null);
   /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
   private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
 
@@ -484,7 +488,33 @@ public final class ChatController implements Disposable {
     }
   }
 
+  /**
+   * Sends the prompt, or holds it while a git action runs in the thread's repository, so the agent does not change
+   * files while they are committed. The thread counts as working first, so an action that has not checked yet stops.
+   * Held prompts go out in order, off the calling thread, which may be the agent's own.
+   */
   private void prompt(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn) {
+    this.setState(State.WORKING);
+    String folder = this.gitFolder();
+    synchronized (this.heldLock) {
+      boolean holds = !this.held.isDone() || folder != null && ThreadGit.hasActions(Path.of(folder));
+      if (holds) {
+        this.held = this.held.thenRunAsync(() -> {
+          if (folder != null) {
+            ThreadGit.awaitActions(Path.of(folder));
+          }
+          if (!this.isDisposed) {
+            this.promptNow(session, typed, prompt, images, turn);
+          }
+        }, AppExecutorUtil.getAppExecutorService());
+        return;
+      }
+    }
+    this.promptNow(session, typed, prompt, images, turn);
+  }
+
+  private void promptNow(AgentSession session, String typed, String prompt, List<ImageAttachment> images,
+    int turn) {
     this.setState(State.WORKING);
     this.error = null;
     this.untakenTurns.add(turn);

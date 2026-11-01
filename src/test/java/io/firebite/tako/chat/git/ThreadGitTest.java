@@ -424,6 +424,42 @@ public class ThreadGitTest {
   }
 
   @Test
+  public void promptsWaitForTheRepositorysGitAction() throws Exception {
+    Path repository = TestRepos.committed();
+    TestRepos.hook(repository, "pre-commit", "sleep 2");
+    write(repository, "a.txt", "changed\n");
+    write(repository, "sub/b.txt", "b\n");
+    ThreadGit git = this.threadGit(repository);
+    ThreadGit.Menu menu = menu(git);
+    Path elsewhere = TestRepos.committed();
+    assertFalse(ThreadGit.hasActions(repository));
+    CompletableFuture<ThreadGit.Result> running = CompletableFuture.supplyAsync(() -> {
+      try {
+        return git.run(menu.options().getFirst(), menu.status(), new Draft("slow", "", ""), s -> {
+        }, NEVER);
+      } catch (ThreadGit.ActionException e) {
+        throw new IllegalStateException(e);
+      }
+    });
+    long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
+    while (!ThreadGit.hasActions(repository)) {
+      if (System.nanoTime() > deadline) {
+        fail("The run never started");
+      }
+      Thread.sleep(20);
+    }
+
+    assertTrue("a folder in the repository", ThreadGit.hasActions(repository.resolve("sub")));
+    assertTrue("a folder holding the repository", ThreadGit.hasActions(repository.getParent()));
+    assertFalse("another repository", ThreadGit.hasActions(elsewhere));
+    ThreadGit.awaitActions(repository.resolve("sub"));
+
+    assertFalse(ThreadGit.hasActions(repository));
+    assertEquals("the commit is made by then", "slow", git(repository, "log", "-1", "--format=%s").strip());
+    assertNotNull(running.get(10, TimeUnit.SECONDS).commit());
+  }
+
+  @Test
   public void pullRequestsGoToAnyGitHubRemoteThePushUses() throws Exception {
     Path repository = TestRepos.committed();
     git(repository, "checkout", "-q", "-b", "feat");
