@@ -7,7 +7,8 @@ fun ThreadState.canActOn(plan: TurnItem.Plan): Boolean = plan.plan.isNotBlank() 
 
 /**
  * Starts a thread that implements the plan, once at a time. Once it started, the plan's approval, if still waiting,
- * is declined and this thread's agent stopped, so two threads don't carry out the same plan.
+ * is declined and this thread's agent stopped, so this thread doesn't carry out the plan as well. A plan already
+ * approved here can still be handed to a new thread on purpose.
  *
  * @param worktree the new thread works in a new git worktree
  */

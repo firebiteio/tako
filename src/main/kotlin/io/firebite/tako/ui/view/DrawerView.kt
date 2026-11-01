@@ -155,7 +155,11 @@ private fun PlanDrawer(thread: ThreadState, approval: Approval) {
       MoreButton(thread, approval, implementElsewhereEntries(thread, TurnItem.Plan(approval.prompt.plan ?: "",
         approval.requestId)))
       OutlineButton(t("approvals.refine")) { thread.deny(approval, "Keep planning.") }
-      PrimaryButton(t("approvals.implement")) { thread.answer(approval, true) }
+      PrimaryButton(t("approvals.implement")) {
+        if (!thread.implementing) {
+          thread.answer(approval, true)
+        }
+      }
     }
   }
 }
