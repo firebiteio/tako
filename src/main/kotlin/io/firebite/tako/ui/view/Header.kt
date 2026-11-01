@@ -123,6 +123,9 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
           Text(meta, color = colors.muted, style = tinyStyle, maxLines = 1)
         }
       }
+      if (thread?.branch != null && workspace.service.controller(thread.id) != null) {
+        DiffSourcesButton(thread)
+      }
       thread?.scratchpad?.let { path ->
         Box {
           val scope = rememberCoroutineScope()
@@ -150,6 +153,40 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     Rule()
+  }
+}
+
+/** A menu of what the thread's checkout changed, read from git on each click, to open in the diff viewer. */
+@Composable
+private fun DiffSourcesButton(thread: ThreadState) {
+  Box {
+    val scope = rememberCoroutineScope()
+    var entries by remember(thread) { mutableStateOf<List<MenuEntry>?>(null) }
+    var loading by remember(thread) { mutableStateOf(false) }
+    IconBtn(Icons.diff, t("header.diff.tooltip")) {
+      val controller = thread.workspace.service.controller(thread.id)
+      if (controller == null || loading) {
+        return@IconBtn
+      }
+      loading = true
+      scope.launch {
+        try {
+          entries = withContext(Dispatchers.IO) {
+            var error: String? = null
+            val sources = try {
+              controller.gitDiffSources()
+            } catch (e: Exception) {
+              error = e.message
+              null
+            }
+            diffMenu(sources, error, System.currentTimeMillis()) { controller.showGitDiff(it) }
+          }
+        } finally {
+          loading = false
+        }
+      }
+    }
+    entries?.let { MenuPopup(it, t("header.diff"), Alignment.End) { entries = null } }
   }
 }
 
