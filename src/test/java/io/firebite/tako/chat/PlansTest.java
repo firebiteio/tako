@@ -24,6 +24,15 @@ public class PlansTest {
   }
 
   @Test
+  public void titleDropsInlineMarkdown() {
+    assertEquals("Add --verbose flag to the CLI",
+      Plans.title("# Plan: Add `--verbose` flag to **the** [CLI](docs/cli.md)"));
+    assertEquals("Fix snake_case names", Plans.title("## ~~Fix~~ *snake_case* names"));
+    assertEquals("add-verbose-flag-to-the-cli.md", Plans.fileName("# Add `--verbose` flag to the [CLI](docs/cli.md)"));
+    assertNull(Plans.title("# **Plan:**"));
+  }
+
+  @Test
   public void titleSkipsAnEmptyPlanHeading() {
     assertEquals("Add dark mode", Plans.title("# Plan:\n\n## Add dark mode"));
   }
@@ -86,7 +95,7 @@ public class PlansTest {
   public void fileNameHasNoCharactersInvalidOnWindows() {
     String name = Plans.fileName("# a<b>c:d\"e/f\\g|h?i*j. ");
 
-    assertEquals("a-b-c-d-e-f-g-h-i-j.md", name);
+    assertEquals("a-b-c-d-e-f-g-h-ij.md", name);
   }
 
   @Test

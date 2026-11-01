@@ -20,6 +20,10 @@ public final class Plans {
   /** "Plan:", or "Plan" and a dash between spaces, but not the start of "Plan-based". */
   private static final Pattern PLAN_PREFIX = Pattern.compile("^(?i)plan(?:\\s*:|\\s+[-\\u2013\\u2014])\\s*");
   private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)");
+  /** A Markdown link or image, whose text stays. */
+  private static final Pattern LINK = Pattern.compile("!?\\[([^\\]]*)]\\([^)]*\\)");
+  /** Code, bold, italic and strikethrough marks; underscores stay, as they are common in names. */
+  private static final Pattern EMPHASIS = Pattern.compile("`+|\\*+|~~");
   private static final Set<String> RESERVED_NAMES = Set.of("con", "prn", "aux", "nul", "com1", "com2", "com3", "com4",
     "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9");
 
@@ -27,8 +31,8 @@ public final class Plans {
   }
 
   /**
-   * The text of the plan's first Markdown heading outside code blocks, without a leading "Plan:", or null without one.
-   * A heading with nothing else, like "# Plan:", is skipped.
+   * The text of the plan's first Markdown heading outside code blocks, without inline marks or a leading "Plan:", or
+   * null without one. A heading with nothing else, like "# Plan:", is skipped.
    */
   public static @Nullable String title(String plan) {
     String fence = null;
@@ -46,7 +50,9 @@ public final class Plans {
       }
       Matcher matcher = HEADING.matcher(line);
       if (fence == null && matcher.matches()) {
-        String title = PLAN_PREFIX.matcher(matcher.group(1).trim()).replaceFirst("").trim();
+        String text = LINK.matcher(matcher.group(1)).replaceAll("$1");
+        text = EMPHASIS.matcher(text).replaceAll("").trim();
+        String title = PLAN_PREFIX.matcher(text).replaceFirst("").trim();
         if (!title.isEmpty()) {
           return title;
         }
