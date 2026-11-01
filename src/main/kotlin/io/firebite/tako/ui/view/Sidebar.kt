@@ -160,11 +160,12 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         if (query.isNotEmpty()) {
           SearchResults(workspace, sorted, query, narrow)
         } else {
+          val (hidden, listed) = sorted.partition { workspace.isHidden(it) }
           val projects = workspace.projectList()
           for (project in projects) {
-            ProjectGroup(workspace, project, sorted, runIds, narrow)
+            ProjectGroup(workspace, project, listed, runIds, narrow)
           }
-          SnoozedFold(workspace, sorted, narrow)
+          SnoozedFold(workspace, hidden, narrow)
         }
       }
     }
@@ -216,8 +217,7 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
  * hidden with them nested under them.
  */
 @Composable
-private fun SnoozedFold(workspace: Workspace, sorted: List<ThreadState>, narrow: Boolean) {
-  val hidden = sorted.filter { workspace.isHidden(it) }
+private fun SnoozedFold(workspace: Workspace, hidden: List<ThreadState>, narrow: Boolean) {
   if (hidden.isEmpty()) {
     return
   }
@@ -293,7 +293,7 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     Rule()
-    val sorted = workspace.threads.values.sortedByDescending { it.updatedAt }
+    val listed = workspace.threads.values.sortedByDescending { it.updatedAt }.filter { !workspace.isHidden(it) }
     val runIds = workspace.benches.flatMap { it.threads }.toSet()
     val projects = workspace.projectList()
     VerticallyScrollableContainer(Modifier.weight(1f)) {
@@ -308,7 +308,7 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
               RailThread(workspace, run)
             }
           }
-          for (node in projectThreads(workspace, project, sorted, runIds)) {
+          for (node in projectThreads(workspace, project, listed, runIds)) {
             RailBranch(workspace, node)
           }
         }
@@ -348,10 +348,11 @@ private fun RailBranch(workspace: Workspace, node: ThreadNode<ThreadState>) {
 private fun projectBenches(workspace: Workspace, project: ChatMessage.ProjectItem): List<ChatMessage.BenchItem> =
   workspace.benches.reversed().filter { workspace.projectAt(it.projectPath).path == project.path }
 
-private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectItem, sorted: List<ThreadState>,
+/** The project's threads as the list nests them, pinned first. [listed] leaves out the threads a snooze hides. */
+private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectItem, listed: List<ThreadState>,
   runIds: Set<String>): List<ThreadNode<ThreadState>> =
-  threadTree(pinnedFirst(sorted.filter {
-    !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path && !workspace.isHidden(it)
+  threadTree(pinnedFirst(listed.filter {
+    !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path
   }) { it.pinned }, { it.id }, { it.parentId })
 
 /** The agents' sessions no thread holds, to resume. */
