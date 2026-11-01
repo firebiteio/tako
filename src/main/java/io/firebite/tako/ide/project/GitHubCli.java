@@ -86,10 +86,12 @@ public interface GitHubCli {
         if (run(home, environment, GitCommands.NEVER_CANCELLED, List.of("--version")).exitCode() != 0) {
           return State.MISSING;
         }
-        List<String> status = List.of("auth", "status", "--active", "--hostname", host);
-        return run(home, environment, GitCommands.NEVER_CANCELLED, status).exitCode() == 0
-          ? State.READY
-          : State.LOGGED_OUT;
+        GitCommands.Output active = run(home, environment, GitCommands.NEVER_CANCELLED,
+          List.of("auth", "status", "--active", "--hostname", host));
+        if (active.exitCode() != 0 && active.stderr().contains("unknown flag")) {
+          active = run(home, environment, GitCommands.NEVER_CANCELLED, List.of("auth", "status", "--hostname", host));
+        }
+        return active.exitCode() == 0 ? State.READY : State.LOGGED_OUT;
       } catch (GitCommands.CommandException e) {
         return e.kind() == GitCommands.CommandException.Kind.FAILED ? State.MISSING : State.LOGGED_OUT;
       }

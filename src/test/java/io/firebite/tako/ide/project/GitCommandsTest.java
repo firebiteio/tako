@@ -281,6 +281,48 @@ public class GitCommandsTest {
   }
 
   @Test
+  public void failedCommitKeepsWhatThePersonHadStaged() throws Exception {
+    Path repository = TestRepos.committed();
+    write(repository, "a.txt", "staged\n");
+    write(repository, "b.txt", "unstaged new file\n");
+    git(repository, "add", "a.txt");
+    String before = git(repository, "status", "--porcelain");
+    TestRepos.hook(repository, "pre-commit", "exit 1");
+
+    expectFailure(() -> GitCommands.commit(repository, ENVIRONMENT, "x", NEVER));
+
+    assertEquals(before, git(repository, "status", "--porcelain"));
+  }
+
+  @Test
+  public void failedFirstCommitLeavesNoIndex() throws Exception {
+    Path repository = TestRepos.repository();
+    write(repository, "a.txt", "a\n");
+    TestRepos.hook(repository, "pre-commit", "exit 1");
+
+    expectFailure(() -> GitCommands.commit(repository, ENVIRONMENT, "x", NEVER));
+
+    assertFalse(Files.exists(repository.resolve(".git/index")));
+    assertEquals("?? a.txt\n", git(repository, "status", "--porcelain"));
+  }
+
+  @Test
+  public void cancelledCommitReleasesTheIndex() throws Exception {
+    Path repository = TestRepos.committed();
+    TestRepos.hook(repository, "pre-commit", "sleep 60");
+    write(repository, "a.txt", "changed\n");
+    long start = System.nanoTime();
+
+    expectFailure(
+      () -> GitCommands.commit(repository, ENVIRONMENT, "x", () -> System.nanoTime() - start > 1_000_000_000L));
+
+    assertFalse(Files.exists(repository.resolve(".git/index.lock")));
+    assertEquals(" M a.txt\n", git(repository, "status", "--porcelain"));
+    TestRepos.hook(repository, "pre-commit", "exit 0");
+    GitCommands.commit(repository, ENVIRONMENT, "after cancel", NEVER);
+  }
+
+  @Test
   public void cancellingStopsASlowHook() throws Exception {
     Path repository = TestRepos.committed();
     TestRepos.hook(repository, "pre-commit", "sleep 60");

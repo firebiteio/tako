@@ -6,6 +6,7 @@ import java.io.RandomAccessFile;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -35,15 +36,11 @@ public final class GitCommands {
 
   /** The checkout's branch, changes and remote. Not a repository when the folder is gone or not in git. */
   public static Status status(Path directory, Map<String, String> environment) {
-    if (!Files.isDirectory(directory)) {
+    String topLevel = topLevel(directory, environment);
+    if (topLevel == null) {
       return Status.NONE;
     }
     try {
-      Output top = read(directory, environment, "rev-parse", "--show-toplevel");
-      if (top.exitCode() != 0 || top.stdout().isBlank()) {
-        return Status.NONE;
-      }
-      String topLevel = Path.of(top.stdout().strip()).toAbsolutePath().normalize().toString();
       String branch = branch(directory, environment);
       boolean hasCommits = read(directory, environment, "rev-parse", "-q", "--verify", "HEAD").exitCode() == 0;
       boolean isMerging = read(directory, environment, "rev-parse", "-q", "--verify", "MERGE_HEAD").exitCode() == 0;
@@ -84,6 +81,21 @@ public final class GitCommands {
         tracksBranch, ahead, defaultBranch, gitHub);
     } catch (CommandException | NumberFormatException e) {
       return Status.NONE;
+    }
+  }
+
+  /** The top folder of the repository the folder is in, normalized, or null when it is gone or not in git. */
+  public static @Nullable String topLevel(Path directory, Map<String, String> environment) {
+    if (!Files.isDirectory(directory)) {
+      return null;
+    }
+    try {
+      Output top = read(directory, environment, "rev-parse", "--show-toplevel");
+      return top.exitCode() != 0 || top.stdout().isBlank()
+        ? null
+        : Path.of(top.stdout().strip()).toAbsolutePath().normalize().toString();
+    } catch (CommandException e) {
+      return null;
     }
   }
 
@@ -135,11 +147,50 @@ public final class GitCommands {
   }
 
   /**
-   * Stages every change and commits it with {@code message}, running the repository's hooks.
+   * Stages every change and commits it with {@code message}, running the repository's hooks. When no commit is made,
+   * e.g. a hook fails or it is cancelled, the index is put back as it was, so what the person had staged stays staged
+   * and nothing else is. A cancelled commit's index lock is removed.
    *
    * @return the new commit's short hash
    */
   public static String commit(Path directory, Map<String, String> environment, String message,
+    BooleanSupplier cancelled) throws CommandException {
+    Path index = gitPath(directory, environment, "index");
+    Path lock = gitPath(directory, environment, "index.lock");
+    boolean wasLocked = Files.exists(lock);
+    String head = read(directory, environment, "rev-parse", "-q", "--verify", "HEAD").stdout().strip();
+    Path saved = createTemp(".index");
+    try {
+      boolean hadIndex = Files.exists(index);
+      if (hadIndex) {
+        Files.copy(index, saved, StandardCopyOption.REPLACE_EXISTING);
+      }
+      try {
+        return commitAll(directory, environment, message, cancelled);
+      } catch (CommandException e) {
+        boolean isKilled = e.kind() == CommandException.Kind.CANCELLED || e.kind() == CommandException.Kind.TIMED_OUT;
+        if (isKilled && !wasLocked) {
+          deleteQuietly(lock);
+        }
+        boolean isUncommitted = head.equals(read(directory, environment, "rev-parse", "-q", "--verify", "HEAD")
+          .stdout().strip());
+        if (isUncommitted && !Files.exists(lock)) {
+          if (hadIndex) {
+            Files.copy(saved, index, StandardCopyOption.REPLACE_EXISTING);
+          } else {
+            deleteQuietly(index);
+          }
+        }
+        throw e;
+      }
+    } catch (IOException e) {
+      throw new CommandException(CommandException.Kind.FAILED, String.valueOf(e.getMessage()));
+    } finally {
+      deleteQuietly(saved);
+    }
+  }
+
+  private static String commitAll(Path directory, Map<String, String> environment, String message,
     BooleanSupplier cancelled) throws CommandException {
     success(git(directory, environment, COMMIT_TIMEOUT_SECONDS, cancelled, List.of("add", "-A")));
     boolean isMerging = read(directory, environment, "rev-parse", "-q", "--verify", "MERGE_HEAD").exitCode() == 0;
@@ -272,6 +323,11 @@ public final class GitCommands {
     Output head = read(directory, environment, "symbolic-ref", "-q", "--short", "refs/remotes/" + remote + "/HEAD");
     String name = head.stdout().strip();
     return head.exitCode() == 0 && name.startsWith(remote + "/") ? name.substring(remote.length() + 1) : null;
+  }
+
+  /** A file in the repository's git folder, e.g. {@code index}, which may not exist. */
+  private static Path gitPath(Path directory, Map<String, String> environment, String name) throws CommandException {
+    return directory.resolve(success(read(directory, environment, "rev-parse", "--git-path", name)).strip());
   }
 
   private static @Nullable String config(Path directory, Map<String, String> environment, String key)
