@@ -270,11 +270,12 @@ public final class Worktrees {
 
   /**
    * A copy of the worktree's index with new files marked, so diffs against a commit see them. The agent may still work
-   * in the worktree, so its own index stays untouched. Closing deletes the copy.
+   * in the worktree, so its own index stays untouched. Closing deletes the copy. A repository without an index yet,
+   * before its first {@code git add}, starts from none, since git rejects an empty index file.
    *
    * @param environment the environment that makes git use the copy
    */
-  private record MarkedIndex(
+  record MarkedIndex(
     Path file,
     Map<String, String> environment
   ) implements AutoCloseable {
@@ -285,7 +286,11 @@ public final class Worktrees {
       marked.put("GIT_INDEX_FILE", copy.toString());
       MarkedIndex markedIndex = new MarkedIndex(copy, marked);
       try {
-        Files.copy(index, copy, StandardCopyOption.REPLACE_EXISTING);
+        if (Files.exists(index)) {
+          Files.copy(index, copy, StandardCopyOption.REPLACE_EXISTING);
+        } else {
+          Files.delete(copy);
+        }
         git(worktree, marked, "add", "--all", "--intent-to-add");
         return markedIndex;
       } catch (IOException | GitException e) {
