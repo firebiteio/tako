@@ -49,8 +49,9 @@ class TakoCommandsTest : BasePlatformTestCase() {
 
   private fun start(fork: Boolean = true, resume: Boolean = true,
     commands: List<AgentInfo.Command> = emptyList()) {
-    this.thread.onInit(AgentInfo("claude", "Claude Code", "", AgentInfo.Capabilities(true, true, fork, true, resume),
-      this.models, "opus", this.modes, "default", null, commands), null)
+    this.thread.onInit(AgentInfo("claude", "Claude Code", "",
+      AgentInfo.Capabilities(true, true, fork, true, resume, true, true), this.models, "opus", this.modes, "default",
+      null, commands), null)
   }
 
   private fun resolve(text: String): TakoAction = this.thread.resolve(parseTakoCommand(text)!!)
