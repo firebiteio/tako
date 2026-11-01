@@ -33,6 +33,8 @@ public class PlansTest {
     assertEquals("Add dark mode", Plans.title("Run:\n```bash\n# install deps\nnpm i\n```\n## Add dark mode"));
     assertEquals("Add dark mode", Plans.title("~~~~\n# a\n```\n# b\n~~~~\n# Add dark mode"));
     assertNull(Plans.title("```\n# never closed"));
+    assertEquals("Real", Plans.title("````\n```md\n# Not a title\n```\n````\n# Real"));
+    assertEquals("Real", Plans.title("```\n```md\n# Not a title\n```\n# Real"));
   }
 
   @Test

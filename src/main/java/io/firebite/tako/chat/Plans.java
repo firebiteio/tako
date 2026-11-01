@@ -19,7 +19,7 @@ public final class Plans {
   private static final Pattern HEADING = Pattern.compile("^ {0,3}#{1,6}[ \\t]+(.*?)(?:[ \\t]+#+)?[ \\t]*$");
   /** "Plan:", or "Plan" and a dash between spaces, but not the start of "Plan-based". */
   private static final Pattern PLAN_PREFIX = Pattern.compile("^(?i)plan(?:\\s*:|\\s+[-\\u2013\\u2014])\\s*");
-  private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,}).*");
+  private static final Pattern FENCE = Pattern.compile("^ {0,3}(`{3,}|~{3,})(.*)");
   private static final Set<String> RESERVED_NAMES = Set.of("con", "prn", "aux", "nul", "com1", "com2", "com3", "com4",
     "com5", "com6", "com7", "com8", "com9", "lpt1", "lpt2", "lpt3", "lpt4", "lpt5", "lpt6", "lpt7", "lpt8", "lpt9");
 
@@ -38,7 +38,8 @@ public final class Plans {
         String run = fenceMatcher.group(1);
         if (fence == null) {
           fence = run;
-        } else if (run.charAt(0) == fence.charAt(0) && run.length() >= fence.length()) {
+        } else if (run.charAt(0) == fence.charAt(0) && run.length() >= fence.length()
+          && fenceMatcher.group(2).isBlank()) {
           fence = null;
         }
         continue;
