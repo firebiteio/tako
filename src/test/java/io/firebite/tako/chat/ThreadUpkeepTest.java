@@ -24,7 +24,7 @@ public class ThreadUpkeepTest {
   }
 
   private static ThreadStore.Record inWorktree(String state) {
-    ThreadStore.Record record = record(NOW);
+    ThreadStore.Record record = record(NOW - ThreadUpkeep.PULL_REQUEST_GRACE_MILLIS);
     record.workPath = "D:/code/app-tako/fix";
     record.pullRequest = new GitInfo.PullRequest("#7", "Fix", URL, state);
     return record;
@@ -46,6 +46,19 @@ public class ThreadUpkeepTest {
     assertEquals(ThreadUpkeep.Reason.PULL_REQUEST, ThreadUpkeep.settleReason(inWorktree("closed"), BOTH, NOW));
     assertNull(ThreadUpkeep.settleReason(inWorktree("open"), BOTH, NOW));
     assertNull(ThreadUpkeep.settleReason(inWorktree("draft"), BOTH, NOW));
+  }
+
+  @Test
+  public void workGoingOnAfterTheMergeKeepsTheThreadForAnHour() {
+    ThreadStore.Record prompted = inWorktree("merged");
+    prompted.updatedAt = NOW - ThreadUpkeep.PULL_REQUEST_GRACE_MILLIS + 1;
+    assertNull(ThreadUpkeep.settleReason(prompted, BOTH, NOW));
+
+    ThreadStore.Record opened = inWorktree("merged");
+    opened.seenAt = NOW - 1;
+    assertNull(ThreadUpkeep.settleReason(opened, BOTH, NOW));
+    assertEquals(ThreadUpkeep.Reason.PULL_REQUEST,
+      ThreadUpkeep.settleReason(opened, BOTH, NOW + ThreadUpkeep.PULL_REQUEST_GRACE_MILLIS));
   }
 
   @Test

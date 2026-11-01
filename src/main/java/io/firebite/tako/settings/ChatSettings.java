@@ -70,6 +70,11 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
     /** ACP agents, one {@code Name = command line} per line. */
     public String acpAgents = "Gemini CLI = gemini --acp";
 
+    /** The idle days within the allowed range, as a hand-edited file may hold any number. */
+    public int idleDays() {
+      return Math.clamp(this.settleIdleDays, MIN_IDLE_DAYS, MAX_IDLE_DAYS);
+    }
+
     public AgentDefaults claudeDefaults() {
       return new AgentDefaults(this.claudeModel, this.claudeMode, this.claudeEffort);
     }

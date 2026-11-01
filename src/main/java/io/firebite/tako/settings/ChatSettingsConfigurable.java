@@ -12,7 +12,6 @@ import com.intellij.util.ui.JBUI;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.chat.ChatService;
-import io.firebite.tako.chat.ThreadUpkeep;
 import java.awt.FlowLayout;
 import java.util.List;
 import javax.swing.DefaultComboBoxModel;
@@ -69,7 +68,7 @@ public final class ChatSettingsConfigurable implements Configurable {
     return !this.selectedId().equals(data.defaultAgent) || this.parallelRunsBox.isSelected() != data.parallelRuns
       || this.settlePullRequestBox.isSelected() != data.settleOnPullRequest
       || this.settleIdleBox.isSelected() != data.settleIdle
-      || this.settleDaysSpinner.getNumber() != ThreadUpkeep.Rules.of(data).idleDays();
+      || this.settleDaysSpinner.getNumber() != data.idleDays();
   }
 
   @Override
@@ -100,7 +99,7 @@ public final class ChatSettingsConfigurable implements Configurable {
     this.parallelRunsBox.setSelected(data.parallelRuns);
     this.settlePullRequestBox.setSelected(data.settleOnPullRequest);
     this.settleIdleBox.setSelected(data.settleIdle);
-    this.settleDaysSpinner.setNumber(ThreadUpkeep.Rules.of(data).idleDays());
+    this.settleDaysSpinner.setNumber(data.idleDays());
     this.settleDaysSpinner.setEnabled(data.settleIdle);
   }
 

@@ -370,8 +370,10 @@ public class ThreadListTest extends BasePlatformTestCase {
     record.workPath = "D:/code/app-tako/fix";
     record.pullRequest = new GitInfo.PullRequest("#7", "Fix", MERGED_URL, "merged");
     long now = System.currentTimeMillis();
-
     this.service.upkeep().tick(now);
+    assertFalse("work may go on right after the merge", record.archived);
+
+    this.service.upkeep().tick(now + ThreadUpkeep.PULL_REQUEST_GRACE_MILLIS);
     assertTrue(record.archived);
     assertEquals(MERGED_URL, record.settledPullRequest);
     this.service.restore(record.id);

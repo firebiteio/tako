@@ -26,6 +26,8 @@ import org.jetbrains.annotations.Nullable;
 public final class ThreadUpkeep {
   private static final Logger LOG = Logger.getInstance(ThreadUpkeep.class);
   private static final long DAY_MILLIS = 24L * 60 * 60 * 1000;
+  /** How long a thread whose pull request ended stays after its last prompt or opening, as work may go on after it. */
+  static final long PULL_REQUEST_GRACE_MILLIS = 60L * 60 * 1000;
 
   private final ChatService service;
   private final ThreadStore store;
@@ -50,11 +52,11 @@ public final class ThreadUpkeep {
       return null;
     }
     GitInfo.PullRequest pullRequest = record.pullRequest;
+    long idleSince = Math.max(record.updatedAt, record.seenAt);
     if (rules.pullRequest() && record.workPath != null && pullRequest != null && isClosed(pullRequest)
-      && !pullRequest.url().equals(record.settledPullRequest)) {
+      && !pullRequest.url().equals(record.settledPullRequest) && now - idleSince >= PULL_REQUEST_GRACE_MILLIS) {
       return Reason.PULL_REQUEST;
     }
-    long idleSince = Math.max(record.updatedAt, record.seenAt);
     if (rules.idle() && !record.pinned && now - idleSince >= rules.idleDays() * DAY_MILLIS) {
       return Reason.IDLE;
     }
@@ -176,7 +178,10 @@ public final class ThreadUpkeep {
     this.service.postUpdates(changed);
   }
 
-  /** The pull request as it is now, asked in the first of the folders that still exists; null when none does. */
+  /**
+   * The pull request as it is now, asked in each folder that still exists until one answers, as a removed worktree can
+   * leave a folder that is no checkout anymore. Null when none answers.
+   */
   private static @Nullable GitInfo.PullRequest lookUp(Ask ask, Map<String, String> environment) {
     for (String folder : ask.folders()) {
       if (folder.isBlank()) {
@@ -188,8 +193,9 @@ public final class ThreadUpkeep {
       } catch (InvalidPathException e) {
         continue;
       }
-      if (Files.isDirectory(path)) {
-        return GitInfo.pullRequest(path, environment, ask.known());
+      GitInfo.PullRequest found = Files.isDirectory(path) ? GitInfo.pullRequest(path, environment, ask.known()) : null;
+      if (found != null) {
+        return found;
       }
     }
     return null;
@@ -215,8 +221,7 @@ public final class ThreadUpkeep {
     int idleDays
   ) {
     public static Rules of(ChatSettings.Data settings) {
-      return new Rules(settings.settleOnPullRequest, settings.settleIdle,
-        Math.clamp(settings.settleIdleDays, ChatSettings.MIN_IDLE_DAYS, ChatSettings.MAX_IDLE_DAYS));
+      return new Rules(settings.settleOnPullRequest, settings.settleIdle, settings.idleDays());
     }
   }
 }

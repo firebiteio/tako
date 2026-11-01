@@ -52,6 +52,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -348,8 +349,8 @@ public final class ChatService implements Disposable {
     if (record == null) {
       return;
     }
-    List<ThreadStore.Record> changed = this.unarchived(record);
     this.store.setActiveId(record.id);
+    List<ThreadStore.Record> changed = this.unarchived(record);
     changed.addAll(this.seen(record));
     this.postUpdates(changed);
     this.post(new ChatMessage.Select(record.id));
@@ -442,13 +443,13 @@ public final class ChatService implements Disposable {
     return changed;
   }
 
-  /** Saves the threads once and tells the chat about each of them. */
+  /** Saves the threads once and tells the chat about each of them once. */
   void postUpdates(List<ThreadStore.Record> records) {
     if (records.isEmpty()) {
       return;
     }
     this.store.save();
-    for (ThreadStore.Record record : records) {
+    for (ThreadStore.Record record : new LinkedHashSet<>(records)) {
       this.post(new ChatMessage.ThreadUpdated(record.toItem()));
     }
   }
