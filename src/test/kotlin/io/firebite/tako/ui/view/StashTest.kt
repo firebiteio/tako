@@ -32,7 +32,7 @@ class StashTest : BasePlatformTestCase() {
     super.setUp()
     this.workspace = Workspace(ChatService.getInstance(this.project), this.project)
     this.thread = ThreadState(this.workspace, ChatMessage.ThreadItem("thread", "Chat", false, 0, false, 0.0, 0, null,
-      null, null, null, "claude", 0, null))
+      null, null, null, "claude", 0, null, false, false, 0))
     this.stash = PromptStash.getInstance(this.project)
     this.clearStash()
   }

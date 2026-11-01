@@ -16,7 +16,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.jetbrains.annotations.Nullable;
 
@@ -77,6 +79,52 @@ public final class ThreadStore {
       }
     }
     return null;
+  }
+
+  /**
+   * Whether a snooze hides the thread from the list: its own or one of its parents'. A parent that is archived or
+   * missing ends the walk, as the list no longer nests the thread under it. An archived thread is never hidden.
+   */
+  public synchronized boolean isSnoozeHidden(Record record) {
+    if (record.archived) {
+      return false;
+    }
+    Set<String> seen = new HashSet<>();
+    Record current = record;
+    while (current != null && !current.archived && seen.add(current.id)) {
+      if (current.snoozedUntil > 0) {
+        return true;
+      }
+      current = this.find(current.parentId);
+    }
+    return false;
+  }
+
+  /** Ends the snooze of the thread and of its parents, so the list shows it. Returns the threads it changed. */
+  public synchronized List<Record> wakeWithAncestors(Record record) {
+    List<Record> woken = new ArrayList<>();
+    Set<String> seen = new HashSet<>();
+    Record current = record;
+    while (current != null && !current.archived && seen.add(current.id)) {
+      if (current.snoozedUntil > 0) {
+        current.snoozedUntil = 0;
+        woken.add(current);
+      }
+      current = this.find(current.parentId);
+    }
+    return woken;
+  }
+
+  /** Whether the thread is a run of a parallel-run bench. */
+  public synchronized boolean isRun(String id) {
+    for (Bench bench : this.data.benches) {
+      for (Run run : bench.runs) {
+        if (run.thread.equals(id)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   public synchronized void remove(String id) {
@@ -239,6 +287,16 @@ public final class ThreadStore {
     public @Nullable String parentId;
     /** How long the first turn took, 0 until it ended. */
     public long firstTurnMillis;
+    /** Whether the list keeps the thread above the others of its group. */
+    public boolean pinned;
+    /** The agent finished or asked something while the thread was not shown, or the person marked it unread. */
+    public boolean unread;
+    /** When the thread's snooze ends, in epoch millis; 0 when it is not snoozed. */
+    public long snoozedUntil;
+    /** When the person last opened, restored or woke the thread. Idle time for auto archive counts from here too. */
+    public long seenAt;
+    /** The pull request the thread was archived for automatically, so restoring it does not archive it again. */
+    public @Nullable String settledPullRequest;
 
     /** The folder the thread works in: its {@link #workPath}, its {@link #projectPath} or else {@code basePath}. */
     public @Nullable String folder(@Nullable String basePath) {
@@ -264,7 +322,9 @@ public final class ThreadStore {
     public ChatMessage.ThreadItem toItem() {
       return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
-        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId);
+        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId,
+        this.pinned,
+        this.unread, this.snoozedUntil);
     }
   }
 

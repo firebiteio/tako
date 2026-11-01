@@ -1,10 +1,12 @@
 package io.firebite.tako.chat.store;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
 import io.firebite.tako.ide.project.GitInfo;
+import io.firebite.tako.ui.bridge.ChatMessage;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -105,6 +107,112 @@ public class ThreadStoreTest {
     assertEquals("D:/code/app-tako/fix-login-b1/1", reloaded.find(record.id).workPath);
     reloaded.removeBench("b1");
     assertNull(new ThreadStore(file).findBench("b1"));
+  }
+
+  @Test
+  public void listStateSurvivesAReload() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record record = store.create(null, "Pinned", null, "claude");
+    record.pinned = true;
+    record.unread = true;
+    record.snoozedUntil = 1_800_000_000_000L;
+    record.seenAt = 1_700_000_000_000L;
+    record.settledPullRequest = "https://github.com/o/r/pull/7";
+    store.save();
+
+    ThreadStore.Record restored = new ThreadStore(file).find(record.id);
+
+    assertTrue(restored.pinned);
+    assertTrue(restored.unread);
+    assertEquals(1_800_000_000_000L, restored.snoozedUntil);
+    assertEquals(1_700_000_000_000L, restored.seenAt);
+    assertEquals("https://github.com/o/r/pull/7", restored.settledPullRequest);
+    ChatMessage.ThreadItem item = restored.toItem();
+    assertTrue(item.pinned());
+    assertTrue(item.unread());
+    assertEquals(1_800_000_000_000L, item.snoozedUntil());
+  }
+
+  @Test
+  public void fileFromBeforeListStateLoadsWithDefaults() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    Files.writeString(file, "{\"threads\":[{\"id\":\"a\",\"title\":\"Old\",\"updatedAt\":5}]}");
+
+    ThreadStore.Record record = new ThreadStore(file).find("a");
+
+    assertFalse(record.pinned);
+    assertFalse(record.unread);
+    assertEquals(0, record.snoozedUntil);
+    assertEquals(0, record.seenAt);
+    assertNull(record.settledPullRequest);
+  }
+
+  @Test
+  public void snoozedParentHidesItsSubThreadsAtAnyDepth() throws Exception {
+    ThreadStore store = new ThreadStore(Files.createTempDirectory("threads").resolve("threads.json"));
+    ThreadStore.Record parent = store.create(null, "Parent", null, "claude");
+    ThreadStore.Record child = store.create(null, "Child", null, "claude");
+    ThreadStore.Record grandchild = store.create(null, "Grandchild", null, "claude");
+    child.parentId = parent.id;
+    grandchild.parentId = child.id;
+    parent.snoozedUntil = 100;
+
+    assertTrue(store.isSnoozeHidden(parent));
+    assertTrue(store.isSnoozeHidden(grandchild));
+    parent.archived = true;
+    assertFalse(store.isSnoozeHidden(grandchild));
+    assertFalse(store.isSnoozeHidden(parent));
+  }
+
+  @Test
+  public void parentCycleEndsTheWalk() throws Exception {
+    ThreadStore store = new ThreadStore(Files.createTempDirectory("threads").resolve("threads.json"));
+    ThreadStore.Record first = store.create(null, "First", null, "claude");
+    ThreadStore.Record second = store.create(null, "Second", null, "claude");
+    first.parentId = second.id;
+    second.parentId = first.id;
+
+    assertFalse(store.isSnoozeHidden(first));
+    assertTrue(store.wakeWithAncestors(first).isEmpty());
+    second.snoozedUntil = 100;
+    assertTrue(store.isSnoozeHidden(first));
+    assertEquals(List.of(second), store.wakeWithAncestors(first));
+    assertEquals(0, second.snoozedUntil);
+  }
+
+  @Test
+  public void wakingASubThreadWakesItsSnoozedParentsOnly() throws Exception {
+    ThreadStore store = new ThreadStore(Files.createTempDirectory("threads").resolve("threads.json"));
+    ThreadStore.Record grandparent = store.create(null, "Grandparent", null, "claude");
+    ThreadStore.Record parent = store.create(null, "Parent", null, "claude");
+    ThreadStore.Record child = store.create(null, "Child", null, "claude");
+    ThreadStore.Record sibling = store.create(null, "Sibling", null, "claude");
+    parent.parentId = grandparent.id;
+    child.parentId = parent.id;
+    sibling.parentId = parent.id;
+    grandparent.snoozedUntil = 100;
+    sibling.snoozedUntil = 200;
+
+    assertEquals(List.of(grandparent), store.wakeWithAncestors(child));
+
+    assertFalse(store.isSnoozeHidden(child));
+    assertEquals(200, sibling.snoozedUntil);
+  }
+
+  @Test
+  public void benchRunsAreKnown() throws Exception {
+    ThreadStore store = new ThreadStore(Files.createTempDirectory("threads").resolve("threads.json"));
+    ThreadStore.Record record = store.create(null, "Run", null, "claude");
+    ThreadStore.Bench bench = new ThreadStore.Bench();
+    bench.id = "b";
+    ThreadStore.Run run = new ThreadStore.Run();
+    run.thread = record.id;
+    bench.runs.add(run);
+    store.addBench(bench);
+
+    assertTrue(store.isRun(record.id));
+    assertFalse(store.isRun("other"));
   }
 
   @Test
