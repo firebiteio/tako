@@ -9,6 +9,7 @@ import io.firebite.tako.chat.BenchRequest
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ide.context.ContextItem
+import io.firebite.tako.ide.context.ReviewComment
 import io.firebite.tako.ui.t
 import java.io.IOException
 import kotlin.math.min
@@ -47,14 +48,16 @@ fun ThreadState.submit() {
     this.declineWithFeedback(approval)
     return
   }
-  val text = this.typed
+  val typed = this.typed
   val images = this.images.map { it.image }
-  if (text.isEmpty() && images.isEmpty()) {
+  val hasReviews = hasReviews(this.contexts)
+  if (typed.isEmpty() && images.isEmpty() && !hasReviews) {
     if (this.busy) {
       this.controller?.interrupt()
     }
     return
   }
+  val text = if (typed.isEmpty() && hasReviews) t("review.prompt") else typed
   if (this.isBench) {
     if (!this.startBench(text)) {
       return
@@ -69,7 +72,8 @@ fun ThreadState.submit() {
 
 /** Sends, then opens a new thread in the same folder. */
 fun ThreadState.submitAndBranch() {
-  if (this.question != null || this.approvals.isNotEmpty() || (this.typed.isEmpty() && this.images.isEmpty())) {
+  if (this.question != null || this.approvals.isNotEmpty()
+    || (this.typed.isEmpty() && this.images.isEmpty() && !hasReviews(this.contexts))) {
     return
   }
   this.submit()
@@ -156,9 +160,14 @@ private fun ThreadState.putBack(prompt: ChatMessage.Submit) {
   }
 }
 
-/** IDE context attached from an editor action; a proposed prompt fills an empty box. */
+/**
+ * IDE context attached from an editor action; a proposed prompt fills an empty box. A review comment already attached
+ * is not attached twice.
+ */
 fun ThreadState.addContext(item: ContextItem, prefill: String?) {
-  this.contexts.add(item)
+  if (item.kind != ContextItem.Kind.REVIEW || this.contexts.none { it.kind == item.kind && it.text == item.text }) {
+    this.contexts.add(item)
+  }
   if (!this.isActive) {
     return
   }
@@ -166,6 +175,25 @@ fun ThreadState.addContext(item: ContextItem, prefill: String?) {
     this.input.setTextAndPlaceCursorAtEnd(prefill)
   }
   this.workspace.focusComposer++
+}
+
+fun hasReviews(contexts: List<ContextItem>): Boolean = contexts.any { it.kind == ContextItem.Kind.REVIEW }
+
+/**
+ * The typed feedback, then each review comment made in the diff of the prompt's proposed edit, with an empty line
+ * between them.
+ */
+fun withReviews(typed: String, contexts: List<ContextItem>, prompt: PermissionPrompt): String {
+  val parts = mutableListOf<String>()
+  if (typed.isNotEmpty()) {
+    parts.add(typed)
+  }
+  for (item in contexts) {
+    if (isOnEdit(item, prompt)) {
+      parts.add(item.text)
+    }
+  }
+  return parts.joinToString("\n\n")
 }
 
 /** The box takes quotes unless a waiting approval or question would take the text as its answer. */
@@ -261,12 +289,21 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
   this.removeApproval(approval.requestId)
 }
 
-/** Declines with the typed text as the reason, or the fallback without one. See [decline] for agents without a reason. */
+/**
+ * Declines with the typed text as the reason, or the fallback without one. Declining a proposed edit, without stopping,
+ * also gives the review comments made in its diff as the reason, see [foldsReviews]; they then leave the box. See
+ * [decline] for agents without a reason.
+ */
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
-  val decline = decline(approval.prompt, this.typed, fallback, interrupt,
-    this.info?.capabilities?.declineReason != false)
+  val readsReason = this.info?.capabilities?.declineReason != false
+  val foldsReviews = foldsReviews(approval.prompt, interrupt, readsReason, this.contexts)
+  val feedback = if (foldsReviews) withReviews(this.typed, this.contexts, approval.prompt) else this.typed
+  val decline = decline(approval.prompt, feedback, fallback, interrupt, readsReason)
   if (!decline.keepsFeedback) {
     this.input.clearText()
+  }
+  if (foldsReviews) {
+    this.contexts.removeAll { isOnEdit(it, approval.prompt) }
   }
   this.answer(approval, false, decline.message, decline.interrupt)
   val followUp = decline.followUp ?: return
@@ -303,9 +340,26 @@ private fun declinedPrompt(prompt: PermissionPrompt, feedback: String): String {
   return "I declined " + tool + (if (target.isNullOrEmpty()) "." else ": $target") + "\n\n" + feedback
 }
 
-/** The typed text declines the waiting approval, or refines the plan. */
+/**
+ * Review comments made in the diff of the proposed edit go along as the reason for declining it, to an agent that reads
+ * a reason. Comments on other diffs, files or edits stay in the box, and so do all when declining stops the turn: the
+ * agent would not act on them.
+ */
+fun foldsReviews(prompt: PermissionPrompt, stop: Boolean, readsReason: Boolean, contexts: List<ContextItem>): Boolean =
+  !stop && readsReason && prompt.kind == PermissionPrompt.Kind.TOOL && prompt.canDiff
+    && contexts.any { isOnEdit(it, prompt) }
+
+/** The item is a review comment made in the diff of the prompt's edit, or of any proposed edit without a known file. */
+private fun isOnEdit(item: ContextItem, prompt: PermissionPrompt): Boolean =
+  ReviewComment.isOnProposedEdit(item, prompt.input.string("file_path") ?: prompt.input.string("path"))
+
+/** Enter declines the waiting approval with review comments alone, see [foldsReviews]. */
+fun ThreadState.declinesWithReviews(approval: Approval): Boolean =
+  foldsReviews(approval.prompt, false, this.info?.capabilities?.declineReason != false, this.contexts)
+
+/** The typed text, or review comments on a proposed edit, decline the waiting approval; typed text refines the plan. */
 private fun ThreadState.declineWithFeedback(approval: Approval) {
-  if (this.typed.isEmpty()) {
+  if (this.typed.isEmpty() && !this.declinesWithReviews(approval)) {
     return
   }
   this.deny(approval, if (approval.prompt.kind == PermissionPrompt.Kind.PLAN) "Keep planning." else "Declined.")

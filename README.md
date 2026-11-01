@@ -15,6 +15,7 @@ It works with:
 - Answers stream in as the agent writes them
 - Before an edit, the permission prompt can open the change in the IDE diff viewer
 - After each turn you get a diff of every file the agent touched
+- Comment on lines in those diffs, or in any file, and send the comments to the agent together
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
@@ -32,6 +33,8 @@ It works with:
 Open the Tako tool window on the right, click New Tako Chat, pick an agent and type.
 
 In the editor or project view, right-click and choose Tako > Add to Tako (`Ctrl+Alt+Shift+K`) to attach the selection or file. Fix Problems with Tako is in the same menu.
+
+To comment on the agent's changes, select lines in a diff Tako opened, right-click and choose Comment for Tako. Type the comment and press Enter. It lands in the composer of the thread that made the change, with the file, the lines and the code, so you can collect several and send them in one prompt. Sending only comments asks the agent to address them. Declining a proposed edit sends the comments made in its diff as the reason, if the agent reads one. In a file's editor the same command is under Tako, and the comment goes to the current thread.
 
 Settings are under Settings > Tools > Tako. The top page sets the agent for new threads. Each agent has its own page below it for the executable and the default model, mode and effort. ACP agents go in a table, one name and command line per row.
 
