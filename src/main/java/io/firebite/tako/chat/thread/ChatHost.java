@@ -26,8 +26,10 @@ public interface ChatHost {
   @Nullable
   String toolsUrl();
 
-  /** Whether another open thread's agent works or waits in the folder. May be called off the EDT. */
-  default boolean isFolderBusy(String folder) {
-    return false;
-  }
+  /**
+   * The title of another open thread whose agent works or waits for an answer in the repository with the top folder
+   * {@code topLevel}, or in a folder holding it, else null. Runs git, so call off the EDT.
+   */
+  @Nullable
+  String busyThreadIn(String topLevel);
 }

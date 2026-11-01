@@ -38,6 +38,7 @@ import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.project.Checkpoints;
+import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
@@ -914,26 +915,24 @@ public final class ChatService implements Disposable {
     }
 
     @Override
-    public boolean isFolderBusy(String folder) {
+    public @Nullable String busyThreadIn(String topLevel) {
+      Path top = Path.of(topLevel).toAbsolutePath().normalize();
+      Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
       for (Map.Entry<String, ChatController> entry : ChatService.this.controllers.entrySet()) {
         ChatController other = entry.getValue();
-        ChatController.State state = other.state();
-        boolean isActive = state.isBusy() || state == ChatController.State.WAITING;
-        if (!entry.getKey().equals(this.record.id) && isActive && overlaps(other.projectPath(), folder)) {
-          return true;
+        String folder = other.gitFolder();
+        if (entry.getKey().equals(this.record.id) || !other.state().isInTurn() || folder == null) {
+          continue;
+        }
+        Path otherFolder = Path.of(folder).toAbsolutePath().normalize();
+        String otherTop = GitCommands.topLevel(otherFolder, environment);
+        boolean sharesFiles = top.startsWith(otherFolder) || otherTop != null && top.equals(Path.of(otherTop));
+        if (sharesFiles) {
+          ThreadStore.Record record = ChatService.this.store.find(entry.getKey());
+          return record != null ? record.title : "";
         }
       }
-      return false;
-    }
-
-    /** Whether one folder is the other or holds it. */
-    private static boolean overlaps(@Nullable String one, String other) {
-      if (one == null) {
-        return false;
-      }
-      Path first = Path.of(one).toAbsolutePath().normalize();
-      Path second = Path.of(other).toAbsolutePath().normalize();
-      return first.startsWith(second) || second.startsWith(first);
+      return null;
     }
 
     @Override

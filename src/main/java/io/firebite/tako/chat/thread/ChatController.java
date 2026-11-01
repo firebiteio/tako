@@ -28,6 +28,10 @@ import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.agent.PermissionAnswer;
 import io.firebite.tako.agent.PermissionPrompt;
 import io.firebite.tako.agent.SessionCost;
+import io.firebite.tako.chat.git.Blocker;
+import io.firebite.tako.chat.git.GitActionFlow;
+import io.firebite.tako.chat.git.GitDrafts;
+import io.firebite.tako.chat.git.ThreadGit;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
@@ -38,6 +42,8 @@ import io.firebite.tako.ide.context.PromptComposer;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.FileIndex;
+import io.firebite.tako.ide.project.GitCommands;
+import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.ui.bridge.ChatMessage;
@@ -86,6 +92,10 @@ public final class ChatController implements Disposable {
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
   private final Conversation conversation = new Conversation();
+  private final ThreadGit git;
+  private final Object heldLock = new Object();
+  /** Done once the prompts held for a git action went out. Guarded by {@link #heldLock}. */
+  private CompletableFuture<Void> held = CompletableFuture.completedFuture(null);
   /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
   private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
   /** Sends prompts one at a time, in the order the chat sent them. */
@@ -124,6 +134,10 @@ public final class ChatController implements Disposable {
     this.backend = backend;
     this.isTitled = record.sessionId != null || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
+    this.git = new ThreadGit(() -> {
+      String folder = this.gitFolder();
+      return folder == null ? null : Path.of(folder);
+    }, EnvironmentUtil.getEnvironmentMap(), this::busyIn, GitHubCli.GH);
   }
 
   /** Replays the thread's past, if it has one, and starts its agent. */
@@ -261,8 +275,8 @@ public final class ChatController implements Disposable {
    * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. Call off the EDT.
    */
   public void refreshGit() {
-    String directory = this.workingDirectory != null ? this.workingDirectory : this.projectPath();
-    if (directory == null) {
+    String directory = this.gitFolder();
+    if (directory == null || this.isDisposed) {
       return;
     }
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
@@ -284,6 +298,58 @@ public final class ChatController implements Disposable {
     this.record.worktree = info.worktree();
     this.record.pullRequest = pullRequest;
     this.recordChanged();
+  }
+
+  /** Like {@link #refreshGit}, and asks for the pull request whenever it last did. Call off the EDT. */
+  public void refreshGitNow() {
+    this.lastPullRequestCheck = 0;
+    this.refreshGit();
+  }
+
+  /** The folder git actions work on: where the agent says it works, else the thread's folder. */
+  public @Nullable String gitFolder() {
+    return this.workingDirectory != null ? this.workingDirectory : this.projectPath();
+  }
+
+  /**
+   * The thread's git actions and the state they act on. Asks GitHub nothing, except for the pull request of a branch
+   * checked out since the last {@link #refreshGit}. Runs git, so call off the EDT.
+   *
+   * @see #checkGitHub
+   */
+  public ThreadGit.Menu gitMenu() {
+    ThreadGit.Menu menu = this.git.menu(this.record.pullRequest, this.record.branch);
+    String branch = menu.status().branch();
+    if (branch == null || branch.equals(this.record.branch)) {
+      return menu;
+    }
+    this.refreshGit();
+    return this.git.menu(this.record.pullRequest, this.record.branch);
+  }
+
+  /** Learns whether the GitHub CLI can create the menu's pull request. Asks GitHub, so call off the EDT. */
+  public void checkGitHub(ThreadGit.Menu menu) {
+    this.git.checkGitHub(menu);
+  }
+
+  /**
+   * Asks for the action's texts while the thread's agent writes them, then runs it. Must run on the EDT.
+   *
+   * @param status the state the menu showed
+   * @return completes on the EDT once it ran or the person cancelled it
+   */
+  public CompletableFuture<Void> runGitAction(ThreadGit.Option option, GitCommands.Status status) {
+    return GitActionFlow.start(this.project, this.git, option, status,
+      this.conversation(GitDrafts.MAX_CONVERSATION), this.backend, this::refreshGitNow);
+  }
+
+  /** This thread's agent, or another thread's, working in the repository. */
+  private @Nullable ThreadGit.Busy busyIn(String topLevel) {
+    if (this.state.isInTurn()) {
+      return new ThreadGit.Busy(Blocker.AGENT_BUSY, this.backend.displayName());
+    }
+    String other = this.host.busyThreadIn(topLevel);
+    return other == null ? null : new ThreadGit.Busy(Blocker.OTHER_THREAD_BUSY, other);
   }
 
   /** The folder this thread works in: its worktree, its project folder or else the IDE project. */
@@ -474,9 +540,39 @@ public final class ChatController implements Disposable {
     }
   }
 
+  /**
+   * Sends the prompt, or holds it while a git action runs in the thread's repository, so the agent does not change
+   * files while they are committed. The thread counts as working first, so an action that has not checked yet stops.
+   * Held prompts go out in order, off the calling thread, which may be the agent's own.
+   */
   private void prompt(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn,
     int prompts) {
-    this.checkpoint(prompts, typed, !this.turnRunning && this.untakenTurns.isEmpty());
+    boolean holdsNone;
+    synchronized (this.heldLock) {
+      holdsNone = this.held.isDone();
+    }
+    this.checkpoint(prompts, typed, holdsNone && !this.turnRunning && this.untakenTurns.isEmpty());
+    this.setState(State.WORKING);
+    String folder = this.gitFolder();
+    synchronized (this.heldLock) {
+      boolean holds = !this.held.isDone() || folder != null && ThreadGit.hasActions(Path.of(folder));
+      if (holds) {
+        this.held = this.held.thenRunAsync(() -> {
+          if (folder != null) {
+            ThreadGit.awaitActions(Path.of(folder));
+          }
+          if (!this.isDisposed) {
+            this.promptNow(session, typed, prompt, images, turn);
+          }
+        }, AppExecutorUtil.getAppExecutorService());
+        return;
+      }
+    }
+    this.promptNow(session, typed, prompt, images, turn);
+  }
+
+  private void promptNow(AgentSession session, String typed, String prompt, List<ImageAttachment> images,
+    int turn) {
     this.setState(State.WORKING);
     this.error = null;
     this.untakenTurns.add(turn);
@@ -602,6 +698,19 @@ public final class ChatController implements Disposable {
     });
   }
 
+  /**
+   * Why the files in the folder must not be put back now: a git action or another thread's agent works in its
+   * repository. Null when nothing does. Runs git.
+   */
+  private @Nullable String filesBlocker(String folder, Map<String, String> environment) {
+    if (ThreadGit.hasActions(Path.of(folder))) {
+      return TakoBundle.message("git.failed.running");
+    }
+    String topLevel = GitCommands.topLevel(Path.of(folder), environment);
+    String other = topLevel == null ? null : this.host.busyThreadIn(topLevel);
+    return other == null ? null : TakoBundle.message("error.rewind.folder.busy", other);
+  }
+
   private ChatMessage.Rewound rewindNow(List<String> prompts, boolean files) {
     int kept = prompts.size() - 1;
     String folder = this.projectPath();
@@ -614,8 +723,9 @@ public final class ChatController implements Disposable {
       if (commit == null) {
         return new ChatMessage.Rewound(false, TakoBundle.message("error.rewind.no.checkpoint"));
       }
-      if (this.host.isFolderBusy(folder)) {
-        return new ChatMessage.Rewound(false, TakoBundle.message("error.rewind.folder.busy"));
+      String blocker = this.filesBlocker(folder, environment);
+      if (blocker != null) {
+        return new ChatMessage.Rewound(false, blocker);
       }
     }
     this.setState(State.STARTING);
@@ -652,8 +762,10 @@ public final class ChatController implements Disposable {
     String filesError = null;
     if (commit != null) {
       try {
-        if (this.host.isFolderBusy(folder)) {
-          throw new Worktrees.GitException(TakoBundle.message("error.rewind.folder.busy"));
+        this.setState(State.WORKING);
+        String blocker = this.filesBlocker(folder, environment);
+        if (blocker != null) {
+          throw new Worktrees.GitException(blocker);
         }
         this.restoreFiles(folder, commit, environment);
       } catch (Worktrees.GitException | RuntimeException e) {
@@ -953,6 +1065,11 @@ public final class ChatController implements Disposable {
     /** Starting or working, so a prompt or a wait for its answer is premature. */
     public boolean isBusy() {
       return this == STARTING || this == WORKING;
+    }
+
+    /** Works on a turn or waits for an answer in one, so the files may change any moment. */
+    public boolean isInTurn() {
+      return this == WORKING || this == WAITING;
     }
   }
 

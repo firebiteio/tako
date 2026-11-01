@@ -80,6 +80,11 @@ public class ChatControllerTest extends BasePlatformTestCase {
       public String toolsUrl() {
         return null;
       }
+
+      @Override
+      public String busyThreadIn(String topLevel) {
+        return null;
+      }
     };
     this.controller = new ChatController(this.getProject(), this.posted::add, this.host, this.record,
       new ClaudeBackend(Map.of()));

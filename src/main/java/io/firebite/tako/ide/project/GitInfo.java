@@ -41,17 +41,31 @@ public record GitInfo(
     return new GitInfo(branch == null || branch.isBlank() ? null : branch.trim(), worktree, null);
   }
 
-  /** The open pull or merge request of the checked-out branch. Asks {@code gh} or {@code glab} over the network. */
+  /**
+   * The open pull or merge request of the checked-out branch. Asks {@code gh} or {@code glab} over the network. When
+   * the branch pushes to a GitHub remote other than {@code origin}, also looks in that repository, where the thread's
+   * git actions open pull requests.
+   */
   public static @Nullable PullRequest pullRequest(Path directory, Map<String, String> environment) {
     String remote = run(directory, environment, List.of("git", "remote", "get-url", "origin"));
     String host = remote == null ? "" : remote.toLowerCase(Locale.ROOT);
-    if (host.contains("github")) {
-      return parseGitHub(run(directory, environment, List.of("gh", "pr", "view", "--json", "number,title,url,state")));
-    }
     if (host.contains("gitlab")) {
       return parseGitLab(run(directory, environment, List.of("glab", "mr", "view", "-F", "json")));
     }
-    return null;
+    if (host.contains("github")) {
+      PullRequest pullRequest = parseGitHub(run(directory, environment, List.of("gh", "pr", "view", "--json",
+        "number,title,url,state")));
+      if (pullRequest != null) {
+        return pullRequest;
+      }
+    }
+    GitCommands.Status status = GitCommands.status(directory, environment);
+    GitCommands.GitHubRepo pushed = status.gitHub();
+    if (pushed == null || status.branch() == null || "origin".equals(status.remote())) {
+      return null;
+    }
+    return parseGitHub(run(directory, environment, List.of("gh", "pr", "view", status.branch(), "--repo",
+      pushed.host() + "/" + pushed.owner() + "/" + pushed.name(), "--json", "number,title,url,state")));
   }
 
   /** The worktree's folder name when {@code gitDir} is a linked worktree's, else null. */
