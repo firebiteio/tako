@@ -12,11 +12,15 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
+import com.intellij.openapi.fileChooser.FileChooserFactory;
+import com.intellij.openapi.fileChooser.FileSaverDescriptor;
+import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileWrapper;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowManager;
 import com.intellij.openapi.wm.ex.ToolWindowManagerListener;
@@ -31,6 +35,7 @@ import io.firebite.tako.agent.AgentHistory;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
+import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
 import io.firebite.tako.chat.store.ThreadStore;
@@ -45,10 +50,13 @@ import io.firebite.tako.chat.watch.WatchException;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
+import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitInfo;
+import io.firebite.tako.ide.project.GitWorktree;
 import io.firebite.tako.ide.project.ProjectIcons;
+import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
@@ -597,6 +605,151 @@ public final class ChatService implements Disposable {
         this.select(record.id);
       });
     });
+  }
+
+  /**
+   * Starts a thread that implements the plan the thread's agent proposed, and selects it. It runs the same agent, model
+   * and effort, not in plan mode. Shows failures.
+   *
+   * @param worktree work in a new git worktree on a new branch, else in the planning thread's folder
+   * @return completes on the EDT with the new thread's id, or null when none started
+   */
+  public CompletableFuture<@Nullable String> implementPlan(String id, String plan, boolean worktree) {
+    CompletableFuture<@Nullable String> done = new CompletableFuture<>();
+    ThreadStore.Record source = this.store.find(id);
+    if (source == null) {
+      this.failPlan(done, TakoBundle.message("error.plan.thread.gone"));
+      return done;
+    }
+    String folder = this.workFolder(source);
+    Async.inBackground(() -> {
+      try {
+        if (folder.isEmpty() || !Files.isDirectory(Path.of(folder))) {
+          Async.onEdt(() -> this.failPlan(done, TakoBundle.message("error.plan.folder", folder)));
+          return;
+        }
+        GitWorktree.Worktree created = null;
+        if (worktree) {
+          String title = Plans.title(plan);
+          created = GitWorktree.create(Path.of(folder), title != null ? title : Plans.UNTITLED,
+            EnvironmentUtil.getEnvironmentMap());
+          if (created == null) {
+            Async.onEdt(() -> this.failPlan(done, TakoBundle.message("error.plan.worktree", folder)));
+            return;
+          }
+        }
+        GitWorktree.Worktree made = created;
+        Async.onEdt(() -> this.startPlanThread(done, source, plan, folder, made));
+      } catch (RuntimeException e) {
+        LOG.warn("Could not start a thread implementing the plan of thread " + id, e);
+        Async.onEdt(() -> this.failPlan(done, Objects.toString(e.getMessage(), e.toString())));
+      }
+    });
+    return done;
+  }
+
+  /**
+   * Completes with null when the thread did not start, even if it was stored, so the plan's approval stays.
+   *
+   * @param folder   the planning thread's folder
+   * @param worktree the worktree made for the new thread, removed again when no thread got it
+   */
+  private void startPlanThread(CompletableFuture<@Nullable String> done, ThreadStore.Record source, String plan,
+    String folder, @Nullable GitWorktree.Worktree worktree) {
+    if (this.store.find(source.id) != source) {
+      this.dropWorktree(folder, worktree);
+      this.failPlan(done, TakoBundle.message("error.plan.thread.gone"));
+      return;
+    }
+    ThreadStore.Record record;
+    try {
+      record = this.planThread(source, plan, worktree);
+    } catch (RuntimeException e) {
+      LOG.warn("Could not store a thread implementing the plan of thread " + source.id, e);
+      this.dropWorktree(folder, worktree);
+      this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
+      return;
+    }
+    try {
+      this.post(new ChatMessage.ThreadAdded(record.toItem()));
+      this.store.setActiveId(record.id);
+      this.post(new ChatMessage.Select(record.id));
+      this.newController(record).open(Plans.implementPrompt(plan));
+    } catch (RuntimeException e) {
+      LOG.warn("Could not open the thread implementing the plan of thread " + source.id, e);
+      this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
+      return;
+    }
+    done.complete(record.id);
+  }
+
+  private void dropWorktree(String repository, @Nullable GitWorktree.Worktree worktree) {
+    if (worktree != null) {
+      Async.inBackground(() -> removeWorktree(Path.of(repository), worktree));
+    }
+  }
+
+  private static void removeWorktree(Path repository, GitWorktree.Worktree worktree) {
+    try {
+      Worktrees.remove(repository, worktree.folder(), worktree.branch(), EnvironmentUtil.getEnvironmentMap());
+    } catch (Worktrees.GitException e) {
+      LOG.warn("Could not remove the worktree " + worktree.folder(), e);
+    }
+  }
+
+  private void failPlan(CompletableFuture<@Nullable String> done, String error) {
+    this.post(new ChatMessage.Error(error));
+    done.complete(null);
+  }
+
+  /** Stores a thread for implementing the plan, beside the planning thread and like it but not in plan mode. */
+  /** @param worktree the worktree made for it, whose {@code .worktreesetup} runs first; null to work where the source does */
+  ThreadStore.Record planThread(ThreadStore.Record source, String plan, @Nullable GitWorktree.Worktree worktree) {
+    String projectPath = source.projectPath;
+    if (projectPath != null && this.store.findProject(projectPath) == null) {
+      this.store.addProject(projectPath, Path.of(projectPath).getFileName().toString());
+      this.postProjects();
+    }
+    String agent = source.agent();
+    String title = Plans.title(plan);
+    ThreadStore.Record record = this.store.create(null, ChatController.titleOf(title != null
+      ? TakoBundle.message("thread.implement.title", title)
+      : TakoBundle.message("thread.implement.title.default")), projectPath, agent);
+    String defaultMode = ClaudeBackend.ID.equals(agent) ? ChatSettings.state().claudeDefaults().mode() : "";
+    record.model = source.model;
+    record.mode = Plans.implementMode(agent, source.mode, defaultMode);
+    record.effort = source.effort;
+    record.workPath = worktree != null ? worktree.folder().toString() : source.workPath;
+    record.pendingSetup = worktree != null
+      ? ThreadStore.PendingSetup.of(worktree.repository(), worktree.folder())
+      : null;
+    this.store.save();
+    return record;
+  }
+
+  /** Asks where to save the plan as Markdown, in the thread's folder by default, then opens the file. */
+  public void savePlan(String id, String plan) {
+    Async.onEdt(() -> this.choosePlanFile(id, plan));
+  }
+
+  private void choosePlanFile(String id, String plan) {
+    ThreadStore.Record record = this.store.find(id);
+    String folder = record != null ? this.workFolder(record) : this.folderOf((String) null);
+    Path directory = folder.isEmpty() || !Files.isDirectory(Path.of(folder)) ? null : Path.of(folder);
+    FileSaverDescriptor descriptor = new FileSaverDescriptor(TakoBundle.message("dialog.save.plan.title"),
+      TakoBundle.message("dialog.save.plan.description"));
+    descriptor.withExtensionFilter("md");
+    VirtualFileWrapper target = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, this.project)
+      .save(directory, Plans.fileName(plan));
+    if (target == null) {
+      return;
+    }
+    try {
+      VirtualFile file = IdeFiles.writeText(target.getFile().toPath(), Plans.fileText(plan));
+      FileEditorManager.getInstance(this.project).openFile(file, true);
+    } catch (IOException e) {
+      this.post(new ChatMessage.Error(TakoBundle.message("error.plan.save", Objects.toString(e.getMessage(), ""))));
+    }
   }
 
   /**

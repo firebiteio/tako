@@ -262,7 +262,7 @@ fun ThreadState.addImage(image: ImageAttachment) {
 fun ThreadState.addPermission(requestId: String, prompt: PermissionPrompt) {
   this.approvals.add(Approval(requestId, prompt))
   if (prompt.kind == PermissionPrompt.Kind.PLAN) {
-    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: ""))
+    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: "", requestId))
   }
   this.scrollToEnd++
 }
@@ -279,9 +279,16 @@ fun ThreadState.cancelAllApprovals() {
   this.question = null
 }
 
-/** Answers the waiting prompt. @param suggestion the index of the suggestion approved with */
+/**
+ * Answers the waiting prompt. A plan is not approved while a new thread for it starts, so two threads don't carry it out.
+ *
+ * @param suggestion the index of the suggestion approved with
+ */
 fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = null, interrupt: Boolean = false,
   answers: Map<String, String>? = null, suggestion: Int? = null) {
+  if (allow && this.implementing && approval.prompt.kind == PermissionPrompt.Kind.PLAN) {
+    return
+  }
   this.controller?.answer(approval.requestId, allow, message, interrupt, answers, suggestion)
   val prompt = approval.prompt
   val toolUseId = prompt.toolUseId

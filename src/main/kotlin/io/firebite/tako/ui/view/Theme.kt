@@ -144,6 +144,7 @@ object Icons {
   val closeSmall: IconKey = lucide("x")
   val chevronRight: IconKey = lucide("chevron-right")
   val chevronDown: IconKey = lucide("chevron-down")
+  val download: IconKey = lucide("download")
   val copy: IconKey = lucide("copy")
   val insert: IconKey = lucide("square-pen")
   val diff: IconKey = lucide("file-diff")
