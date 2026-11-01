@@ -12,6 +12,7 @@ import io.firebite.tako.agent.EditPreview;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.ide.Async;
+import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.ui.bridge.ChatMessage;
@@ -125,7 +126,8 @@ final class Benches {
         this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.no.changes", runIndex)));
         return;
       }
-      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews));
+      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews,
+        preview -> ReviewTarget.run(run.thread, Path.of(run.worktree).resolve(preview.filePath()).toString())));
     } catch (Worktrees.GitException e) {
       this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.diff", runIndex, e.getMessage())));
     }
@@ -203,10 +205,22 @@ final class Benches {
       }
       workDirectories.add(slashes(workDirectory));
     }
-    Async.onEdt(() -> this.startRuns(request, bench, workDirectories));
+    Path mainCheckout = mainCheckout(repository, environment);
+    Async.onEdt(() -> this.startRuns(request, bench, workDirectories, mainCheckout));
   }
 
-  private void startRuns(BenchRequest request, ThreadStore.Bench bench, List<String> workDirectories) {
+  /** Where {@code .worktreesetup} may be: the repository itself may be a linked worktree of another checkout. */
+  private static Path mainCheckout(Path repository, Map<String, String> environment) {
+    try {
+      return Worktrees.mainCheckout(repository, environment);
+    } catch (Worktrees.GitException e) {
+      LOG.warn("Could not find the main checkout of " + repository, e);
+      return repository;
+    }
+  }
+
+  private void startRuns(BenchRequest request, ThreadStore.Bench bench, List<String> workDirectories,
+    Path mainCheckout) {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     List<ThreadStore.Record> records = new ArrayList<>();
     List<String> threads = new ArrayList<>();
@@ -218,6 +232,7 @@ final class Benches {
       record.mode = spec.mode();
       record.effort = spec.effort();
       record.workPath = workDirectories.get(i);
+      record.pendingSetup = ThreadStore.PendingSetup.of(mainCheckout, Path.of(bench.runs.get(i).worktree));
       bench.runs.get(i).thread = record.id;
       records.add(record);
       threads.add(record.id);

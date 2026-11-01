@@ -46,6 +46,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var branch by mutableStateOf(item.branch)
   var worktree by mutableStateOf(item.worktree)
   var pullRequest by mutableStateOf<GitInfo.PullRequest?>(item.pullRequest)
+  /** The number of the pull request the thread watches, if it does. */
+  var watching by mutableStateOf(item.watching)
+  /** Whether a watch is starting, between the click and gh's first answer. */
+  var watchStarting by mutableStateOf(false)
   var projectPath by mutableStateOf(item.projectPath)
   /** The id of the agent the thread runs. */
   var agent by mutableStateOf(item.agent)
@@ -102,6 +106,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The folder the agent keeps its scratch files in, if it has one. */
   var scratchpad by mutableStateOf<String?>(null)
   val alerts = mutableStateListOf<Alert>()
+  /** The setup of the thread's new worktree while it runs or after it failed, which the prompts wait for. */
+  var setup by mutableStateOf<ChatMessage.Setup?>(null)
+  /** The prompt a running rewind goes back to before; sending waits until it is done. */
+  var rewinding by mutableStateOf<Prompt?>(null)
   /** The stashed drafts to pick from, while their menu is open. */
   var stashMenu by mutableStateOf<List<PromptStash.Entry>?>(null)
 
@@ -127,6 +135,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     this.worktree = item.worktree
     this.projectPath = item.projectPath
     this.pullRequest = item.pullRequest
+    this.watching = item.watching
     this.hasSession = item.hasSession
     this.firstTurnMillis = item.firstTurnMillis
     if (item.agent.isNotEmpty() && item.agent != this.agent) {
@@ -144,6 +153,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
 
   val isActive: Boolean
     get() = this.workspace.active === this
+
+  /** The worktree setup failed, so the prompts wait for the person to retry or skip it. */
+  val setupFailed: Boolean
+    get() = this.setup?.phase == ChatMessage.SetupPhase.FAILED
 
   /** The folder paths are shown relative to. */
   val root: String

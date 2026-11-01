@@ -118,6 +118,8 @@ import io.firebite.tako.ui.state.chooseOption
 import io.firebite.tako.ui.state.addContext
 import io.firebite.tako.ui.state.advanceQuestion
 import io.firebite.tako.ui.state.contextNumbers
+import io.firebite.tako.ui.state.declinesWithReviews
+import io.firebite.tako.ui.state.hasReviews
 import io.firebite.tako.ui.state.RunPlan
 import io.firebite.tako.ui.state.runLabel
 import io.firebite.tako.ui.state.sentPrompts
@@ -288,6 +290,7 @@ fun Dock(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
     contentAlignment = Alignment.TopCenter) {
     Column(Modifier.widthIn(max = LANE).fillMaxWidth()) {
       TasksTray(thread)
+      thread.setup?.let { SetupCard(thread, it) }
       thread.approvals.firstOrNull()?.let { Drawer(thread, it) }
       Composer(thread)
     }
@@ -858,8 +861,10 @@ private fun RunMenu(thread: ThreadState, index: Int, onDismiss: () -> Unit) {
 
 @Composable
 private fun SendButton(thread: ThreadState) {
-  val hasText = thread.typed.isNotEmpty() || (thread.images.isNotEmpty() && thread.approvals.isEmpty())
-  val isStop = thread.busy && !hasText && thread.approvals.isEmpty()
+  val hasText = thread.typed.isNotEmpty()
+    || ((thread.images.isNotEmpty() || hasReviews(thread.contexts)) && thread.approvals.isEmpty())
+    || (thread.question == null && thread.approvals.firstOrNull()?.let { thread.declinesWithReviews(it) } == true)
+  val isStop = thread.busy && !hasText && thread.approvals.isEmpty() && !thread.setupFailed
   val enabled = isStop || hasText || (thread.question?.selected?.isNotEmpty() == true)
   val tip = when {
     isStop -> t("composer.stop")

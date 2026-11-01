@@ -32,6 +32,7 @@
     <notificationGroup id="Tako" displayType="BALLOON" key="notification.group.tako"/>
     <statusBarWidgetFactory id="Tako.Status" implementation="io.firebite.tako.ide.status.TakoStatusWidgetFactory"/>
     <actionPromoter implementation="io.firebite.tako.ui.view.StashActionPromoter"/>
+    <postStartupActivity implementation="io.firebite.tako.chat.WatchStartup"/>
   </extensions>
 
   <actions>
@@ -42,6 +43,9 @@
       <action id="Tako.AddToChat" class="io.firebite.tako.ide.actions.AddToChatAction">
         <keyboard-shortcut keymap="$default" first-keystroke="ctrl alt shift K"/>
         <add-to-group group-id="ConsoleEditorPopupMenu" anchor="last"/>
+      </action>
+      <action id="Tako.ReviewComment" class="io.firebite.tako.ide.actions.ReviewCommentAction" icon="/icons/tako.svg">
+        <add-to-group group-id="Diff.EditorPopupMenu" anchor="last"/>
       </action>
       <action id="Tako.FixProblems" class="io.firebite.tako.ide.actions.FixProblemsAction"/>
       <add-to-group group-id="EditorPopupMenu" anchor="last"/>

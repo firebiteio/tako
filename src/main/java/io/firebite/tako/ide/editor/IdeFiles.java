@@ -23,6 +23,7 @@ import com.intellij.psi.search.GlobalSearchScope;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.EditPreview;
+import io.firebite.tako.ide.context.ReviewTarget;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -35,6 +36,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Function;
 import org.jetbrains.annotations.Nullable;
 
 /** Opening, diffing, refreshing and editing the files the agent names. */
@@ -139,31 +141,45 @@ public final class IdeFiles {
     return best;
   }
 
-  /** Must run on the EDT. */
-  public static void showDiff(Project project, EditPreview preview, String title) {
+  /** @param target where review comments on the diff go. Must run on the EDT. */
+  public static void showDiff(Project project, EditPreview preview, String title, ReviewTarget target) {
     DiffManager.getInstance().showDiff(project, request(project, preview, title, TakoBundle.message("diff.current"),
-      TakoBundle.message("diff.proposed")));
+      TakoBundle.message("diff.proposed"), target));
   }
 
-  /** One diff window stepping through the files. Must run on the EDT. */
-  public static void showDiffs(Project project, List<EditPreview> previews) {
+  /**
+   * One diff window stepping through the files. Must run on the EDT.
+   *
+   * @param targetOf where review comments on a file's diff go
+   */
+  public static void showDiffs(Project project, List<EditPreview> previews,
+    Function<EditPreview, ReviewTarget> targetOf) {
     List<DiffRequest> requests = new ArrayList<>();
     for (EditPreview preview : previews) {
       String title = relativeOrAbsolute(project, preview.filePath());
-      requests.add(request(project, preview, title, TakoBundle.message("diff.before"), TakoBundle.message("diff.now")));
+      requests.add(request(project, preview, title, TakoBundle.message("diff.before"), TakoBundle.message("diff.now"),
+        targetOf.apply(preview)));
     }
     DiffManager.getInstance().showDiff(project, new SimpleDiffRequestChain(requests), DiffDialogHints.DEFAULT);
   }
 
   private static SimpleDiffRequest request(Project project, EditPreview preview, String title, String beforeTitle,
-    String afterTitle) {
+    String afterTitle, ReviewTarget target) {
     String fileName = Path.of(preview.filePath()).getFileName().toString();
     FileType fileType = FileTypeManager.getInstance().getFileTypeByFileName(fileName);
     DiffContentFactory contents = DiffContentFactory.getInstance();
-    return new SimpleDiffRequest(title,
+    SimpleDiffRequest request = new SimpleDiffRequest(title,
       contents.create(project, preview.before(), fileType),
       contents.create(project, preview.after(), fileType),
       beforeTitle, afterTitle);
+    request.putUserData(ReviewTarget.KEY, target);
+    return request;
+  }
+
+  /** The path as the agent reads it: absolute against the project when it is relative, else as given. */
+  public static String absolute(Project project, String path) {
+    Path resolved = resolve(project, path);
+    return resolved == null ? path : resolved.toString();
   }
 
   private static String relativeOrAbsolute(Project project, String path) {

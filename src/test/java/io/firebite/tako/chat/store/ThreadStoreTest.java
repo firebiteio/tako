@@ -42,6 +42,28 @@ public class ThreadStoreTest {
   }
 
   @Test
+  public void pendingSetupSurvivesAReloadUntilCleared() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record record = store.create(null, null, null, "claude");
+    ThreadStore.Record other = store.create(null, null, null, "claude");
+    Path repository = Path.of("repo ü");
+    Path worktree = Path.of("repo-tako", "fix", "1");
+    record.pendingSetup = ThreadStore.PendingSetup.of(repository, worktree);
+    store.save();
+
+    ThreadStore reloaded = new ThreadStore(file);
+
+    ThreadStore.PendingSetup setup = reloaded.find(record.id).pendingSetup;
+    assertEquals(repository.toString(), setup.repository);
+    assertEquals(worktree.toString(), setup.worktree);
+    assertNull(reloaded.find(other.id).pendingSetup);
+    reloaded.find(record.id).pendingSetup = null;
+    reloaded.save();
+    assertNull(new ThreadStore(file).find(record.id).pendingSetup);
+  }
+
+  @Test
   public void removedThreadIsGoneAfterReload() throws Exception {
     Path file = Files.createTempDirectory("threads").resolve("threads.json");
     ThreadStore store = new ThreadStore(file);

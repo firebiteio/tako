@@ -5,6 +5,7 @@ import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.ide.context.ContextItem
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.t
 
@@ -344,6 +345,9 @@ fun ThreadState.replay(events: List<AgentEvent>) {
   this.finishTurn(null)
   this.replaying = false
   this.finished = false
+  if (this.rewinding != null) {
+    this.setBusy(true)
+  }
   this.scrollToEnd++
 }
 
@@ -408,6 +412,26 @@ private fun ThreadState.takeQueued(no: Int, startsTurn: Boolean) {
   this.setBusy(true)
 }
 
+/**
+ * Shows the worktree setup's card while it runs or failed. Once it is through, the card goes and the prompt's turn that
+ * waited for it gets a note.
+ */
+fun ThreadState.onSetup(setup: ChatMessage.Setup) {
+  val note = when (setup.phase) {
+    ChatMessage.SetupPhase.RUNNING, ChatMessage.SetupPhase.FAILED -> {
+      this.setup = setup
+      return
+    }
+    ChatMessage.SetupPhase.DONE -> t("timeline.setup.done", duration(setup.endedAt - setup.startedAt))
+    ChatMessage.SetupPhase.SKIPPED -> t("timeline.setup.skipped")
+  }
+  this.setup = null
+  val turn = this.turn
+  if (setup.steps > 0 && turn != null && !turn.done && turn.prompt != null) {
+    turn.items.add(TurnItem.Note(note))
+  }
+}
+
 fun ThreadState.onError(text: String) {
   this.setBusy(false)
   this.failed = true
@@ -417,6 +441,7 @@ fun ThreadState.onError(text: String) {
 /** Shows the prompt as the thread's next turn and sends it; while the agent works it waits until the agent takes it. */
 fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: List<ImageAttachment>) {
   val prompt = Prompt(text, contexts, images)
+  val promptsBefore = this.promptCount()
   this.turnNo++
   this.finished = false
   this.failed = false
@@ -425,7 +450,7 @@ fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: L
   } else {
     this.startTurn(prompt, false)
   }
-  this.controller?.send(text, contexts, images, this.turnNo)
+  this.controller?.send(text, contexts, images, this.turnNo, promptsBefore)
   this.updatedAt = System.currentTimeMillis()
   this.setBusy(true)
   this.scrollToEnd++
