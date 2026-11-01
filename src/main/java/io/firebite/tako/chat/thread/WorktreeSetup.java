@@ -16,12 +16,16 @@ import java.nio.CharBuffer;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
 import java.util.ArrayDeque;
+import java.util.Iterator;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.Future;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -39,16 +43,20 @@ public final class WorktreeSetup {
   private static final long OUTPUT_INTERVAL_MILLIS = 250;
   /** How long output may still arrive after a command's shell exited, from children that outlive it. */
   private static final long DRAIN_MILLIS = 2000;
-  private static final int KILL_ROUNDS = 5;
-  private static final long KILL_PAUSE_MILLIS = 100;
   private static final int BUFFER_SIZE = 8192;
+  /**
+   * Reads the commands' output. Its own threads, as a child that outlives its command can keep the pipe open and its
+   * reader blocked until the child ends.
+   */
+  private static final ExecutorService READERS = Executors.newCachedThreadPool(
+    Thread.ofPlatform().daemon().name("tako-setup-output-", 0).factory());
 
   private final Path worktree;
   private final Path repository;
   private final Listener listener;
   private final BooleanSupplier isTrusted;
   private final long timeoutMillis;
-  private final ArrayDeque<Runnable> held = new ArrayDeque<>();
+  private final ArrayDeque<Held> held = new ArrayDeque<>();
 
   /** Null until the first start. */
   private ChatMessage.@Nullable SetupPhase phase;
@@ -112,7 +120,7 @@ public final class WorktreeSetup {
     }
   }
 
-  /** Stops a running setup, which then counts as failed. Kills its processes, so call off the EDT. */
+  /** Stops a running setup, which then counts as failed. */
   public boolean cancel() {
     return this.cancel(false);
   }
@@ -131,11 +139,11 @@ public final class WorktreeSetup {
       this.isCancelled = true;
       running = this.process;
     }
-    killLater(running);
+    kill(running);
     return true;
   }
 
-  /** Lets the prompts go to the agent without the setup, stopping it if it runs. Kills processes, so call off the EDT. */
+  /** Lets the prompts go to the agent without the setup, stopping it if it runs. */
   public void skip() {
     Process running;
     synchronized (this) {
@@ -148,22 +156,41 @@ public final class WorktreeSetup {
       this.process = null;
       this.end(ChatMessage.SetupPhase.SKIPPED);
     }
-    killLater(running);
+    kill(running);
   }
 
-  /** Runs {@code prompt} at once when the setup is through, else once it is, after the prompts held before it. */
+  /** Runs {@code prompt} at once when the setup is through, else once it is, after what was held before it. */
   public void whenReady(Runnable prompt) {
+    this.hold(new Held(prompt, true));
+  }
+
+  /** Like {@link #whenReady}, for starting the agent, which is no prompt the chat shows. */
+  public void startWhenReady(Runnable start) {
+    this.hold(new Held(start, false));
+  }
+
+  private void hold(Held task) {
     synchronized (this) {
       if (this.isDisposed) {
         return;
       }
       if (!this.isReady) {
-        this.held.add(prompt);
+        this.held.add(task);
         this.listener.held(this.failure());
         return;
       }
     }
-    prompt.run();
+    task.task().run();
+  }
+
+  /** Whether a prompt the chat shows waits for the setup. */
+  public synchronized boolean holdsPrompts() {
+    for (Held task : this.held) {
+      if (task.isPrompt()) {
+        return true;
+      }
+    }
+    return false;
   }
 
   /** Tells the listener about the held prompts, or runs {@code idle} when there are none. */
@@ -216,13 +243,15 @@ public final class WorktreeSetup {
       running = this.process;
       this.process = null;
     }
-    if (running != null) {
-      destroyChildren(running);
-      killLater(running);
-    }
+    kill(running);
   }
 
+  /** A worktree deleted outside the IDE has nothing left to set up, so its setup counts as through. */
   private void runAll(int token) {
+    if (!Files.isDirectory(this.worktree)) {
+      this.done(token);
+      return;
+    }
     List<String> commands;
     try {
       commands = SetupScript.read(this.worktree, this.repository);
@@ -290,7 +319,7 @@ public final class WorktreeSetup {
       started.getOutputStream().close();
     } catch (IOException ignored) {
     }
-    Future<?> reader = AppExecutorUtil.getAppExecutorService().submit(() -> this.read(token, started));
+    Future<?> reader = READERS.submit(() -> this.read(token, started));
     boolean isTimedOut;
     try {
       long left = deadline - System.nanoTime();
@@ -456,16 +485,16 @@ public final class WorktreeSetup {
   /** Runs the held prompts in order, one at a time, then lets new prompts through at once. */
   private void release() {
     while (true) {
-      Runnable prompt;
+      Held next;
       synchronized (this) {
-        prompt = this.isDisposed ? null : this.held.poll();
-        if (prompt == null) {
+        next = this.isDisposed ? null : this.held.poll();
+        if (next == null) {
           this.isReleasing = false;
           this.isReady = !this.isDisposed;
           return;
         }
       }
-      prompt.run();
+      next.task().run();
     }
   }
 
@@ -484,41 +513,19 @@ public final class WorktreeSetup {
     }
   }
 
-  private static void killLater(@Nullable Process target) {
-    if (target != null) {
-      Async.inBackground(() -> kill(target));
-    }
-  }
-
   /**
-   * Kills the process and everything it started. Children go first, while the process still links them, and again
-   * while new ones appear, as package managers keep starting them.
+   * Kills the process and everything it started, all at once, so none of them can start more. The children go first,
+   * while the process still links them. Does not wait, so it may run on the EDT.
    */
   private static void kill(@Nullable Process target) {
     if (target == null) {
       return;
     }
-    for (int round = 0; round < KILL_ROUNDS; round++) {
-      if (!destroyChildren(target)) {
-        break;
-      }
-      try {
-        Thread.sleep(KILL_PAUSE_MILLIS);
-      } catch (InterruptedException e) {
-        Thread.currentThread().interrupt();
-        break;
-      }
+    Iterator<ProcessHandle> descendants = target.descendants().iterator();
+    while (descendants.hasNext()) {
+      descendants.next().destroyForcibly();
     }
     target.destroyForcibly();
-  }
-
-  /** @return whether there were children to kill */
-  private static boolean destroyChildren(Process target) {
-    List<ProcessHandle> children = target.descendants().toList();
-    for (ProcessHandle child : children) {
-      child.destroyForcibly();
-    }
-    return !children.isEmpty();
   }
 
   /** What the setup tells its thread. Called with the setup's lock held, so keep it short and non blocking. */
@@ -533,5 +540,12 @@ public final class WorktreeSetup {
 
     /** The setup failed, other than by cancelling it. */
     void failed(String reason);
+  }
+
+  /** @param isPrompt whether it sends a prompt the chat shows, rather than starting the agent */
+  private record Held(
+    Runnable task,
+    boolean isPrompt
+  ) {
   }
 }

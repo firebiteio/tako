@@ -147,7 +147,7 @@ public final class ChatController implements Disposable {
         if (this.setup != null) {
           String resumed = resume;
           this.setup.start();
-          this.setup.whenReady(() -> this.launch(resumed));
+          this.setup.startWhenReady(() -> this.launch(resumed));
         } else {
           this.launch(resume);
         }
@@ -371,7 +371,7 @@ public final class ChatController implements Disposable {
 
   /** Stops the setup and clears what the chat shows of it: its card, and the turn of a prompt that waited for it. */
   private void disposeSetup(WorktreeSetup worktreeSetup) {
-    boolean holds = worktreeSetup.holds();
+    boolean holds = worktreeSetup.holdsPrompts();
     boolean showsCard = worktreeSetup.showsCard();
     worktreeSetup.dispose();
     if (showsCard) {
@@ -380,6 +380,18 @@ public final class ChatController implements Disposable {
     if (holds) {
       this.view.post(new ChatMessage.Exit(0, ""));
     }
+  }
+
+  /** The agent is ready. A prompt sent to it meanwhile already made the thread work, which stays so. */
+  private void idleIfStarting() {
+    synchronized (this.stateLock) {
+      if (this.state != State.STARTING) {
+        return;
+      }
+      this.state = State.IDLE;
+      this.stateLock.notifyAll();
+    }
+    Async.onEdt(this.host::stateChanged);
   }
 
   private void setState(State state) {
@@ -432,9 +444,9 @@ public final class ChatController implements Disposable {
       if (prompt != null) {
         this.submit(prompt);
       } else if (!forPrompt && this.setup != null) {
-        this.setup.settle(() -> this.setState(State.IDLE));
+        this.setup.settle(this::idleIfStarting);
       } else if (!forPrompt) {
-        this.setState(State.IDLE);
+        this.idleIfStarting();
       }
     });
   }

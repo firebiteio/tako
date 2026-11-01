@@ -22,12 +22,12 @@ public final class GitWorktree {
    * @return the worktree, or null when {@code directory} is not in a git repository or git fails
    */
   public static @Nullable Worktree create(Path directory, String name, Map<String, String> environment) {
-    String commonDir = GitInfo.run(directory, environment,
-      List.of("git", "rev-parse", "--path-format=absolute", "--git-common-dir"), ADD_TIMEOUT_SECONDS);
-    if (commonDir == null || commonDir.isBlank()) {
+    Path repository;
+    try {
+      repository = Worktrees.mainCheckout(directory, environment);
+    } catch (Worktrees.GitException e) {
       return null;
     }
-    Path repository = Path.of(commonDir.trim()).getParent();
     Path parent = repository.resolveSibling(repository.getFileName() + ".worktrees");
     String slug = slug(name);
     for (int i = 1;; i++) {

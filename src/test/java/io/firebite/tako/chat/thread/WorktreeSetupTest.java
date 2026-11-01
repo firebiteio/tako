@@ -335,7 +335,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     assertFalse(Files.exists(this.worktree.resolve("ran.txt")));
   }
 
-  public void testAWorktreeDeletedOutsideTheIdeFailsToStart() throws Exception {
+  public void testAWorktreeDeletedOutsideTheIdeHasNothingToSetUp() throws Exception {
     this.file("echo x");
     Files.delete(this.worktree);
     WorktreeSetup setup = this.setup();
@@ -343,10 +343,26 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
 
-    ChatMessage.Setup failed = this.awaitPhase(ChatMessage.SetupPhase.FAILED);
-    assertTrue(failed.error(), failed.error().startsWith(TakoBundle.message("setup.error.start", "echo x", "")));
-    setup.skip();
+    this.awaitFinished();
     this.awaitRan(1);
+    assertFalse(setup.showsCard());
+  }
+
+  public void testStartingTheAgentWaitsButIsNoPrompt() throws Exception {
+    this.file(sleep(60));
+    WorktreeSetup setup = this.setup();
+    setup.startWhenReady(this.prompt("start"));
+    setup.start();
+    this.await(ChatMessage.Setup.class, s -> s.step() == 1);
+
+    assertTrue(setup.holds());
+    assertFalse(setup.holdsPrompts());
+    setup.whenReady(this.prompt("a"));
+    assertTrue(setup.holdsPrompts());
+
+    setup.skip();
+    this.awaitRan(2);
+    assertEquals(List.of("start", "a"), this.ran);
   }
 
   public void testRetryAfterTheFileWasDeletedTakesTheCardAway() throws Exception {

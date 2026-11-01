@@ -378,7 +378,7 @@ private fun WorkingRow(thread: ThreadState) {
   val since = elapsed(thread.startedAt, thread.workspace.now)
   Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
     val text = when {
-      thread.approvals.isNotEmpty() -> t("timeline.working.waiting", since)
+      thread.approvals.isNotEmpty() || thread.setupFailed -> t("timeline.working.waiting", since)
       thread.setup != null -> t("timeline.working.setup", since)
       else -> t("timeline.working", since)
     }
