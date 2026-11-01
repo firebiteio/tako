@@ -25,4 +25,9 @@ public interface ChatHost {
   /** Where the thread's agent reaches Tako's tools over MCP, or null without them. */
   @Nullable
   String toolsUrl();
+
+  /** Whether another open thread's agent works or waits in the folder. May be called off the EDT. */
+  default boolean isFolderBusy(String folder) {
+    return false;
+  }
 }

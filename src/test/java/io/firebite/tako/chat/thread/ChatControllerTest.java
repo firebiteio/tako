@@ -3,6 +3,7 @@ package io.firebite.tako.chat.thread;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.testFramework.PlatformTestUtil;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
+import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentDefaults;
 import io.firebite.tako.agent.AgentEvent;
 import io.firebite.tako.agent.FakeExecutable;
@@ -11,6 +12,7 @@ import io.firebite.tako.agent.acp.AcpBackend;
 import io.firebite.tako.agent.acp.FakeAcpAgent;
 import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.agent.claude.FakeClaude;
+import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.codex.CodexBackend;
 import io.firebite.tako.agent.codex.FakeCodex;
 import io.firebite.tako.chat.store.ThreadStore;
@@ -144,7 +146,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
     this.controller.setEffort("high");
 
-    this.controller.send("write a.txt", List.of(), List.of(), 1);
+    this.controller.send("write a.txt", List.of(), List.of(), 1, 0);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals("Write", permission.prompt().toolName());
     assertEquals(ToolKind.EDIT, permission.prompt().category());
@@ -172,7 +174,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertEquals("a waiter never sees it idle before the prompt", ChatController.State.WORKING,
       this.controller.state());
 
-    this.controller.send(submit.text(), List.of(), List.of(), 1);
+    this.controller.send(submit.text(), List.of(), List.of(), 1, 0);
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals(ChatController.State.WAITING, this.controller.state());
     assertNull("a given title stays", this.title);
@@ -187,7 +189,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   public void testClaudeRestartKeepsTheLastErrorAndResumesTheSessionOnTheNextPrompt() throws Exception {
     this.controller.open();
     this.awaitPost(ChatMessage.Init.class);
-    this.controller.send("fail", List.of(), List.of(), 1);
+    this.controller.send("fail", List.of(), List.of(), 1, 0);
     while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
     }
     assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
@@ -199,7 +201,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.restart(this.controller);
     assertEquals("no new turn ran", error, this.controller.error());
 
-    this.controller.send("write a.txt", List.of(), List.of(), 2);
+    this.controller.send("write a.txt", List.of(), List.of(), 2, 1);
     List<ChatMessage.ThreadMessage> resumed = this.postsUntil(ChatMessage.Permission.class);
     assertNotNull("the resumed session starts before the prompt", find(resumed, ChatMessage.Init.class));
     assertNull("the session was resumed", find(resumed, ChatMessage.Notice.class));
@@ -222,7 +224,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
       this.restart(thread);
 
-      thread.send("list files", List.of(), List.of(), 1);
+      thread.send("list files", List.of(), List.of(), 1, 0);
       List<ChatMessage.ThreadMessage> resumed = this.postsUntil(ChatMessage.Permission.class);
       ChatMessage.Init init = find(resumed, ChatMessage.Init.class);
       assertNotNull("the resumed thread starts before the prompt", init);
@@ -248,7 +250,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
       this.restart(acp);
 
-      acp.send("change a.txt", List.of(), List.of(), 1);
+      acp.send("change a.txt", List.of(), List.of(), 1, 0);
       List<ChatMessage.ThreadMessage> resumed = this.postsUntil(ChatMessage.Permission.class);
       ChatMessage.Init init = find(resumed, ChatMessage.Init.class);
       assertNotNull("the resumed session starts before the prompt", init);
@@ -280,7 +282,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
       this.restart(acp);
       this.record.sessionId = "gone";
 
-      acp.send("change a.txt", List.of(), List.of(), 1);
+      acp.send("change a.txt", List.of(), List.of(), 1, 0);
       List<ChatMessage.ThreadMessage> started = this.postsUntil(ChatMessage.Permission.class);
       assertNotNull(find(started, ChatMessage.Notice.class));
       assertNull(find(started, ChatMessage.Replay.class));
@@ -288,6 +290,150 @@ public class ChatControllerTest extends BasePlatformTestCase {
     } finally {
       acp.dispose();
     }
+  }
+
+  public void testRewindToTheFirstPromptStartsANewSession() throws Exception {
+    this.finishFailingTurn();
+    assertNotNull(this.record.sessionId);
+
+    this.controller.rewind(List.of("fail"), false);
+    List<ChatMessage.ThreadMessage> messages = this.postsUntil(ChatMessage.Rewound.class);
+
+    ChatMessage.Replay replay = find(messages, ChatMessage.Replay.class);
+    assertNotNull("the timeline is rebuilt", replay);
+    assertTrue(replay.events().isEmpty());
+    assertEquals(new ChatMessage.Rewound(true, null), messages.getLast());
+    assertNull(this.record.sessionId);
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+  }
+
+  public void testRewindKeepsTheEarlierPromptsInACopyOfTheSession() throws Exception {
+    Path config = Files.createTempDirectory("tako-claude-config");
+    String session = "11111111-2222-3333-4444-555555555555";
+    Path sessions = config.resolve("projects").resolve(SessionStore.encode(this.record.projectPath));
+    Files.createDirectories(sessions);
+    Files.write(sessions.resolve(session + ".jsonl"), List.of(transcriptUser(session, "First question"),
+      transcriptUser(session, "Second question")), StandardCharsets.UTF_8);
+    this.record.sessionId = session;
+    ChatController thread = new ChatController(this.getProject(), this.posted::add, this.host, this.record,
+      new ClaudeBackend(Map.of("CLAUDE_CONFIG_DIR", config.toString())));
+    try {
+      thread.open();
+      this.awaitPost(ChatMessage.Init.class);
+      assertEquals(ChatController.State.IDLE, thread.awaitSettled(TIMEOUT_MILLIS));
+
+      thread.rewind(List.of("First question", "Second  question"), false);
+      List<ChatMessage.ThreadMessage> messages = this.postsUntil(ChatMessage.Rewound.class);
+
+      assertEquals(new ChatMessage.Rewound(true, null), messages.getLast());
+      List<String> prompts = new ArrayList<>();
+      for (AgentEvent event : find(messages, ChatMessage.Replay.class).events()) {
+        if (event instanceof AgentEvent.Prompt prompt) {
+          prompts.add(prompt.text());
+        }
+      }
+      assertEquals(List.of("First question"), prompts);
+      assertNotNull(this.record.sessionId);
+      assertFalse(session.equals(this.record.sessionId));
+      assertTrue("the original stays", Files.exists(sessions.resolve(session + ".jsonl")));
+
+      thread.rewind(List.of("First question", "Other question"), false);
+      ChatMessage.Rewound mismatch = this.awaitPost(ChatMessage.Rewound.class);
+      assertFalse(mismatch.rewound());
+      assertNotNull(mismatch.error());
+    } finally {
+      thread.dispose();
+    }
+  }
+
+  public void testRewindWhileTheAgentWaitsIsRefused() throws Exception {
+    this.controller.open();
+    this.awaitPost(ChatMessage.Init.class);
+    this.controller.send("write a.txt", List.of(), List.of(), 1, 0);
+    ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
+    String session = this.record.sessionId;
+
+    this.controller.rewind(List.of("write a.txt"), false);
+
+    assertEquals(new ChatMessage.Rewound(false, null), this.awaitPost(ChatMessage.Rewound.class));
+    assertEquals(session, this.record.sessionId);
+    assertEquals(ChatController.State.WAITING, this.controller.state());
+    this.controller.answer(permission.requestId(), false, "no", false, null, null);
+  }
+
+  public void testRewindIsRefusedWhileOneRuns() throws Exception {
+    this.finishFailingTurn();
+
+    this.controller.rewind(List.of("fail"), false);
+    this.controller.rewind(List.of("fail"), false);
+
+    assertEquals(new ChatMessage.Rewound(false, null), this.awaitPost(ChatMessage.Rewound.class));
+    assertEquals(new ChatMessage.Rewound(true, null), this.awaitPost(ChatMessage.Rewound.class));
+  }
+
+  public void testFilesWithoutASnapshotChangeNothing() throws Exception {
+    this.finishFailingTurn();
+    String session = this.record.sessionId;
+
+    this.controller.rewind(List.of("fail"), true);
+
+    ChatMessage.Rewound rewound = this.awaitPost(ChatMessage.Rewound.class);
+    assertFalse(rewound.rewound());
+    assertEquals(TakoBundle.message("error.rewind.no.checkpoint"), rewound.error());
+    assertEquals(session, this.record.sessionId);
+    assertEquals(ChatController.State.IDLE, this.controller.state());
+  }
+
+  public void testAnIdlePromptGetsASnapshotThatTheRewindPutsBack() throws Exception {
+    Path repository = Files.createTempDirectory("tako-rewind-repo").toRealPath();
+    git(repository, "init", "-q");
+    Files.writeString(repository.resolve("a.txt"), "before", StandardCharsets.UTF_8);
+    this.record.projectPath = repository.toString();
+    this.finishFailingTurn();
+    assertTrue(this.controller.hasCheckpoint(0, "fail"));
+    assertFalse(this.controller.hasCheckpoint(0, "other"));
+    Files.writeString(repository.resolve("a.txt"), "after", StandardCharsets.UTF_8);
+    Files.writeString(repository.resolve("new.txt"), "new", StandardCharsets.UTF_8);
+
+    this.controller.rewind(List.of("fail"), true);
+
+    assertEquals(new ChatMessage.Rewound(true, null), this.awaitPost(ChatMessage.Rewound.class));
+    assertEquals("before", Files.readString(repository.resolve("a.txt"), StandardCharsets.UTF_8));
+    assertFalse(Files.exists(repository.resolve("new.txt")));
+  }
+
+  public void testSubmitDuringARewindWaitsForIt() throws Exception {
+    this.finishFailingTurn();
+
+    this.controller.rewind(List.of("fail"), false);
+    this.controller.submit("next");
+
+    List<ChatMessage.ThreadMessage> messages = this.postsUntil(ChatMessage.Submit.class);
+    assertNotNull("the prompt goes in after the rewind", find(messages, ChatMessage.Rewound.class));
+    assertEquals("next", ((ChatMessage.Submit) messages.getLast()).text());
+    assertEquals(ChatController.State.WORKING, this.controller.state());
+  }
+
+  /** Opens the thread and runs a turn that fails right away, so the agent is idle with a session. */
+  private void finishFailingTurn() throws Exception {
+    this.controller.open();
+    this.awaitPost(ChatMessage.Init.class);
+    this.controller.send("fail", List.of(), List.of(), 1, 0);
+    while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+    }
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+  }
+
+  private static String transcriptUser(String session, String text) {
+    return "{\"type\":\"user\",\"uuid\":\"u-" + text.hashCode() + "\",\"sessionId\":\"" + session
+      + "\",\"message\":{\"role\":\"user\",\"content\":\"" + text + "\"}}";
+  }
+
+  private static void git(Path directory, String... arguments) throws Exception {
+    List<String> command = new ArrayList<>(List.of("git"));
+    command.addAll(List.of(arguments));
+    Process process = new ProcessBuilder(command).directory(directory.toFile()).inheritIO().start();
+    assertEquals(0, process.waitFor());
   }
 
   /** A thread of the fake ACP agent that resumes its session s0. */

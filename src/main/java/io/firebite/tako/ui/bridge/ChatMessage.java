@@ -281,4 +281,16 @@ public sealed interface ChatMessage {
     String error
   ) implements ThreadMessage {
   }
+
+  /**
+   * A rewind ended.
+   *
+   * @param rewound whether the agent forgot the prompt, so it goes back into the composer
+   * @param error   what went wrong, or null
+   */
+  record Rewound(
+    boolean rewound,
+    @Nullable String error
+  ) implements ThreadMessage {
+  }
 }

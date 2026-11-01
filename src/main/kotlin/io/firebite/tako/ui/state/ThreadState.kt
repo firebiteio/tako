@@ -91,6 +91,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** The folder the agent keeps its scratch files in, if it has one. */
   var scratchpad by mutableStateOf<String?>(null)
   val alerts = mutableStateListOf<Alert>()
+  /** The prompt a running rewind goes back to before; sending waits until it is done. */
+  var rewinding by mutableStateOf<Prompt?>(null)
   /** The stashed drafts to pick from, while their menu is open. */
   var stashMenu by mutableStateOf<List<PromptStash.Entry>?>(null)
 

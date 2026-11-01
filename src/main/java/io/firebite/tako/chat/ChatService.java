@@ -37,6 +37,7 @@ import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
+import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
@@ -576,7 +577,12 @@ public final class ChatService implements Disposable {
   void closeAll(List<String> ids) {
     String activeId = this.store.activeId();
     for (String id : ids) {
-      if (this.store.find(id) != null) {
+      ThreadStore.Record record = this.store.find(id);
+      if (record != null) {
+        String folder = this.workFolder(record);
+        if (!folder.isEmpty()) {
+          Async.inBackground(() -> Checkpoints.forget(Path.of(folder), id, 0, EnvironmentUtil.getEnvironmentMap()));
+        }
         this.disposeController(id);
         this.withdrawTools(id);
         this.store.remove(id);
@@ -903,6 +909,19 @@ public final class ChatService implements Disposable {
     @Override
     public @Nullable String toolsUrl() {
       return ChatService.this.toolsUrl(this.record.id);
+    }
+
+    @Override
+    public boolean isFolderBusy(String folder) {
+      for (Map.Entry<String, ChatController> entry : ChatService.this.controllers.entrySet()) {
+        ChatController other = entry.getValue();
+        ChatController.State state = other.state();
+        boolean isActive = state.isBusy() || state == ChatController.State.WAITING;
+        if (!entry.getKey().equals(this.record.id) && isActive && ThreadStore.samePath(other.projectPath(), folder)) {
+          return true;
+        }
+      }
+      return false;
     }
 
     @Override
