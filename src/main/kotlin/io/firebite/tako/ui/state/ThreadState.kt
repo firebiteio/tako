@@ -37,6 +37,9 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** Counts the reads of [gitMenu] started, so only the latest one sets it. */
   var gitMenuReads = 0
   var archived by mutableStateOf(item.archived)
+  var pinned by mutableStateOf(item.pinned)
+  /** When the thread's snooze ends, in epoch millis; 0 when it is not snoozed. */
+  var snoozedUntil by mutableLongStateOf(item.snoozedUntil)
   var updatedAt by mutableLongStateOf(if (item.updatedAt > 0) item.updatedAt else System.currentTimeMillis())
   var costUsd by mutableStateOf(item.costUsd)
   var tokens by mutableLongStateOf(item.tokens)
@@ -81,7 +84,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var contextWindow by mutableStateOf<Long?>(null)
   val tasks = mutableStateMapOf<String, Task>()
   var finished by mutableStateOf(false)
-  var unread by mutableStateOf(false)
+  /** The agent finished or asked something while the thread was not shown; the IDE decides and stores it. */
+  var unread by mutableStateOf(item.unread)
   var failed by mutableStateOf(false)
   var model by mutableStateOf<String?>(null)
   var mode by mutableStateOf("default")
@@ -111,6 +115,9 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   fun update(item: ChatMessage.ThreadItem) {
     this.title = item.title.ifEmpty { this.title }
     this.archived = item.archived
+    this.pinned = item.pinned
+    this.unread = item.unread
+    this.snoozedUntil = item.snoozedUntil
     if (item.updatedAt > 0) {
       this.updatedAt = item.updatedAt
     }

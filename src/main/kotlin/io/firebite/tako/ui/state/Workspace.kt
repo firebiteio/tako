@@ -10,10 +10,13 @@ import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import com.intellij.ide.util.PropertiesComponent
+import com.intellij.openapi.application.ApplicationManager
 import com.intellij.openapi.application.EDT
 import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.application.asContextElement
 import com.intellij.openapi.project.Project
+import com.intellij.openapi.ui.InputValidator
+import com.intellij.openapi.ui.Messages
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.git.ThreadGit
@@ -27,6 +30,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import java.time.ZonedDateTime
 
 private const val SIDEBAR_KEY = "tako.sidebar"
 private const val ARCHIVED_TOAST_MILLIS = 5000L
@@ -58,6 +62,7 @@ class Workspace(val service: ChatService, val project: Project) {
 
   var sidebarOpen by mutableStateOf(PropertiesComponent.getInstance().getBoolean(SIDEBAR_KEY, true))
   var showArchived by mutableStateOf(false)
+  var showSnoozed by mutableStateOf(false)
   /** The thread last archived, while the toast offering to undo it shows. */
   var archivedToast by mutableStateOf<ChatService.Archived?>(null)
   /** Whether the thread list shows the search field. */
@@ -202,6 +207,21 @@ class Workspace(val service: ChatService, val project: Project) {
     this.service.newThread(this.active?.projectPath, null)
   }
 
+  /** Asks for the thread's new title once the current event is handled, as the menu that asked is still closing. */
+  fun rename(thread: ThreadState) {
+    ApplicationManager.getApplication().invokeLater {
+      val title = Messages.showInputDialog(this.project, t("sidebar.rename.message"), t("sidebar.rename.title"), null,
+        thread.title, NotBlank)
+      if (title != null) {
+        this.service.rename(thread.id, title)
+      }
+    }
+  }
+
+  fun snooze(thread: ThreadState, preset: SnoozePreset) {
+    this.service.snooze(thread.id, snoozeUntil(preset, ZonedDateTime.now()).toInstant().toEpochMilli())
+  }
+
   /** Has the thread's agent write a title from the conversation the chat holds. */
   fun regenerateTitle(thread: ThreadState) {
     thread.titling = true
@@ -290,4 +310,11 @@ class Workspace(val service: ChatService, val project: Project) {
     this.shownBench = benchId
     this.benchLoads++
   }
+}
+
+/** Keeps the rename dialog's OK disabled while the title is blank. */
+private object NotBlank : InputValidator {
+  override fun checkInput(inputString: String?): Boolean = !inputString.isNullOrBlank()
+
+  override fun canClose(inputString: String?): Boolean = this.checkInput(inputString)
 }

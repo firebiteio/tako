@@ -16,6 +16,7 @@ It works with:
 - Before an edit, the permission prompt can open the change in the IDE diff viewer
 - After each turn you get a diff of every file the agent touched
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
+- Pin, rename, snooze or mark threads unread from their menu. A thread whose agent finished or asked something while you looked elsewhere gets a dot until you open it. Optionally archive threads automatically once their pull request is merged or after some days without activity (Settings > Tools > Tako)
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
 - Fix Problems sends a file's inspection results to the agent

@@ -184,6 +184,10 @@ object Icons {
   val todoDone: IconKey = lucide("square-check-big")
   val todoActive: IconKey = lucide("circle-dot")
   val todoPending: IconKey = lucide("circle")
+  val pin: IconKey = lucide("pin")
+  val snooze: IconKey = lucide("alarm-clock")
+  val unread: IconKey = lucide("circle-dot")
+  val rename: IconKey = lucide("pen-line")
 
   fun category(kind: ToolKind): IconKey = when (kind) {
     ToolKind.READ -> lucide("eye")
