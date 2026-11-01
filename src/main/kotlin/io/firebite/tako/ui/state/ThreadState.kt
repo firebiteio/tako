@@ -12,6 +12,7 @@ import androidx.compose.runtime.setValue
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ContextUsage
 import com.intellij.openapi.diagnostic.logger
+import io.firebite.tako.chat.git.ThreadGit
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.chat.thread.ThreadTitles
@@ -29,6 +30,12 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var title by mutableStateOf(item.title)
   /** Whether the agent writes the thread a new title. */
   var titling by mutableStateOf(false)
+  /** Whether a git action started from the header runs or waits for its texts. */
+  var gitRunning by mutableStateOf(false)
+  /** The git menu as last read, shown at once when it opens while it is read again. */
+  var gitMenu by mutableStateOf<ThreadGit.Menu?>(null)
+  /** Counts the reads of [gitMenu] started, so only the latest one sets it. */
+  var gitMenuReads = 0
   var archived by mutableStateOf(item.archived)
   var updatedAt by mutableLongStateOf(if (item.updatedAt > 0) item.updatedAt else System.currentTimeMillis())
   var costUsd by mutableStateOf(item.costUsd)
