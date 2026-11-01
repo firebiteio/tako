@@ -1,5 +1,8 @@
 package io.firebite.tako.ide.editor;
 
+import com.intellij.openapi.command.WriteCommandAction;
+import com.intellij.openapi.editor.Document;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import java.io.IOException;
@@ -26,6 +29,19 @@ public class IdeFilesWriteTest extends BasePlatformTestCase {
 
     assertEquals("second\n", Files.readString(path));
     assertEquals("second\n", new String(file.contentsToByteArray(), StandardCharsets.UTF_8));
+  }
+
+  public void testReplacesAFileOpenWithUnsavedEdits() throws Exception {
+    Path path = Files.createTempDirectory("tako-write").resolve("plan.md");
+    VirtualFile file = IdeFiles.writeText(path, "first\n");
+    Document document = FileDocumentManager.getInstance().getDocument(file);
+    WriteCommandAction.runWriteCommandAction(this.getProject(), () -> document.setText("unsaved edit\n"));
+
+    IdeFiles.writeText(path, "the plan\n");
+
+    assertEquals("the plan\n", Files.readString(path));
+    assertEquals("the plan\n", document.getText());
+    assertFalse(FileDocumentManager.getInstance().isDocumentUnsaved(document));
   }
 
   public void testCreatesAMissingFolder() throws Exception {

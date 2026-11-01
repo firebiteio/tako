@@ -10,7 +10,9 @@ import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
 import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.command.WriteCommandAction;
+import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.fileTypes.FileType;
@@ -207,8 +209,8 @@ public final class IdeFiles {
   }
 
   /**
-   * Writes the text as UTF-8 into the file, creating it and its folder if needed, and replacing what it held. Must run
-   * on the EDT.
+   * Writes the text as UTF-8 into the file, creating it and its folder if needed, and replacing what it held. An open
+   * editor's unsaved edits are saved first, so its document takes the new text without a conflict. Must run on the EDT.
    */
   public static VirtualFile writeText(Path path, String text) throws IOException {
     Path parent = path.toAbsolutePath().getParent();
@@ -220,6 +222,10 @@ public final class IdeFiles {
       throw new IOException(path + " is a folder");
     }
     String name = path.getFileName().toString();
+    Document open = existing == null ? null : FileDocumentManager.getInstance().getCachedDocument(existing);
+    if (open != null) {
+      FileDocumentManager.getInstance().saveDocument(open);
+    }
     return WriteAction.compute(() -> {
       VirtualFile file = existing;
       if (file == null) {
