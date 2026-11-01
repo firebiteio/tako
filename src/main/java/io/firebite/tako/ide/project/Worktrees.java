@@ -212,10 +212,18 @@ public final class Worktrees {
 
   static String git(Path directory, Map<String, String> environment, String... arguments)
     throws GitException {
+    return new String(gitBytes(directory, environment, arguments), StandardCharsets.UTF_8);
+  }
+
+  /** Git's output as it wrote it, for file contents in any encoding. */
+  static byte[] gitBytes(Path directory, Map<String, String> environment, String... arguments)
+    throws GitException {
     Path output = createTemp(".out");
     try {
       run(directory, environment, output, arguments);
-      return readText(output);
+      return Files.readAllBytes(output);
+    } catch (IOException e) {
+      throw new GitException(e.getMessage());
     } finally {
       deleteQuietly(output);
     }

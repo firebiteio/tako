@@ -27,6 +27,7 @@ import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.EditPreview;
 import io.firebite.tako.ide.context.ReviewTarget;
+import io.firebite.tako.ide.project.GitDiffs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -39,6 +40,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
 import org.jetbrains.annotations.Nullable;
 
@@ -164,6 +166,18 @@ public final class IdeFiles {
         targetOf.apply(preview)));
     }
     DiffManager.getInstance().showDiff(project, new SimpleDiffRequestChain(requests), DiffDialogHints.DEFAULT);
+  }
+
+  /** One diff window stepping through the files, each read when the window gets to it. Must run on the EDT. */
+  public static void showGitDiffs(Project project, GitDiffs.Changes changes, String beforeTitle, String afterTitle,
+    Map<String, String> environment) {
+    List<GitDiffProducer> producers = new ArrayList<>();
+    for (GitDiffs.Change change : changes.files()) {
+      producers.add(new GitDiffProducer(project, changes, change, beforeTitle, afterTitle, environment,
+        GitDiffs.MAX_FILE_BYTES));
+    }
+    DiffManager.getInstance().showDiff(project, SimpleDiffRequestChain.fromProducers(producers),
+      DiffDialogHints.DEFAULT);
   }
 
   private static SimpleDiffRequest request(Project project, EditPreview preview, String title, String beforeTitle,
