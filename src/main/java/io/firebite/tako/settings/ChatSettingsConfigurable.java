@@ -20,6 +20,7 @@ import org.jetbrains.annotations.Nullable;
 public final class ChatSettingsConfigurable implements Configurable {
   private ComboBox<AgentRegistry.Choice> defaultAgentBox;
   private JBCheckBox parallelRunsBox;
+  private JBCheckBox steerBox;
 
   @Override
   public @Nls String getDisplayName() {
@@ -31,11 +32,14 @@ public final class ChatSettingsConfigurable implements Configurable {
     this.defaultAgentBox = new ComboBox<>();
     this.defaultAgentBox.setRenderer(BuilderKt.textListCellRenderer(choice -> choice == null ? "" : choice.name()));
     this.parallelRunsBox = new JBCheckBox(TakoBundle.message("settings.tako.parallel.runs"));
+    this.steerBox = new JBCheckBox(TakoBundle.message("settings.tako.steer"));
     JPanel panel = FormBuilder.createFormBuilder()
       .addLabeledComponent(TakoBundle.message("settings.tako.default.agent"), this.defaultAgentBox)
       .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.default.agent.hint")))
       .addComponent(this.parallelRunsBox)
       .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.parallel.runs.hint")))
+      .addComponent(this.steerBox)
+      .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.steer.hint")))
       .addComponentFillVertically(new JPanel(), 0)
       .getPanel();
     this.reset();
@@ -45,16 +49,17 @@ public final class ChatSettingsConfigurable implements Configurable {
   @Override
   public boolean isModified() {
     ChatSettings.Data data = ChatSettings.state();
-    return !this.selectedId().equals(data.defaultAgent) || this.parallelRunsBox.isSelected() != data.parallelRuns;
+    return !this.selectedId().equals(data.defaultAgent) || this.parallelRunsBox.isSelected() != data.parallelRuns
+      || this.steerBox.isSelected() != data.steerWhileWorking;
   }
 
   @Override
   public void apply() {
+    boolean changed = this.isModified();
     ChatSettings.Data data = ChatSettings.state();
-    boolean changed = !this.selectedId().equals(data.defaultAgent)
-      || this.parallelRunsBox.isSelected() != data.parallelRuns;
     data.defaultAgent = this.selectedId();
     data.parallelRuns = this.parallelRunsBox.isSelected();
+    data.steerWhileWorking = this.steerBox.isSelected();
     if (changed) {
       ChatService.postSettingsToOpenProjects();
     }
@@ -71,6 +76,7 @@ public final class ChatSettingsConfigurable implements Configurable {
       }
     }
     this.parallelRunsBox.setSelected(data.parallelRuns);
+    this.steerBox.setSelected(data.steerWhileWorking);
   }
 
   private String selectedId() {

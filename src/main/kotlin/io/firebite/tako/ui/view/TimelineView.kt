@@ -50,6 +50,7 @@ import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import com.intellij.openapi.ui.MessageDialogBuilder
+import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.clock
 import io.firebite.tako.ui.elapsed
@@ -60,9 +61,17 @@ import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
+import io.firebite.tako.ui.state.canMoveUp
+import io.firebite.tako.ui.state.canQuote
 import io.firebite.tako.ui.state.canRewind
+import io.firebite.tako.ui.state.canSteer
+import io.firebite.tako.ui.state.editQueued
+import io.firebite.tako.ui.state.moveQueuedUp
 import io.firebite.tako.ui.state.promptsUpTo
+import io.firebite.tako.ui.state.removeQueued
 import io.firebite.tako.ui.state.rewind
+import io.firebite.tako.ui.state.sendQueuedNow
+import io.firebite.tako.ui.state.steerQueued
 import io.firebite.tako.ui.t
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -233,7 +242,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
     is TimelineRow.Working -> WorkingRow(thread)
     is TimelineRow.Error -> InlineAlert(row.text, Modifier.fillMaxWidth().padding(bottom = 12.dp))
     is TimelineRow.Changes -> ChangesCard(thread, row.turn)
-    is TimelineRow.Queued -> UserRow(thread, row.queued.prompt, true)
+    is TimelineRow.Queued -> UserRow(thread, row.queued.prompt, row.queued)
   }
 }
 
@@ -272,10 +281,10 @@ val cssRem: Dp
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
 /**
- * @param queued  the prompt waits for the running turn to end
+ * @param queued  the prompt's place in the queue, while the agent has not taken it
  * @param rewinds the turn the prompt starts, when the thread can rewind to before it
  */
-private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false, rewinds: Turn? = null) {
+private fun UserRow(thread: ThreadState, prompt: Prompt, queued: QueuedPrompt? = null, rewinds: Turn? = null) {
   val workspace = thread.workspace
   val (interaction, hovered) = rememberHover()
   val long = prompt.text.length > COLLAPSE_CHARS || prompt.text.count { it == '\n' } >= COLLAPSE_LINES
@@ -283,7 +292,7 @@ private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false
   val rem = cssRem
   Column(Modifier.fillMaxWidth().hoverable(interaction).padding(bottom = 6.dp), horizontalAlignment = Alignment.End,
     verticalArrangement = Arrangement.spacedBy(2.dp)) {
-    Box(Modifier.fillMaxWidth(0.8f).alpha(if (queued) 0.6f else 1f), contentAlignment = Alignment.CenterEnd) {
+    Box(Modifier.fillMaxWidth(0.8f).alpha(if (queued != null) 0.6f else 1f), contentAlignment = Alignment.CenterEnd) {
       Column(Modifier.clip(RoundedCornerShape(18.dp)).background(colors.message)
         .let { if (collapsed) it.heightIn(max = rem * 11) else it }.padding(horizontal = 14.dp, vertical = 10.dp)) {
         if (prompt.images.isNotEmpty()) {
@@ -315,8 +324,8 @@ private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false
           .background(Brush.verticalGradient(listOf(Color.Transparent, colors.bg))))
       }
     }
-    if (queued) {
-      Text(t("timeline.queued"), Modifier.padding(horizontal = 6.dp), color = colors.muted, style = smallStyle)
+    if (queued != null) {
+      QueuedMeta(thread, queued)
     }
     HoverMeta(hovered) {
       if (long) {
@@ -370,6 +379,49 @@ private fun confirmRewind(thread: ThreadState, turn: Turn, files: Boolean) {
   else t("timeline.rewind.confirm")
   if (MessageDialogBuilder.yesNo(title, text).guessWindowAndAsk()) {
     thread.rewind(turn, files)
+  }
+}
+
+/** A queued prompt's status, and while it waits, what the person can do with it. */
+@Composable
+private fun QueuedMeta(thread: ThreadState, queued: QueuedPrompt) {
+  val label = when (queued.status) {
+    QueuedPrompts.Status.HELD -> if (thread.queueHeld || !thread.busy) t("timeline.queued.held") else t("timeline.queued")
+    QueuedPrompts.Status.NEXT -> t("timeline.queued.next")
+    QueuedPrompts.Status.SENDING -> t("timeline.queued.sending")
+    QueuedPrompts.Status.STEERING -> t("timeline.queued.steering")
+  }
+  Row(Modifier.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically,
+    horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+    Text(label, color = colors.muted, style = smallStyle)
+    if (queued.status != QueuedPrompts.Status.HELD) {
+      return@Row
+    }
+    if (thread.busy) {
+      TextAction(t("queue.send.now"), t("queue.send.now.tip")) { thread.sendQueuedNow(queued) }
+      if (thread.canSteer && !queued.prompt.text.trimStart().startsWith("/")) {
+        TextAction(t("queue.steer"), t("queue.steer.tip")) { thread.steerQueued(queued) }
+      }
+    } else {
+      TextAction(t("queue.send"), t("queue.send.tip")) { thread.sendQueuedNow(queued) }
+    }
+    if (thread.canQuote) {
+      TextAction(t("queue.edit"), t("queue.edit.tip")) { thread.editQueued(queued) }
+    }
+    if (thread.canMoveUp(queued)) {
+      TextAction(t("queue.move.up"), null) { thread.moveQueuedUp(queued) }
+    }
+    TextAction(t("queue.remove"), null) { thread.removeQueued(queued) }
+  }
+}
+
+/** A small text button, muted until hovered. */
+@Composable
+private fun TextAction(label: String, tip: String?, onClick: () -> Unit) {
+  val (interaction, hovered) = rememberHover()
+  Tip(tip) {
+    Text(label, Modifier.hoverable(interaction).clickable(interaction, indication = null, onClick = onClick),
+      color = if (hovered) colors.fg else colors.muted, style = smallStyle)
   }
 }
 

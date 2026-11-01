@@ -113,6 +113,7 @@ import io.firebite.tako.ui.state.PromptCache
 import io.firebite.tako.ui.state.PromptRecall
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.canPlanRuns
+import io.firebite.tako.ui.state.canSteer
 import io.firebite.tako.ui.state.cacheState
 import io.firebite.tako.ui.state.chooseOption
 import io.firebite.tako.ui.state.addContext
@@ -579,7 +580,7 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptR
   }
   if (event.key == Key.Enter && !event.isShiftPressed) {
     suggestions.hide()
-    thread.submit()
+    thread.submit(event.isCtrlPressed || event.isMetaPressed)
     return true
   }
   if (event.key == Key.V && event.isShiftPressed && (event.isCtrlPressed || event.isMetaPressed)) {
@@ -868,7 +869,9 @@ private fun SendButton(thread: ThreadState) {
   val tip = when {
     isStop -> t("composer.stop")
     thread.approvals.isNotEmpty() && thread.question == null -> t("composer.decline.title")
-    thread.busy -> t("composer.queue.title")
+    thread.busy && !thread.canSteer -> t("composer.queue.title")
+    thread.busy && thread.workspace.steers -> t("composer.steer.default.title")
+    thread.busy -> t("composer.queue.default.title")
     else -> t("composer.send.title")
   }
   val (interaction, hovered) = rememberHover()

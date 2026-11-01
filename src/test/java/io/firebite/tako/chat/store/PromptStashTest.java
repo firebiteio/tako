@@ -18,6 +18,7 @@ import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
 import org.junit.Test;
 
@@ -70,6 +71,27 @@ public class PromptStashTest {
     assertTrue(saved.contains("\"review\""));
     assertEquals(List.of(review), context);
     assertEquals(ContextItem.Kind.REVIEW, context.get(0).kind());
+  }
+
+  @Test
+  public void pushAllKeepsTheLastAsNewestAndTellsHowManyFit() throws Exception {
+    Path file = newFile();
+    PromptStash stash = open(file);
+    stash.push(prompt("older draft"));
+    assertEquals(2, stash.pushAll(List.of(prompt("queued first"), prompt("queued second"))));
+    List<PromptStash.Entry> entries = open(file).entries();
+    assertEquals("queued second", entries.get(0).prompt.text());
+    assertEquals("queued first", entries.get(1).prompt.text());
+    assertEquals("older draft", entries.get(2).prompt.text());
+
+    List<ChatMessage.Submit> many = new ArrayList<>();
+    for (int i = 0; i < PromptStash.MAX_ENTRIES + 5; i++) {
+      many.add(prompt("queued " + i));
+    }
+    assertEquals(PromptStash.MAX_ENTRIES, stash.pushAll(many));
+    assertEquals(PromptStash.MAX_ENTRIES, stash.entries().size());
+    assertEquals("queued " + (PromptStash.MAX_ENTRIES + 4), stash.entries().getFirst().prompt.text());
+    assertEquals(0, stash.pushAll(List.of()));
   }
 
   @Test

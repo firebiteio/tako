@@ -42,6 +42,8 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
     public String defaultAgent = "claude";
     /** Lets one prompt start several runs at once, each in its own git worktree. */
     public boolean parallelRuns;
+    /** A prompt sent while the agent works steers its running turn instead of waiting for it to end. */
+    public boolean steerWhileWorking;
 
     @OptionTag("executablePath")
     public String claudePath = "";

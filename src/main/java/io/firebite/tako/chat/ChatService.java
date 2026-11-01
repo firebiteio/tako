@@ -178,7 +178,8 @@ public final class ChatService implements Disposable {
 
   /** Tells the chat what the settings let it offer. */
   public void postSettings() {
-    this.post(new ChatMessage.Settings(ChatSettings.state().parallelRuns));
+    ChatSettings.Data settings = ChatSettings.state();
+    this.post(new ChatMessage.Settings(settings.parallelRuns, settings.steerWhileWorking));
   }
 
   /**
@@ -579,6 +580,13 @@ public final class ChatService implements Disposable {
   private synchronized void withdrawTools(String id) {
     if (this.toolServer != null) {
       this.toolServer.withdraw(id);
+    }
+  }
+
+  /** Puts every open thread's queued prompts in the prompt stash, as the project closes. */
+  void stashQueued() {
+    for (ChatController controller : this.controllers.values()) {
+      controller.stashQueued();
     }
   }
 

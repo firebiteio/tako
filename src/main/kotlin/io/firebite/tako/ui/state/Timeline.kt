@@ -4,6 +4,7 @@ import io.firebite.tako.agent.AgentEvent
 import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.ToolKind
+import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.t
@@ -99,14 +100,14 @@ private fun ThreadState.onText(messageId: String?, text: String, parentId: Strin
   }
 }
 
-/** Ends the running turn; the thread stays busy while prompts wait for the agent. */
+/** Ends the running turn; the thread stays busy while queued prompts are to go. */
 private fun ThreadState.onTurnEnded(event: AgentEvent.TurnEnded) {
   this.finishTurn(event)
   event.cost?.let {
     this.costUsd = it.costUsd
     this.inputRate = it.inputRate
   }
-  if (this.queued.isNotEmpty()) {
+  if (this.queueGoesOn) {
     return
   }
   this.setBusy(false)
@@ -325,11 +326,14 @@ private fun fold(items: List<TurnItem>, took: Long?, stopped: Boolean): Fold? {
   return Fold(label, foldable.toSet())
 }
 
-/** Rebuilds the timeline from the thread's transcript. */
+/**
+ * Rebuilds the timeline from the thread's transcript. Keeps the queued prompts, and the turn number, so new prompts don't
+ * take a number the IDE still knows.
+ */
 fun ThreadState.replay(events: List<AgentEvent>) {
+  val turnNo = this.turnNo
   this.turns.clear()
   this.turn = null
-  this.queued.clear()
   this.turnNo = 0
   this.entries.clear()
   this.declined.clear()
@@ -346,6 +350,7 @@ fun ThreadState.replay(events: List<AgentEvent>) {
   }
   this.finishTurn(null)
   this.replaying = false
+  this.turnNo = turnNo
   this.finished = false
   if (this.rewinding != null) {
     this.setBusy(true)
@@ -383,11 +388,10 @@ private fun ThreadState.selectResolvedModel(resolved: String) {
   this.models.firstOrNull { it.resolvedModel == resolved || it.value == resolved }?.let { this.model = it.value }
 }
 
-/** The process ended; a crash offers a restart. */
+/** The process ended; a crash offers a restart. Queued prompts stay, held. */
 fun ThreadState.onExit(code: Int, stderr: String) {
   this.stopped = true
   this.finishTurn(null)
-  this.queued.clear()
   this.setBusy(false)
   this.cancelAllApprovals()
   this.stopAllTasks()
@@ -399,18 +403,27 @@ fun ThreadState.onExit(code: Int, stderr: String) {
   }
 }
 
-/** The agent took the queued prompt of turn [no]: as the next turn, or as a follow-up in the running one. */
+/**
+ * The agent took the queued prompt of turn [no]: as the next turn, or as a follow-up in the running one. A follow-up
+ * taken once its turn had ended goes into that turn, which stays ended.
+ */
 private fun ThreadState.takeQueued(no: Int, startsTurn: Boolean) {
   val queued = this.queued.firstOrNull { it.no == no } ?: return
   this.queued.remove(queued)
   if (startsTurn) {
     this.startTurn(queued.prompt, false, no)
-  } else {
-    val turn = this.currentTurn()
-    this.clearThinking()
-    turn.group = null
-    turn.items.add(TurnItem.FollowUp(queued.prompt))
+    this.setBusy(true)
+    return
   }
+  val last = this.turn
+  if (last != null && last.done) {
+    last.items.add(TurnItem.FollowUp(queued.prompt))
+    return
+  }
+  val turn = this.currentTurn()
+  this.clearThinking()
+  turn.group = null
+  turn.items.add(TurnItem.FollowUp(queued.prompt))
   this.setBusy(true)
 }
 
@@ -420,19 +433,24 @@ fun ThreadState.onError(text: String) {
   this.showAlert(text)
 }
 
-/** Shows the prompt as the thread's next turn and sends it; while the agent works it waits until the agent takes it. */
-fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: List<ImageAttachment>) {
+/**
+ * Sends the prompt and shows it as the thread's next turn; while a turn runs it shows as queued until the agent takes
+ * it.
+ */
+fun ThreadState.startPrompt(text: String, contexts: List<ContextItem>, images: List<ImageAttachment>,
+  delivery: QueuedPrompts.Delivery = QueuedPrompts.Delivery.QUEUE) {
   val prompt = Prompt(text, contexts, images)
   val promptsBefore = this.promptCount()
   this.turnNo++
   this.finished = false
   this.failed = false
-  if (this.busy) {
-    this.queued.add(QueuedPrompt(this.turnNo, prompt))
-  } else {
-    this.startTurn(prompt, false)
+  when (this.controller?.send(text, contexts, images, this.turnNo, promptsBefore, delivery)
+    ?: QueuedPrompts.Action.SEND) {
+    QueuedPrompts.Action.SEND -> this.startTurn(prompt, false)
+    QueuedPrompts.Action.STEER -> this.queued.add(QueuedPrompt(this.turnNo, prompt, QueuedPrompts.Status.STEERING))
+    QueuedPrompts.Action.HOLD -> this.queued.add(QueuedPrompt(this.turnNo, prompt,
+      if (delivery == QueuedPrompts.Delivery.NEXT) QueuedPrompts.Status.NEXT else QueuedPrompts.Status.HELD))
   }
-  this.controller?.send(text, contexts, images, this.turnNo, promptsBefore)
   this.updatedAt = System.currentTimeMillis()
   this.setBusy(true)
   this.scrollToEnd++
