@@ -212,7 +212,12 @@ class Workspace(val service: ChatService, val project: Project) {
   fun runGitAction(thread: ThreadState, option: ThreadGit.Option, status: GitCommands.Status) {
     val controller = thread.controller ?: return
     thread.gitRunning = true
-    controller.runGitAction(option, status).whenComplete { _, _ -> thread.gitRunning = false }
+    try {
+      controller.runGitAction(option, status).whenComplete { _, _ -> thread.gitRunning = false }
+    } catch (e: RuntimeException) {
+      thread.gitRunning = false
+      throw e
+    }
   }
 
   fun receive(message: ChatMessage.WorkspaceMessage) {

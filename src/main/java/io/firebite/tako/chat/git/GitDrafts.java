@@ -74,8 +74,8 @@ public final class GitDrafts {
   }
 
   /**
-   * The texts in the answer's tags. Without tags, the whole answer is the commit message and its first line the
-   * title. Code fences around the answer or a section are dropped.
+   * The texts in the answer's tags. Without tags, the whole answer is the commit message, its first line the title
+   * and the rest the description. Code fences around the answer or a section are dropped.
    */
   public static Draft parse(String answer) {
     String text = unfence(answer.replace("\r\n", "\n").strip());
@@ -84,7 +84,9 @@ public final class GitDrafts {
     String body = section(text, BODY);
     if (commit == null && title == null && body == null) {
       int newline = text.indexOf('\n');
-      return new Draft(text, (newline < 0 ? text : text.substring(0, newline)).strip(), "");
+      return newline < 0
+        ? new Draft(text, text, "")
+        : new Draft(text, text.substring(0, newline).strip(), text.substring(newline + 1).strip());
     }
     String message = commit == null ? "" : commit;
     if (title == null) {

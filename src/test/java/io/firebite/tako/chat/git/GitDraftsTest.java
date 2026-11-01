@@ -58,7 +58,9 @@ public class GitDraftsTest {
 
   @Test
   public void untaggedAnswerIsTheCommitMessage() {
-    assertEquals(new Draft("Add login\n\nDetails", "Add login", ""), GitDrafts.parse("  Add login\n\nDetails  "));
+    assertEquals(new Draft("Add login\n\nDetails", "Add login", "Details"),
+      GitDrafts.parse("  Add login\n\nDetails  "));
+    assertEquals(new Draft("One line", "One line", ""), GitDrafts.parse("One line"));
   }
 
   @Test
