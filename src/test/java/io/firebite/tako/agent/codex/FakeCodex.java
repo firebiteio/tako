@@ -12,10 +12,17 @@ import java.nio.file.Path;
 /**
  * Stands in for {@code codex app-server}. It answers the handshake, starts or resumes its one thread, then plays one
  * turn that streams a message and asks to run a command, echoing the decision it got. It also lists a fixed history of
- * turns and reverts them.
+ * turns and reverts them. The prompts {@link #LIMIT_PROMPT} and {@link #LATE_LIMIT_PROMPT} play turns that fail on the
+ * usage limit instead.
  */
 public final class FakeCodex {
   private static final String THREAD = "019a0000-0000-7000-8000-000000000001";
+  /** The prompt that plays a turn stopped by the usage limit. */
+  public static final String LIMIT_PROMPT = "hit the limit";
+  /** The prompt that plays a turn stopped by the usage limit whose window is reported only after the turn. */
+  public static final String LATE_LIMIT_PROMPT = "hit the limit, tell later";
+  /** When that limit resets, in epoch seconds. */
+  public static final long LIMIT_RESETS_AT = 1_900_000_000L;
 
   private FakeCodex() {
   }
@@ -37,7 +44,16 @@ public final class FakeCodex {
           + "{\"reasoningEffort\":\"high\"}]}],\"nextCursor\":null}");
         case "thread/start", "thread/resume" -> respond(id, "{\"thread\":{\"id\":\"" + THREAD + "\",\"turns\":[]},"
           + "\"model\":\"gpt-x\",\"cwd\":\"/work\",\"reasoningEffort\":\"low\"}");
-        case "turn/start" -> turn(id, reader);
+        case "turn/start" -> {
+          String prompt = promptText(message);
+          if (LIMIT_PROMPT.equals(prompt)) {
+            limitTurn(id);
+          } else if (LATE_LIMIT_PROMPT.equals(prompt)) {
+            lateLimitTurn(id);
+          } else {
+            turn(id, reader);
+          }
+        }
         case "thread/turns/list" -> turns(id, message.getAsJsonObject("params"));
         case "thread/revert" -> revert(id, message.getAsJsonObject("params"));
         case "turn/steer" -> emit("{\"id\":" + id + ",\"error\":{\"code\":-32600,\"message\":\"no active turn\"}}");
@@ -116,6 +132,40 @@ public final class FakeCodex {
       return;
     }
     respond(id, "{\"turnId\":\"turn1\"}");
+  }
+
+  private static String promptText(JsonObject message) {
+    return message.getAsJsonObject("params").getAsJsonArray("input").get(0).getAsJsonObject().get("text")
+      .getAsString();
+  }
+
+  /**
+   * A turn that fails on the usage limit. The limits arrive as sparse updates: the used up primary window, then only the
+   * secondary one, then another limit's snapshot, which does not count.
+   */
+  private static void limitTurn(String id) {
+    respond(id, "{\"turn\":{\"id\":\"turn2\",\"items\":[],\"status\":\"inProgress\"}}");
+    notify("turn/started", "{\"threadId\":\"" + THREAD + "\",\"turn\":{\"id\":\"turn2\",\"status\":\"inProgress\"}}");
+    notify("account/rateLimits/updated", "{\"rateLimits\":{\"primary\":{\"usedPercent\":100,"
+      + "\"windowDurationMins\":300,\"resetsAt\":" + LIMIT_RESETS_AT + "}}}");
+    notify("account/rateLimits/updated", "{\"rateLimits\":{\"limitId\":\"codex\",\"secondary\":{\"usedPercent\":40,"
+      + "\"windowDurationMins\":10080,\"resetsAt\":" + (LIMIT_RESETS_AT + 86400) + "}}}");
+    notify("account/rateLimits/updated", "{\"rateLimits\":{\"limitId\":\"other\",\"primary\":{\"usedPercent\":0,"
+      + "\"windowDurationMins\":300,\"resetsAt\":1}}}");
+    notify("turn/completed", "{\"turn\":{\"id\":\"turn2\",\"status\":\"failed\",\"error\":{\"message\":"
+      + "\"You've hit your usage limit.\",\"codexErrorInfo\":\"usageLimitExceeded\"}}}");
+  }
+
+  /** A turn that fails on the usage limit before the update that used up its window. */
+  private static void lateLimitTurn(String id) {
+    respond(id, "{\"turn\":{\"id\":\"turn3\",\"items\":[],\"status\":\"inProgress\"}}");
+    notify("turn/started", "{\"threadId\":\"" + THREAD + "\",\"turn\":{\"id\":\"turn3\",\"status\":\"inProgress\"}}");
+    notify("turn/completed", "{\"turn\":{\"id\":\"turn3\",\"status\":\"failed\",\"error\":{\"message\":"
+      + "\"You've hit your usage limit.\",\"codexErrorInfo\":\"usageLimitExceeded\"}}}");
+    notify("account/rateLimits/updated", "{\"rateLimits\":{\"primary\":{\"usedPercent\":100,"
+      + "\"windowDurationMins\":300,\"resetsAt\":" + LIMIT_RESETS_AT + "}}}");
+    notify("account/rateLimits/updated", "{\"rateLimits\":{\"primary\":{\"usedPercent\":100,"
+      + "\"windowDurationMins\":300,\"resetsAt\":" + LIMIT_RESETS_AT + "}}}");
   }
 
   private static void respond(String id, String result) {

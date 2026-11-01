@@ -38,6 +38,7 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
   private final SubagentRelay subagents;
   private final Map<String, JsonObject> pendingRequests = new ConcurrentHashMap<>();
   private final PromptEchoes echoes = new PromptEchoes();
+  private final ClaudeLimits limits = new ClaudeLimits();
   private volatile @Nullable String sessionId;
 
   ClaudeSession(ClaudeLaunch command, AgentLaunch launch, String authDescription, Map<String, String> environment,
@@ -61,6 +62,7 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
 
   @Override
   public synchronized void prompt(String text, List<ImageAttachment> images, int key) {
+    this.limits.prompted();
     if (!this.echoes.sent(text, key)) {
       this.listener.onEvent(new AgentEvent.PromptTaken(key, true));
     }
@@ -76,6 +78,7 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
 
   @Override
   public void interrupt() {
+    this.limits.interrupted();
     this.process.interrupt();
   }
 
@@ -152,6 +155,7 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
       }
       this.subagents.onToolResults(message.toolResults());
     }
+    this.limits.observe(message);
     if (message.type() == CliMessage.Type.RESULT) {
       this.onResult(message, change);
       return;
@@ -161,10 +165,14 @@ final class ClaudeSession implements AgentSession, ClaudeProcessListener {
 
   /**
    * Ends the turn before telling it, so a prompt sent once the listener heard of the end starts a turn at once. Holds
-   * the monitor, so a prompt sent meanwhile waits until the end was told.
+   * the monitor, so a prompt sent meanwhile waits until the end was told. A limit the turn stopped on comes first.
    */
   private synchronized void onResult(CliMessage message, @Nullable FileChange change) {
     this.echoes.turnEnded();
+    AgentEvent.LimitReached limit = this.limits.atResult(message);
+    if (limit != null) {
+      this.listener.onEvent(limit);
+    }
     this.tell(message, change);
   }
 
