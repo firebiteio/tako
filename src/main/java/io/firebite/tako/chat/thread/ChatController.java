@@ -44,6 +44,7 @@ import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.FileIndex;
 import io.firebite.tako.ide.project.GitCommands;
+import io.firebite.tako.ide.project.GitDiffs;
 import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.Worktrees;
@@ -849,6 +850,41 @@ public final class ChatController implements Disposable {
     if (!refreshed.isEmpty()) {
       VfsUtil.markDirtyAndRefresh(true, false, true, refreshed.toArray(new File[0]));
     }
+  }
+
+  /** What the thread's checkout can show a diff of, or null without a folder. Reads git, so call off the EDT. */
+  public @Nullable GitDiffs.Sources gitDiffSources() throws Worktrees.GitException {
+    String directory = this.gitFolder();
+    return directory == null ? null : GitDiffs.sources(Path.of(directory), EnvironmentUtil.getEnvironmentMap());
+  }
+
+  /** Shows what the source changed in the thread's checkout. Works in any state, since it only reads git. */
+  public void showGitDiff(GitDiffs.Source source) {
+    Async.inBackground(() -> {
+      String directory = this.gitFolder();
+      if (directory == null) {
+        return;
+      }
+      Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+      GitDiffs.Changes changes;
+      try {
+        changes = GitDiffs.changes(Path.of(directory), source, environment);
+      } catch (Worktrees.GitException e) {
+        this.postError(TakoBundle.message("error.git.diff", e.getMessage()));
+        return;
+      }
+      if (changes.files().isEmpty()) {
+        this.postError(switch (source) {
+          case GitDiffs.Uncommitted uncommitted -> TakoBundle.message("error.git.diff.empty.uncommitted");
+          case GitDiffs.Branch branch -> TakoBundle.message("error.git.diff.empty.branch");
+          case GitDiffs.Commit commit -> TakoBundle.message("error.git.diff.empty.commit");
+        });
+        return;
+      }
+      String before = changes.beforeName() != null ? changes.beforeName() : TakoBundle.message("diff.git.empty");
+      String after = changes.afterName() != null ? changes.afterName() : TakoBundle.message("diff.git.working.tree");
+      Async.onEdt(() -> IdeFiles.showGitDiffs(this.project, changes, before, after, environment));
+    });
   }
 
   /** Attaches the clipboard's image, if it holds one. Must run on the EDT. */

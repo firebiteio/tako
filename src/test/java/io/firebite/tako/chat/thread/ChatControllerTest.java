@@ -16,6 +16,8 @@ import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.codex.CodexBackend;
 import io.firebite.tako.agent.codex.FakeCodex;
 import io.firebite.tako.chat.store.ThreadStore;
+import io.firebite.tako.ide.project.GitDiffs;
+import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.settings.AuthMode;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.bridge.ChatMessage;
@@ -152,6 +154,41 @@ public class ChatControllerTest extends BasePlatformTestCase {
       }
     }
     throw new AssertionError("Nothing of type " + type.getSimpleName() + " was posted");
+  }
+
+  public void testGitDiffsOutsideGitTellWhy() throws Exception {
+    assertThrows(Worktrees.GitException.class, () -> this.controller.gitDiffSources());
+
+    this.controller.showGitDiff(new GitDiffs.Uncommitted());
+
+    assertTrue(this.awaitPost(ChatMessage.Error.class).text().startsWith("Could not read the changes: "));
+  }
+
+  public void testGitDiffsWithNothingToShowSaySoWithoutAnAgent() throws Exception {
+    Path folder = Path.of(this.record.projectPath);
+    git(folder, "init", "-q", "-b", "main");
+    git(folder, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "--allow-empty", "-m",
+      "empty");
+
+    GitDiffs.Sources sources = this.controller.gitDiffSources();
+    assertEquals(0, sources.uncommitted());
+    assertEquals(1, sources.commits().size());
+
+    this.controller.showGitDiff(new GitDiffs.Uncommitted());
+    assertEquals("No uncommitted changes.", this.awaitPost(ChatMessage.Error.class).text());
+    this.controller.showGitDiff(sources.commits().get(0));
+    assertEquals("The commit changed no files.", this.awaitPost(ChatMessage.Error.class).text());
+    this.controller.showGitDiff(new GitDiffs.Branch());
+    assertTrue(this.awaitPost(ChatMessage.Error.class).text().startsWith("Could not read the changes: "));
+  }
+
+  private static void git(Path directory, String... arguments) throws Exception {
+    List<String> command = new ArrayList<>();
+    command.add("git");
+    command.addAll(List.of(arguments));
+    Process process = new ProcessBuilder(command).directory(directory.toFile()).redirectErrorStream(true).start();
+    String output = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8);
+    assertEquals(output, 0, process.waitFor());
   }
 
   public void testPromptPermissionAndResultFlowThroughTheView() throws Exception {

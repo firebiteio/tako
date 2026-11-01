@@ -88,14 +88,9 @@ public final class GitDiffs {
     };
   }
 
-  /** The file at {@code revision}, or only its size when it is larger than {@link #MAX_FILE_BYTES}. */
-  public static Content content(Path topLevel, String revision, String path, Map<String, String> environment)
-    throws GitException {
-    return content(topLevel, revision, path, MAX_FILE_BYTES, environment);
-  }
-
-  static Content content(Path topLevel, String revision, String path, long limit, Map<String, String> environment)
-    throws GitException {
+  /** The file at {@code revision} as git stores it, or only its size when it is larger than {@code limit} bytes. */
+  public static Content content(Path topLevel, String revision, String path, long limit,
+    Map<String, String> environment) throws GitException {
     String object = revision + ":" + path;
     long size = Long.parseLong(Worktrees.git(topLevel, environment, "cat-file", "-s", object).trim());
     if (size > limit) {

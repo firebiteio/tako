@@ -327,14 +327,15 @@ public class GitDiffsTest {
     write(repository, "big.txt", "0123456789");
     commit(repository, "files");
 
-    GitDiffs.Content small = GitDiffs.content(repository, "HEAD", "image.bin", ENVIRONMENT);
+    GitDiffs.Content small = GitDiffs.content(repository, "HEAD", "image.bin", GitDiffs.MAX_FILE_BYTES, ENVIRONMENT);
     GitDiffs.Content big = GitDiffs.content(repository, "HEAD", "big.txt", 5, ENVIRONMENT);
 
     assertArrayEquals(binary, small.bytes());
     assertEquals(binary.length, small.size());
     assertNull(big.bytes());
     assertEquals(10, big.size());
-    assertThrows(Worktrees.GitException.class, () -> GitDiffs.content(repository, "HEAD", "none.txt", ENVIRONMENT));
+    assertThrows(Worktrees.GitException.class, () -> GitDiffs.content(repository, "HEAD", "none.txt", 5,
+      ENVIRONMENT));
   }
 
   @Test
