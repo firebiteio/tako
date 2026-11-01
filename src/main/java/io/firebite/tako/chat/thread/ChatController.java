@@ -144,17 +144,17 @@ public final class ChatController implements Disposable {
 
   /** Replays the thread's past, if it has one, and starts its agent. */
   public void open() {
-    this.open(null);
+    this.open((ChatMessage.Submit) null);
   }
 
   /** Like {@link #open()}, then sends {@code prompt} as if typed, once the agent is ready. Keeps the thread's title. */
   public void open(@Nullable String prompt) {
-    this.open(prompt, List.of());
+    this.open(prompt == null ? null : new ChatMessage.Submit(prompt, List.of(), List.of()));
   }
 
-  /** Like {@link #open(String)}, with {@code context} attached to the prompt. */
-  public void open(@Nullable String prompt, List<ContextItem> context) {
-    this.firstPrompt.set(prompt == null ? null : new ChatMessage.Submit(prompt, context, List.of()));
+  /** Like {@link #open(String)}, with the prompt's context and images. */
+  public void open(@Nullable ChatMessage.Submit prompt) {
+    this.firstPrompt.set(prompt);
     if (prompt != null) {
       this.isTitled = true;
     }

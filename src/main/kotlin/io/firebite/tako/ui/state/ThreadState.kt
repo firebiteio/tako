@@ -31,8 +31,14 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val sideChat: Boolean = item.sideChat
   /** How many prompts a side chat's session copied from its main thread's; their turns are not shown. */
   val inheritedPrompts: Int = item.inheritedPrompts
+  private var shownSideChat by mutableStateOf<String?>(null)
   /** On a main thread: the side chat its pane shows, null while the pane is hidden. Only this session remembers. */
-  var sideChatShown by mutableStateOf<String?>(null)
+  var sideChatShown: String?
+    get() = this.shownSideChat
+    set(value) {
+      this.shownSideChat = value
+      this.workspace.service.showsSideChat(this.id, value)
+    }
   /** On a main thread: a side chat of it is being made. */
   var startingSideChat by mutableStateOf(false)
   /** On a side chat: bumped to focus its composer while [pendingFocus]. */

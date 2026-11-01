@@ -122,7 +122,7 @@ import io.firebite.tako.ui.state.declinesWithReviews
 import io.firebite.tako.ui.state.hasReviews
 import io.firebite.tako.ui.state.RunPlan
 import io.firebite.tako.ui.state.SIDE_COMMANDS
-import io.firebite.tako.ui.state.isListed
+import io.firebite.tako.ui.state.isSideChat
 import io.firebite.tako.ui.state.requestFocus
 import io.firebite.tako.ui.state.runLabel
 import io.firebite.tako.ui.state.sentPrompts
@@ -512,7 +512,7 @@ private fun mentionThreads(thread: ThreadState, query: String): List<ThreadState
   val workspace = thread.workspace
   val project = workspace.projectOf(thread).path
   return workspace.threads.values.filter {
-    it !== thread && !it.archived && workspace.isListed(it) && it.title.contains(query, true) &&
+    it !== thread && !it.archived && !workspace.isSideChat(it) && it.title.contains(query, true) &&
       workspace.projectOf(it).path == project
   }.sortedWith(compareBy<ThreadState> { !it.title.startsWith(query, true) }.thenByDescending { it.updatedAt })
     .take(MAX_THREAD_ITEMS)

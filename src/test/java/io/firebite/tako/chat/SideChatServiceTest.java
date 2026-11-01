@@ -10,6 +10,7 @@ import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.mcp.McpToolException;
 import io.firebite.tako.settings.ChatSettings;
+import io.firebite.tako.ui.bridge.ChatMessage;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -48,6 +49,10 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     return this.store.create(null, null, null, "claude");
   }
 
+  private boolean start(String threadId, int forkPrompts, String question) {
+    return this.service.startSideChat(threadId, forkPrompts, new ChatMessage.Submit(question, List.of(), List.of()));
+  }
+
   private List<ThreadStore.Record> sideChatsOf(ThreadStore.Record main) {
     return SideChats.of(this.store, main.id);
   }
@@ -60,7 +65,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     main.mode = "bypassPermissions";
     main.effort = "high";
 
-    assertTrue(this.service.startSideChat(main.id, 0, "Why is the cache 🐙 cold?"));
+    assertTrue(this.start(main.id, 0, "Why is the cache 🐙 cold?"));
 
     List<ThreadStore.Record> sideChats = this.sideChatsOf(main);
     assertEquals(1, sideChats.size());
@@ -80,17 +85,17 @@ public class SideChatServiceTest extends BasePlatformTestCase {
   public void testAnEmptyQuestionLeavesTheTitleToTheFirstPrompt() {
     ThreadStore.Record main = this.thread();
 
-    this.service.startSideChat(main.id, 0, "  \n ");
+    this.start(main.id, 0, "  \n ");
 
     assertEquals(ThreadStore.Record.DEFAULT_TITLE, this.sideChatsOf(main).get(0).title);
   }
 
   public void testASideChatOfASideChatIsASiblingOnTheMainThread() {
     ThreadStore.Record main = this.thread();
-    this.service.startSideChat(main.id, 0, "first");
+    this.start(main.id, 0, "first");
     ThreadStore.Record first = this.sideChatsOf(main).get(0);
 
-    this.service.startSideChat(first.id, 0, "second");
+    this.start(first.id, 0, "second");
 
     assertEquals(2, this.sideChatsOf(main).size());
     assertTrue(this.sideChatsOf(first).isEmpty());
@@ -99,7 +104,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
   public void testNothingStartsForAThreadThatIsGone() {
     int before = this.store.all().size();
 
-    assertFalse(this.service.startSideChat("gone", 0, "why?"));
+    assertFalse(this.start("gone", 0, "why?"));
     assertEquals(before, this.store.all().size());
   }
 
@@ -107,7 +112,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     ThreadStore.Record main = this.thread();
     main.sessionId = "00000000-0000-0000-0000-00000000dead";
 
-    this.service.startSideChat(main.id, 2, "why?");
+    this.start(main.id, 2, "why?");
 
     long deadline = System.currentTimeMillis() + TIMEOUT_MILLIS;
     while (this.sideChatsOf(main).isEmpty() && System.currentTimeMillis() < deadline) {
@@ -123,7 +128,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     ThreadStore.Record main = this.thread();
     ThreadStore.Record spawned = this.thread();
     spawned.parentId = main.id;
-    this.service.startSideChat(main.id, 0, "why?");
+    this.start(main.id, 0, "why?");
     ThreadStore.Record side = this.sideChatsOf(main).get(0);
 
     this.service.archive(main.id);
@@ -135,8 +140,8 @@ public class SideChatServiceTest extends BasePlatformTestCase {
 
   public void testClosingTheMainThreadClosesItsSideChats() {
     ThreadStore.Record main = this.thread();
-    this.service.startSideChat(main.id, 0, "one");
-    this.service.startSideChat(main.id, 0, "two");
+    this.start(main.id, 0, "one");
+    this.start(main.id, 0, "two");
     List<ThreadStore.Record> sideChats = this.sideChatsOf(main);
 
     this.service.close(main.id);
@@ -149,7 +154,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
 
   public void testClosingASideChatKeepsTheMainThread() {
     ThreadStore.Record main = this.thread();
-    this.service.startSideChat(main.id, 0, "one");
+    this.start(main.id, 0, "one");
 
     this.service.close(this.sideChatsOf(main).get(0).id);
 
@@ -159,7 +164,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
 
   public void testSelectingASideChatSelectsItsMainThread() {
     ThreadStore.Record main = this.thread();
-    this.service.startSideChat(main.id, 0, "why?");
+    this.start(main.id, 0, "why?");
     ThreadStore.Record side = this.sideChatsOf(main).get(0);
 
     this.service.select(side.id);
@@ -169,7 +174,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
 
   public void testArchivingTheShownThreadNeverShowsASideChat() {
     ThreadStore.Record other = this.thread();
-    this.service.startSideChat(other.id, 0, "why?");
+    this.start(other.id, 0, "why?");
     ThreadStore.Record main = this.thread();
     this.store.setActiveId(main.id);
 
@@ -179,9 +184,22 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     assertFalse(shown.sideChat);
   }
 
+  public void testRestoringTheMainThreadListsItsSideChatsWithoutStartingThem() {
+    ThreadStore.Record main = this.thread();
+    this.start(main.id, 0, "why?");
+    ThreadStore.Record side = this.sideChatsOf(main).get(0);
+    this.service.archive(main.id);
+
+    this.service.restore(main.id);
+
+    assertFalse(main.archived);
+    assertFalse(side.archived);
+    assertNull(this.service.controller(side.id));
+  }
+
   public void testShowingAnArchivedSideChatStartsItAgain() {
     ThreadStore.Record main = this.thread();
-    this.service.startSideChat(main.id, 0, "why?");
+    this.start(main.id, 0, "why?");
     ThreadStore.Record side = this.sideChatsOf(main).get(0);
     this.service.archive(main.id);
     this.service.select(main.id);
@@ -208,7 +226,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     ThreadStore.Record main = this.thread();
     ThreadStore.Record spawned = this.thread();
     spawned.parentId = main.id;
-    this.service.startSideChat(main.id, 0, "why?");
+    this.start(main.id, 0, "why?");
     ThreadStore.Record side = this.sideChatsOf(main).get(0);
     ThreadTools tools = new ThreadTools(this.service, this.store, main.id);
 

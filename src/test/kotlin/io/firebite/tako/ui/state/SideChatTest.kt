@@ -13,6 +13,9 @@ import io.firebite.tako.chat.store.ThreadStore
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.settings.ChatSettings
 import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.view.StatusKind
+import io.firebite.tako.ui.view.threadStatus
+import io.firebite.tako.ui.view.waitingThreads
 import kotlinx.coroutines.cancel
 import org.junit.Assert.assertNotEquals
 
@@ -132,18 +135,18 @@ class SideChatTest : BasePlatformTestCase() {
     val side = this.sideChat(main)
     val spawned = this.add(this.store.create(null, null, null, "claude").also { it.parentId = main.id })
 
-    assertTrue(this.workspace.isListed(main))
-    assertTrue(this.workspace.isListed(spawned))
-    assertFalse(this.workspace.isListed(side))
+    assertFalse(this.workspace.isSideChat(main))
+    assertFalse(this.workspace.isSideChat(spawned))
+    assertTrue(this.workspace.isSideChat(side))
     assertSame(main, this.workspace.mainOf(side))
     assertEquals(listOf(side), this.workspace.sideChatsOf(main))
 
     this.workspace.threads.remove(main.id)
-    assertTrue("an orphan shows as a thread", this.workspace.isListed(side))
+    assertFalse("an orphan shows as a thread", this.workspace.isSideChat(side))
     assertSame(side, this.workspace.mainOf(side))
   }
 
-  fun testSideCommandStartsOneSideChatAndKeepsChipsInTheBox() {
+  fun testSideCommandStartsOneSideChatAndTakesTheChipsAlong() {
     val main = this.thread()
     this.show(main)
     val chip = ContextItem.create(ContextItem.Kind.SELECTION, "a.kt:1-2", "code")
@@ -153,7 +156,7 @@ class SideChatTest : BasePlatformTestCase() {
     main.submit()
 
     assertEquals("", main.input.text.toString())
-    assertEquals(listOf(chip), main.contexts.toList())
+    assertTrue(main.contexts.isEmpty())
     assertTrue(main.turns.isEmpty())
     assertEquals(1, SideChats.of(this.store, main.id).size)
     assertTrue(main.startingSideChat)
@@ -163,6 +166,37 @@ class SideChatTest : BasePlatformTestCase() {
 
     assertEquals("a start in flight keeps the text", "/btw again", main.input.text.toString())
     assertEquals(1, SideChats.of(this.store, main.id).size)
+  }
+
+  fun testSideCommandOfAClosedThreadKeepsTheText() {
+    val main = this.thread()
+    this.show(main)
+    this.store.remove(main.id)
+    main.input.setTextAndPlaceCursorAtEnd("/side why?")
+
+    main.submit()
+
+    assertEquals("/side why?", main.input.text.toString())
+    assertFalse(main.startingSideChat)
+  }
+
+  fun testOwnTurnsWithoutAPromptAfterTheInheritedOnesShow() {
+    val side = this.sideChat(this.thread(), inheritedPrompts = 1)
+    side.replay(listOf(prompt("one"), ended(), AgentEvent.Text(null, "compacted", null), ended()))
+
+    assertEquals(2, side.turns.size)
+    assertEquals(1, side.inheritedTurns())
+  }
+
+  fun testAWaitingSideChatMarksItsMainThreadInTheList() {
+    val main = this.thread()
+    val other = this.thread()
+    this.show(other)
+    val side = this.sideChat(main)
+    side.addPermission("r1", approval())
+
+    assertEquals(StatusKind.INPUT, threadStatus(main, 0).kind)
+    assertEquals(1, waitingThreads(this.workspace))
   }
 
   fun testSideCommandWhileAnApprovalWaitsLeavesTheApproval() {

@@ -44,7 +44,9 @@ fun ThreadState.submit() {
   }
   val sideQuestion = sideCommand(this.typed)
   if (sideQuestion != null) {
-    if (this.startSideChat(sideQuestion)) {
+    if (this.startSideChat(sideQuestion, this.contexts.toList(), this.images.map { it.image })) {
+      this.contexts.clear()
+      this.images.clear()
       this.input.clearText()
     }
     return

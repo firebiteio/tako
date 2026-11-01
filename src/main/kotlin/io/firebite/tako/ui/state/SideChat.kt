@@ -1,6 +1,9 @@
 package io.firebite.tako.ui.state
 
+import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.chat.store.ThreadStore
+import io.firebite.tako.ide.context.ContextItem
+import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.t
 
 private val SIDE_COMMAND = Regex("^/(?:side|btw)(?:\\s+(.*))?$", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
@@ -31,7 +34,7 @@ fun ThreadState.inheritedTurns(): Int {
   var prompts = 0
   var turns = 0
   for (turn in this.turns) {
-    if (!turn.replayed) {
+    if (!turn.replayed || prompts >= this.inheritedPrompts) {
       break
     }
     val count = (if (turn.prompt != null) 1 else 0) + turn.items.count { it is TurnItem.FollowUp }
@@ -54,9 +57,6 @@ fun Workspace.mainOf(thread: ThreadState): ThreadState =
 
 /** A side chat whose main thread the chat holds; it shows in that thread's pane only. */
 fun Workspace.isSideChat(thread: ThreadState): Boolean = this.mainOf(thread) !== thread
-
-/** Whether the thread list shows the thread. */
-fun Workspace.isListed(thread: ThreadState): Boolean = !this.isSideChat(thread)
 
 /** The main thread's side chats, the latest active first. */
 fun Workspace.sideChatsOf(main: ThreadState): List<ThreadState> =
@@ -85,20 +85,23 @@ fun sideChatTitle(thread: ThreadState): String =
   if (thread.title == ThreadStore.Record.DEFAULT_TITLE) t("side.untitled") else thread.title
 
 /**
- * Asks the IDE for a side chat of the thread's main thread, with [question] as its first prompt or none when blank.
- * Copies the main thread's session when its agent can fork, up to its last done turn.
+ * Asks the IDE for a side chat of the thread's main thread, with [question] and the attachments as its first prompt;
+ * with a blank question they wait in its composer. Copies the main thread's session when its agent can fork, up to its
+ * last done turn.
  *
- * @return false while a side chat of the same main thread is being made, so nothing starts
+ * @return false when nothing started: a side chat of the same main thread is being made, or the thread is gone
  */
-fun ThreadState.startSideChat(question: String): Boolean {
+fun ThreadState.startSideChat(question: String, contexts: List<ContextItem> = emptyList(),
+  images: List<ImageAttachment> = emptyList()): Boolean {
   val main = this.workspace.mainOf(this)
   if (main.startingSideChat) {
     return false
   }
   val canFork = main.info?.capabilities?.fork == true
-  main.startingSideChat = this.workspace.service.startSideChat(main.id, if (canFork) main.settledPrompts() else 0,
-    question)
-  return true
+  val started = this.workspace.service.startSideChat(main.id, if (canFork) main.settledPrompts() else 0,
+    ChatMessage.Submit(question, contexts, images))
+  main.startingSideChat = started
+  return started
 }
 
 /**
