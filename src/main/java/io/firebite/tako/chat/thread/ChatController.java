@@ -34,6 +34,7 @@ import io.firebite.tako.chat.git.GitActionFlow;
 import io.firebite.tako.chat.git.GitDrafts;
 import io.firebite.tako.chat.git.ThreadGit;
 import io.firebite.tako.chat.store.PromptStash;
+import io.firebite.tako.chat.store.ThreadPast;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
@@ -81,12 +82,27 @@ public final class ChatController implements Disposable {
   private static final int SCRATCHPAD_FILES = 50;
   /** How long a snapshot or restore waits for the editors to be saved, which a modal dialog holds up. */
   private static final long SAVE_TIMEOUT_SECONDS = 2;
+  /** {@link #handoffTurn} while no prompt carries the handoff. */
+  private static final int NO_HANDOFF = Integer.MIN_VALUE;
+  /** How long a switch waits for the new agent to start. */
+  private static final long SWITCH_TIMEOUT_SECONDS = 120;
+  /** How long a stopped agent's start may take to fail after the switch gave up on it. */
+  private static final long STOP_TIMEOUT_SECONDS = 5;
 
   private final Project project;
   private final ChatView view;
   private final ChatHost host;
   private final ThreadStore.Record record;
-  private final AgentBackend backend;
+  /** The agent the thread runs. Changes when the person switches agents, see {@link #switchAgent}. */
+  private volatile AgentBackend backend;
+  /** Done unless {@link #switchAgent} is switching, so a prompt sent meanwhile goes to the new agent. */
+  private volatile CompletableFuture<Void> switching = CompletableFuture.completedFuture(null);
+  /** The turn whose prompt carries the handoff to the agent the thread switched to, until that turn ended. */
+  private final AtomicInteger handoffTurn = new AtomicInteger(NO_HANDOFF);
+  /** The agent took the prompt of {@link #handoffTurn}, so the next turn end tells whether the handoff arrived. */
+  private volatile boolean handoffTaken;
+  /** The person stopped the running turn, whose end then counts as one without an error for the handoff. */
+  private volatile boolean isInterrupted;
   private final AgentConnection connection = new AgentConnection();
   private final TurnChanges changes;
   /** Done once {@link #open} launched the agent, so a prompt sent meanwhile does not launch a second one. */
@@ -162,8 +178,8 @@ public final class ChatController implements Disposable {
   }
 
   /**
-   * Replays the thread's past, if it has one, and starts its agent. In a new worktree the agent starts once the
-   * worktree's setup is through, so it loads what the setup installed.
+   * Replays the thread's past, earlier agents' included, and starts its agent. In a new worktree the agent starts once
+   * the worktree's setup is through, so it loads what the setup installed.
    */
   public void open() {
     this.open((ChatMessage.Submit) null);
@@ -184,9 +200,14 @@ public final class ChatController implements Disposable {
       try {
         String resume = this.record.sessionId;
         String projectPath = this.projectPath();
+        this.conversation.restore(this.readPast());
+        boolean replayed = false;
         if (resume != null && projectPath != null) {
           switch (this.backend.history(projectPath, resume)) {
-            case AgentHistory.Loaded loaded -> this.replay(loaded.events());
+            case AgentHistory.Loaded loaded -> {
+              this.replay(loaded.events());
+              replayed = true;
+            }
             case AgentHistory.Missing missing -> {
               resume = null;
               this.record.sessionId = null;
@@ -194,6 +215,9 @@ public final class ChatController implements Disposable {
             case AgentHistory.FromSession fromSession -> {
             }
           }
+        }
+        if (!replayed && !this.conversation.past().isEmpty()) {
+          this.replay(List.of());
         }
         if (resume != null && projectPath != null && this.record.costUsd == 0) {
           SessionCost cost = this.backend.sessionCost(projectPath, resume);
@@ -258,6 +282,7 @@ public final class ChatController implements Disposable {
     if (this.setup != null && (this.setup.holdsFailed() || this.setup.cancelHeld())) {
       return;
     }
+    this.isInterrupted = true;
     if (this.queue.stop()) {
       this.view.post(new ChatMessage.Event(new AgentEvent.Interrupted()));
       this.view.post(new ChatMessage.Event(new AgentEvent.TurnEnded(null, null, null)));
@@ -315,8 +340,11 @@ public final class ChatController implements Disposable {
     this.connection.ifLive(session -> session.setEffort(effort));
   }
 
-  /** Starts the agent again, e.g. after its process ended. */
+  /** Starts the agent again, e.g. after its process ended. Not while the thread switches agents. */
   public void restart() {
+    if (!this.switching.isDone()) {
+      return;
+    }
     Async.inBackground(() -> {
       this.rewinding.join();
       this.launch(this.record.sessionId);
@@ -324,11 +352,165 @@ public final class ChatController implements Disposable {
   }
 
   /**
+   * Moves the thread to another agent, which starts a new session now. The next prompt tells it what happened so far,
+   * see {@link Handoff}. Only while the agent is idle or stopped and the thread is not loading, switching or rewinding.
+   * Does nothing when {@code target} cannot start, e.g. its CLI is missing, and says so.
+   *
+   * @return whether the switch began
+   */
+  public boolean switchAgent(AgentBackend target) {
+    CompletableFuture<Void> done = new CompletableFuture<>();
+    State previous;
+    synchronized (this.stateLock) {
+      previous = this.state;
+      if (!this.canSwitch() || target.id().equals(this.backend.id())) {
+        return false;
+      }
+      this.switching = done;
+      this.setState(State.STARTING);
+    }
+    Async.inBackground(() -> {
+      try {
+        this.switchTo(target, previous);
+      } finally {
+        done.complete(null);
+      }
+    });
+    return true;
+  }
+
+  private void switchTo(AgentBackend target, State previous) {
+    AgentBackend from = this.backend;
+    if (!target.canStart()) {
+      this.setState(this.stateAfterRejectedSwitch(previous));
+      this.view.post(new ChatMessage.Notice(TakoBundle.message("error.switch.unavailable", target.displayName())));
+      return;
+    }
+    ThreadPast past = this.conversation.past(from.displayName(), target.displayName());
+    synchronized (this.stateLock) {
+      if (this.isDisposed) {
+        return;
+      }
+      try {
+        past.write(this.host.pastFile());
+      } catch (IOException e) {
+        LOG.warn("Could not save the conversation before switching agents", e);
+        this.setState(this.stateAfterRejectedSwitch(previous));
+        this.view.post(new ChatMessage.Notice(TakoBundle.message("error.switch.save", e.getMessage())));
+        return;
+      }
+    }
+    this.connection.stop();
+    synchronized (this.stateLock) {
+      if (this.isDisposed) {
+        return;
+      }
+      if (this.record.handoffFrom == null || !past.segments().getLast().turns().isEmpty()) {
+        this.record.handoffFrom = from.displayName();
+      }
+      this.record.endSession();
+      this.record.useAgent(target.id());
+      this.record.agentSwitches = past.segments().size();
+      this.backend = target;
+      this.scratchpadPath = null;
+      this.workingDirectory = null;
+      this.error = null;
+      synchronized (this.answer) {
+        this.answer.setLength(0);
+      }
+      this.promptsSent = 0;
+      this.turnRunning = false;
+      this.handoffTurn.set(NO_HANDOFF);
+      this.handoffTaken = false;
+      this.keepsTimeline = true;
+      this.conversation.restore(past);
+    }
+    this.recordChanged();
+    this.view.post(new ChatMessage.Event(new AgentEvent.AgentSwitched(from.displayName(), target.displayName())));
+    if (this.isDisposed) {
+      return;
+    }
+    CompletableFuture<?> launched = this.launch(null, false);
+    if (!this.awaitLaunch(launched, SWITCH_TIMEOUT_SECONDS)) {
+      this.connection.stop();
+      if (!this.awaitLaunch(launched, STOP_TIMEOUT_SECONDS)) {
+        String message = TakoBundle.message("error.switch.timeout", target.displayName(), SWITCH_TIMEOUT_SECONDS);
+        this.stopped(message);
+        this.postError(message);
+      }
+    }
+    if (this.isDisposed || this.state == State.STOPPED) {
+      this.connection.stop();
+    }
+  }
+
+  /**
+   * Waits for a launch, which reports its own failure.
+   *
+   * @return false when it is still running after {@code seconds}
+   */
+  private boolean awaitLaunch(CompletableFuture<?> launched, long seconds) {
+    try {
+      launched.get(seconds, TimeUnit.SECONDS);
+    } catch (TimeoutException e) {
+      return false;
+    } catch (ExecutionException e) {
+      LOG.debug("The agent switched to did not start", e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+    return true;
+  }
+
+  /** The state before a switch that did not happen, unless the agent stopped meanwhile. */
+  private State stateAfterRejectedSwitch(State previous) {
+    return this.connection.live() == null ? State.STOPPED : previous;
+  }
+
+  /** What the earlier agents did, without segments of a switch whose record never got saved. */
+  private ThreadPast readPast() {
+    Path file = this.host.pastFile();
+    ThreadPast past = ThreadPast.read(file);
+    if (past.segments().size() > this.record.agentSwitches) {
+      past = past.firstSegments(this.record.agentSwitches);
+      try {
+        past.write(file);
+      } catch (IOException e) {
+        LOG.warn("Could not drop an unsaved agent switch from " + file, e);
+      }
+    }
+    return past;
+  }
+
+  /**
+   * Whether the thread holds prompts or answers, its earlier agents' included. A stopped agent's session counts too:
+   * agents that give its history only while running may hold some the thread has not seen.
+   */
+  public boolean hasConversation() {
+    return !this.conversation.isEmpty() || (this.record.sessionId != null && this.state == State.STOPPED);
+  }
+
+  /**
+   * Whether the thread's agent may change now: it is idle or stopped, and the thread neither loads, switches, rewinds
+   * nor has a prompt on its way to the agent.
+   */
+  public boolean canSwitch() {
+    State current = this.state;
+    return !this.isDisposed && this.opened.isDone() && this.switching.isDone() && this.rewinding.isDone()
+      && !this.queue.isRunning() && (current == State.IDLE || current == State.STOPPED);
+  }
+
+  /** Whether a prompt is on its way to the agent, or the agent works on one or waits for an answer. */
+  public boolean hasPromptInFlight() {
+    return this.queue.isRunning() || this.state.isInTurn();
+  }
+
+  /**
    * Stops the agent so the next prompt resumes its session in a new process, which loads skills, plugins, MCP servers
    * and instructions again. Only while the agent is idle. The chat keeps its timeline and the last turn's error.
    */
   public void restartSession() {
-    if (this.state != State.IDLE) {
+    if (this.state != State.IDLE || !this.switching.isDone()) {
       return;
     }
     Async.inBackground(() -> {
@@ -734,6 +916,7 @@ public final class ChatController implements Disposable {
       return;
     }
     this.rewinding.join();
+    this.switching.join();
     if (this.isDisposed) {
       return;
     }
@@ -790,7 +973,8 @@ public final class ChatController implements Disposable {
   private void promptNow(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn,
     boolean steer) {
     this.error = null;
-    this.conversation.send(turn, typed);
+    String sent = this.withHandoff(typed, prompt, turn);
+    this.conversation.send(turn, typed, images.size());
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
       this.isTitled = true;
@@ -798,13 +982,16 @@ public final class ChatController implements Disposable {
       Async.onEdt(() -> this.host.setTitle(title));
     }
     if (steer) {
-      session.steer(prompt, images, turn).thenAccept(isTaken -> {
+      session.steer(sent, images, turn).thenAccept(isTaken -> {
         if (isTaken || !session.isAlive()) {
           return;
         }
         if (this.queue.steerRefused(turn)) {
-          session.prompt(prompt, images, turn);
+          session.prompt(sent, images, turn);
           return;
+        }
+        if (turn == this.handoffTurn.get()) {
+          this.handoffTurn.set(NO_HANDOFF);
         }
         QueuedPrompts.Entry next = this.queue.settle();
         if (next != null) {
@@ -812,9 +999,27 @@ public final class ChatController implements Disposable {
         }
       });
     } else {
-      session.prompt(prompt, images, turn);
+      session.prompt(sent, images, turn);
     }
     this.queue.refresh();
+  }
+
+  /**
+   * The prompt with the handoff to the agent the thread switched to, while it has not arrived yet. Only one prompt at a
+   * time carries it, and no slash command.
+   */
+  private String withHandoff(String typed, String prompt, int turn) {
+    String from = this.record.handoffFrom;
+    if (from == null || typed.startsWith("/") || !this.handoffTurn.compareAndSet(NO_HANDOFF, turn)) {
+      return prompt;
+    }
+    Handoff.Facts facts = new Handoff.Facts(from, this.projectPath(), this.record.branch, this.record.worktree);
+    String handoff = Handoff.text(this.conversation.handoffInput(), facts, Handoff.MAX_TOKENS);
+    String folder = this.projectFolder();
+    if (this.record.workPath != null && folder != null) {
+      handoff = PromptComposer.rebase(handoff, folder, this.record.workPath);
+    }
+    return PromptComposer.withHandoff(prompt, handoff);
   }
 
   /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
@@ -909,7 +1114,7 @@ public final class ChatController implements Disposable {
     CompletableFuture<Void> done = new CompletableFuture<>();
     synchronized (this.rewindLock) {
       boolean idle = this.state == State.IDLE || this.state == State.STOPPED;
-      if (!this.rewinding.isDone() || !idle || prompts.isEmpty() || this.isDisposed) {
+      if (!this.rewinding.isDone() || !this.switching.isDone() || !idle || prompts.isEmpty() || this.isDisposed) {
         this.view.post(new ChatMessage.Rewound(false, this.isDisposed || prompts.isEmpty()
           ? null
           : TakoBundle.message("error.rewind.busy")));
@@ -1220,9 +1425,12 @@ public final class ChatController implements Disposable {
     });
   }
 
+  /** Shows the earlier agents' past and then the session's. */
   private void replay(List<AgentEvent> events) {
     this.conversation.reset(events);
-    this.view.post(new ChatMessage.Replay(events));
+    List<AgentEvent> all = new ArrayList<>(this.conversation.past().events());
+    all.addAll(events);
+    this.view.post(new ChatMessage.Replay(all));
   }
 
   /** Sends the next queued prompt only after the event was posted, so the chat hears of its turn after this one. */
@@ -1254,8 +1462,14 @@ public final class ChatController implements Disposable {
         }
         this.conversation.add(text);
       }
-      case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
-      case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
+      case AgentEvent.ToolStarted tool -> {
+        this.changes.onToolStarted(tool);
+        this.conversation.add(tool);
+      }
+      case AgentEvent.ToolFinished result -> {
+        this.changes.onToolFinished(result);
+        this.conversation.add(result);
+      }
       case AgentEvent.LimitReached limit -> Async.onEdt(() -> this.host.limitReached(limit.label(), limit.resetsAt(),
         limit.namesReset()));
       case AgentEvent.TurnEnded ended -> next = this.onTurnEnded(ended);
@@ -1280,6 +1494,9 @@ public final class ChatController implements Disposable {
     }
     boolean isLate = this.queue.taken(taken.key(), taken.startsTurn());
     this.conversation.take(taken.key());
+    if (taken.key() == this.handoffTurn.get()) {
+      this.handoffTaken = true;
+    }
     if (taken.startsTurn()) {
       this.changes.startTurn(taken.key());
       synchronized (this.answer) {
@@ -1290,12 +1507,23 @@ public final class ChatController implements Disposable {
   }
 
   /**
-   * The thread stays working while prompts wait, unless the turn was stopped or failed.
+   * The thread stays working while prompts wait, unless the turn was stopped or failed. The handoff arrived once its
+   * turn ended without an error or was stopped by the person, since the session holds the prompt then.
    *
    * @return the queued prompt to send next
    */
   private QueuedPrompts.@Nullable Entry onTurnEnded(AgentEvent.TurnEnded ended) {
     this.turnRunning = false;
+    boolean wasInterrupted = this.isInterrupted;
+    this.isInterrupted = false;
+    if (this.handoffTaken) {
+      this.handoffTaken = false;
+      this.handoffTurn.set(NO_HANDOFF);
+      if (ended.error() == null || wasInterrupted) {
+        this.record.handoffFrom = null;
+        this.recordChanged();
+      }
+    }
     this.error = ended.error();
     this.refreshContext();
     if (ended.cost() != null) {
@@ -1342,6 +1570,8 @@ public final class ChatController implements Disposable {
   /** The queued prompts wait for the next prompt sent, which starts the agent again. */
   private void stopped(@Nullable String error) {
     this.turnRunning = false;
+    this.handoffTurn.set(NO_HANDOFF);
+    this.handoffTaken = false;
     if (this.setup != null) {
       this.setup.dropHeld();
     }

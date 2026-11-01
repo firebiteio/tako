@@ -53,6 +53,29 @@ public class PromptComposerTest {
   }
 
   @Test
+  public void handoffGoesFirstIntoTheContextAndTranscriptsShowOnlyTheTypedPrompt() {
+    String prompt = PromptComposer.withHandoff(PromptComposer.compose("explain", List.of(selection())),
+      "<handoff>\nbefore\n</handoff>");
+
+    assertEquals(
+      "explain\n\n<ide_context>\n<handoff>\nbefore\n</handoff>\nSelected in A.java (lines 1-2):\n```java\nx\n"
+        + "```\n\n</ide_context>",
+      prompt);
+    assertEquals("explain", PromptComposer.typedPart(prompt));
+    assertTrue(PromptComposer.hasContext(prompt));
+  }
+
+  @Test
+  public void handoffAddsAContextBlockToAPlainOrEmptyPrompt() {
+    String plain = PromptComposer.withHandoff("go on 日本", "<handoff>h</handoff>");
+    String empty = PromptComposer.withHandoff("", "<handoff>h</handoff>");
+
+    assertEquals("go on 日本\n\n<ide_context>\n<handoff>h</handoff>\n</ide_context>", plain);
+    assertEquals("go on 日本", PromptComposer.typedPart(plain));
+    assertEquals("", PromptComposer.typedPart(empty));
+  }
+
+  @Test
   public void rebaseLeavesFoldersThatOnlyShareThePrefix() {
     assertEquals("see D:/code/app-old/x", PromptComposer.rebase("see D:/code/app-old/x", "D:/code/app", "D:/w"));
   }

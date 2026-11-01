@@ -1,5 +1,6 @@
 package io.firebite.tako.chat.thread;
 
+import java.nio.file.Path;
 import java.util.List;
 import org.jetbrains.annotations.Nullable;
 
@@ -54,4 +55,7 @@ public interface ChatHost {
    */
   @Nullable
   String busyThreadIn(String topLevel);
+
+  /** Where the thread keeps what its earlier agents did. Unlike the others, may be called from any thread. */
+  Path pastFile();
 }

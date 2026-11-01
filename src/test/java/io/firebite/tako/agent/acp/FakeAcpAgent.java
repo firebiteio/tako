@@ -1,15 +1,20 @@
 package io.firebite.tako.agent.acp;
 
+import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
 import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 
 /**
  * Stands in for an ACP agent. It offers a model and two modes, replays session s0 on load and fails to load any other,
  * and plays one prompt that streams text, asks to edit a file and reports the edit as a diff, echoing the option it got.
+ * Given a file as its argument, it appends each prompt's content blocks there, one prompt per line.
  */
 public final class FakeAcpAgent {
   private FakeAcpAgent() {
@@ -38,7 +43,19 @@ public final class FakeAcpAgent {
             + "answer\"}}");
           respond(id, session("s0"));
         }
-        case "session/prompt" -> prompt(id, reader);
+        case "session/prompt" -> {
+          if (args.length > 0) {
+            StringBuilder text = new StringBuilder();
+            for (JsonElement block : message.getAsJsonObject("params").getAsJsonArray("prompt")) {
+              if (block.getAsJsonObject().has("text")) {
+                text.append(block.getAsJsonObject().get("text").getAsString().replace("\n", "\\n"));
+              }
+            }
+            Files.writeString(Path.of(args[0]), text + "\n", StandardCharsets.UTF_8, StandardOpenOption.CREATE,
+              StandardOpenOption.APPEND);
+          }
+          prompt(id, reader);
+        }
         default -> {
         }
       }

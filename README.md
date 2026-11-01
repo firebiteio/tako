@@ -21,6 +21,7 @@ It works with:
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
 - Pin, rename, snooze or mark threads unread from their menu. A thread whose agent finished or asked something while you looked elsewhere gets a dot until you open it. Optionally archive threads automatically once their pull request is merged or after some days without activity (Settings > Tools > Tako)
 - Each thread has its own model, mode and effort
+- Switch a thread to another agent between turns. The new agent starts a fresh session and its first prompt carries the conversation so far, cut to about 16k tokens
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
 - Prompts sent while the agent works queue up. Edit, reorder or remove them, send one now, or steer the running turn with it (Claude Code, Codex)
 - Type `/` for the agent's commands and Tako's own, marked Tako: `/model`, `/effort`, `/mode`, `/new`, `/fork`, `/archive` and more. `//model` sends `/model` to the agent instead

@@ -119,6 +119,17 @@ public final class AcpBackend implements AgentBackend {
     return sessions;
   }
 
+  /** The command's program is found; the agent checks its own login when it starts. */
+  @Override
+  public boolean canStart() {
+    try {
+      this.command(this.environment);
+      return true;
+    } catch (AgentException e) {
+      return false;
+    }
+  }
+
   private List<String> command(Map<String, String> environment) throws AgentException {
     if (this.commandLine.isEmpty()) {
       throw new AgentException(TakoBundle.message("error.acp.no.command", this.name));

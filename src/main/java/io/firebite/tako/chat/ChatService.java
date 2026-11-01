@@ -1355,19 +1355,49 @@ public final class ChatService implements Disposable {
     }
   }
 
-  /** Runs another agent in a thread that has not started a session yet. Replaces a running one. */
+  /**
+   * Runs another agent in the thread. A thread with a conversation switches to it, see
+   * {@link ChatController#switchAgent}; one without simply starts over with it. Bench runs keep their agent, and side
+   * chats their main thread's. Must run on the EDT.
+   */
   public void setAgent(String id, String agent) {
     ThreadStore.Record record = this.store.find(id);
-    if (record == null || record.sessionId != null || agent.equals(record.agent())) {
+    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+    AgentBackend backend = AgentRegistry.find(agent, environment);
+    if (record == null || record.sideChat || backend.id().equals(record.agent()) || this.store.isRun(id)) {
       return;
     }
-    record.agent = AgentRegistry.find(agent, EnvironmentUtil.getEnvironmentMap()).id();
-    record.model = "";
-    record.mode = "";
-    record.effort = "";
+    ChatController controller = this.controllers.get(id);
+    boolean hasPast = record.agentSwitches > 0;
+    if (controller == null) {
+      if (record.sessionId != null || hasPast) {
+        return;
+      }
+    } else if (controller.canSwitch() && (hasPast || controller.hasConversation())) {
+      if (!controller.switchAgent(backend)) {
+        this.postBusy(record);
+      }
+      return;
+    } else if (!controller.canSwitch() && (hasPast || record.sessionId != null || controller.hasPromptInFlight())) {
+      this.postBusy(record);
+      return;
+    }
+    record.useAgent(backend.id());
+    if (record.costUsd > 0) {
+      record.endSession();
+    } else {
+      record.sessionId = null;
+    }
+    record.handoffFrom = null;
     this.disposeController(record.id);
     this.postUpdate(record);
     this.select(record.id);
+  }
+
+  /** Tells the thread its agent cannot change now. */
+  private void postBusy(ThreadStore.Record record) {
+    String name = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap()).displayName();
+    this.post(new ChatMessage.Notice(TakoBundle.message("error.switch.busy", name)), record.id);
   }
 
   /** Must run on the EDT. */
@@ -1624,9 +1654,12 @@ public final class ChatService implements Disposable {
       return ChatService.this.store.find(this.record.id) == this.record;
     }
 
+    /** Not for a thread closed meanwhile, which the chat would list again. */
     @Override
     public void recordChanged() {
-      ChatService.this.postUpdate(this.record);
+      if (ChatService.this.store.find(this.record.id) == this.record) {
+        ChatService.this.postUpdate(this.record);
+      }
     }
 
     @Override
@@ -1680,6 +1713,11 @@ public final class ChatService implements Disposable {
     @Override
     public @Nullable String toolsUrl() {
       return ChatService.this.toolsUrl(this.record.id);
+    }
+
+    @Override
+    public Path pastFile() {
+      return ChatService.this.store.pastFile(this.record.id);
     }
 
     @Override

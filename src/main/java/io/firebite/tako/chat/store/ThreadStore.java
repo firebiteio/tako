@@ -75,10 +75,16 @@ public final class ThreadStore {
     return null;
   }
 
+  /** The thread running the session now or before it switched agents. */
   public synchronized @Nullable Record findBySession(String sessionId) {
     for (Record record : this.data.threads) {
       if (sessionId.equals(record.sessionId)) {
         return record;
+      }
+      for (EarlierSession earlier : record.earlierSessions()) {
+        if (sessionId.equals(earlier.sessionId)) {
+          return record;
+        }
       }
     }
     return null;
@@ -133,9 +139,20 @@ public final class ThreadStore {
     return false;
   }
 
+  /** Removes the thread and what its earlier agents did. */
   public synchronized void remove(String id) {
     this.data.threads.removeIf(record -> record.id.equals(id));
     this.save();
+    try {
+      Files.deleteIfExists(this.pastFile(id));
+    } catch (IOException e) {
+      LOG.warn("Could not delete the earlier agents of thread " + id, e);
+    }
+  }
+
+  /** Where the thread keeps what its earlier agents did, see {@link ThreadPast}. */
+  public Path pastFile(String id) {
+    return this.file.resolveSibling("past").resolve(id + ".json");
   }
 
   public synchronized List<Record> all() {
@@ -313,6 +330,48 @@ public final class ThreadStore {
     public volatile @Nullable PullRequestWatch watch;
     /** The usage limit the agent last stopped on, until the person moved on or the resume went out. */
     public @Nullable LimitStop limit;
+    /** The sessions of agents the thread ran before it switched, oldest first. Replaced whole, never changed. */
+    public @Nullable List<EarlierSession> earlierSessions;
+    /** The agent the thread switched away from, by name, until the new agent got the handoff. */
+    public @Nullable String handoffFrom;
+    /**
+     * How often the thread switched agents, which is how many segments its {@link ThreadPast} holds. A past file with
+     * more was written by a switch whose record never got saved.
+     */
+    public int agentSwitches;
+
+    /** Runs {@code agent} from now on, with its own default model, mode and effort. */
+    public void useAgent(String agent) {
+      this.agent = agent;
+      this.model = "";
+      this.mode = "";
+      this.effort = "";
+    }
+
+    public List<EarlierSession> earlierSessions() {
+      List<EarlierSession> sessions = this.earlierSessions;
+      return sessions != null ? sessions : List.of();
+    }
+
+    /** Moves the current session and its usage to {@link #earlierSessions}, if it has an id, and clears both. */
+    public void endSession() {
+      String session = this.sessionId;
+      if (session != null) {
+        EarlierSession earlier = new EarlierSession();
+        earlier.agent = this.agent();
+        earlier.sessionId = session;
+        earlier.costUsd = this.costUsd;
+        earlier.inputTokens = this.inputTokens;
+        earlier.outputTokens = this.outputTokens;
+        earlier.cacheReadTokens = this.cacheReadTokens;
+        earlier.cacheWriteTokens = this.cacheWriteTokens;
+        List<EarlierSession> sessions = new ArrayList<>(this.earlierSessions());
+        sessions.add(earlier);
+        this.earlierSessions = sessions;
+      }
+      this.sessionId = null;
+      this.setUsage(new SessionCost(0, 0, 0, 0, 0, null));
+    }
 
     /** The folder the thread works in: its {@link #workPath}, its {@link #projectPath} or else {@code basePath}. */
     public @Nullable String folder(@Nullable String basePath) {
@@ -335,14 +394,20 @@ public final class ThreadStore {
       return this.agent != null ? this.agent : ClaudeBackend.ID;
     }
 
+    /** Cost and tokens sum up every session of the thread, the earlier agents' included. */
     public ChatMessage.ThreadItem toItem() {
+      double cost = this.costUsd;
+      long tokens = this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens;
+      for (EarlierSession earlier : this.earlierSessions()) {
+        cost += earlier.costUsd;
+        tokens += earlier.inputTokens + earlier.outputTokens + earlier.cacheReadTokens + earlier.cacheWriteTokens;
+      }
       PullRequestWatch watched = this.watch;
       return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
-        this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
-        this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId,
-        watched == null ? null : watched.number, this.pinned, this.unread, this.snoozedUntil,
-        this.limit == null ? null : this.limit.item(TakoBundle.message("limit.prompt.default")), this.sideChat,
-        this.inheritedPrompts);
+        cost, tokens, this.branch, this.worktree, this.projectPath, this.pullRequest, this.agent(),
+        this.firstTurnMillis, this.parentId, watched == null ? null : watched.number, this.pinned, this.unread,
+        this.snoozedUntil, this.limit == null ? null : this.limit.item(TakoBundle.message("limit.prompt.default")),
+        this.sideChat, this.inheritedPrompts);
     }
   }
 
@@ -375,6 +440,17 @@ public final class ThreadStore {
       return new ChatMessage.LimitItem(this.label, this.resetsAt, this.scheduled,
         this.prompt != null ? this.prompt : defaultPrompt, this.fireAt());
     }
+  }
+
+  /** A session a thread ran before it switched to another agent, with what it consumed. */
+  public static final class EarlierSession {
+    public String agent = "";
+    public String sessionId = "";
+    public double costUsd;
+    public long inputTokens;
+    public long outputTokens;
+    public long cacheReadTokens;
+    public long cacheWriteTokens;
   }
 
   /** A folder threads can work in. The IDE project is always the first. */

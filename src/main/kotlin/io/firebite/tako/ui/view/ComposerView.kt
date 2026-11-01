@@ -712,10 +712,12 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
       if (count > 1) t("runs.title.on", count) else t("runs.title"), true, highlighted = count > 1,
       menu = { runsMenu(thread) }, menuTitle = t("runs.menu")))
   }
-  if (workspace.agents.size > 1 && thread.canChangeAgent) {
+  if (workspace.agents.size > 1 && thread.canSwitchAgent) {
     controls.add(Control("agent", Icons.agent, thread.agentName, t("composer.agent"), true, menu = {
+      val switchNote = if (thread.hasConversation) t("composer.agent.switch") else null
       workspace.agents.map { agent ->
-        MenuEntry(agent.name, checked = agent.id == thread.agent) {
+        val isCurrent = agent.id == thread.agent
+        MenuEntry(agent.name, if (isCurrent) null else switchNote, checked = isCurrent) {
           if (agent.id != thread.agent) {
             workspace.service.setAgent(thread.id, agent.id)
           }

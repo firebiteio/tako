@@ -33,6 +33,19 @@ public final class PromptComposer {
   }
 
   /**
+   * The composed prompt with {@code handoff} first in its IDE context, so transcripts show the prompt without it too.
+   * Adds the context block when the prompt has none.
+   */
+  public static String withHandoff(String prompt, String handoff) {
+    int context = prompt.indexOf(CONTEXT_OPEN);
+    if (context < 0) {
+      return prompt + "\n\n" + CONTEXT_OPEN + '\n' + handoff + '\n' + CONTEXT_CLOSE;
+    }
+    int start = context + CONTEXT_OPEN.length();
+    return prompt.substring(0, start) + '\n' + handoff + prompt.substring(start);
+  }
+
+  /**
    * The prompt with paths in the folder {@code from} moved to {@code to}, so a run in a worktree reads its own copies
    * of the files the IDE named. Paths use {@code /}, as the IDE writes them. A folder that only starts with the same
    * name, such as {@code repo-tako} for {@code repo}, stays.
