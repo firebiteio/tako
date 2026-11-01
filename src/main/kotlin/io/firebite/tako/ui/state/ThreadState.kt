@@ -167,12 +167,34 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     this.firstTurnMillis = item.firstTurnMillis
     this.limit = item.limit
     if (item.agent.isNotEmpty() && item.agent != this.agent) {
-      this.agent = item.agent
+      this.changeAgent(item.agent)
+    }
+  }
+
+  /**
+   * Forgets what the old agent offered. What the new agent's [onInit] set stays, since it can arrive before the
+   * thread's update. A switch's divider already dropped what the old session measured, see [forgetSession].
+   */
+  private fun changeAgent(agent: String) {
+    this.agent = agent
+    if (this.info?.agent != agent) {
+      this.forgetSession()
       this.info = null
       this.model = null
       this.effort = null
-      this.contextWindow = null
+      this.mode = "default"
+      this.commands = emptyList()
     }
+  }
+
+  /** Drops what the agent's session measured, before another agent's session starts. */
+  fun forgetSession() {
+    this.contextWindow = null
+    this.contextUsage = null
+    this.liveContext = null
+    this.cache = null
+    this.inputRate = null
+    this.scratchpad = null
   }
 
   /** The thread's controller in the IDE, while the thread is open there. */
@@ -203,9 +225,20 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     return normalized
   }
 
-  /** The agent can only change before the thread has a session. A side chat runs its main thread's. */
+  /** The thread has neither a session nor turns yet, so it can still start as a bench. Not a side chat. */
   val canChangeAgent: Boolean
     get() = this.turns.isEmpty() && !this.hasSession && !this.sideChat
+
+  /**
+   * Bench runs keep their agent to stay comparable, and a side chat runs its main thread's. Any other thread can
+   * switch.
+   */
+  val canSwitchAgent: Boolean
+    get() = !this.sideChat && this.workspace.runOf(this) == null
+
+  /** Whether the thread shows a prompt, which an agent it switches to gets told about. */
+  val hasConversation: Boolean
+    get() = this.turns.any { it.prompt != null }
 
   val agentName: String
     get() = this.workspace.agentName(this.agent) ?: this.info?.agentName ?: this.agent

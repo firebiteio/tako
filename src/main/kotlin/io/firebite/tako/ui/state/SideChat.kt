@@ -10,10 +10,13 @@ import io.firebite.tako.ui.t
 private val Turn.promptCount: Int
   get() = (if (this.prompt != null) 1 else 0) + this.items.count { it is TurnItem.FollowUp }
 
-/** How many prompts the leading done turns hold: what a fork can copy now. */
+/**
+ * How many prompts the leading done turns of the current agent's session hold: what a fork can copy now. Turns of
+ * agents before a switch are not in the session.
+ */
 fun ThreadState.settledPrompts(): Int {
   var count = 0
-  for (turn in this.turns) {
+  for (turn in this.sessionTurns()) {
     if (!turn.done) {
       break
     }

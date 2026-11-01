@@ -123,6 +123,9 @@ sealed interface TurnItem {
 
   /** A prompt sent while the turn ran, which the agent took into it. */
   class FollowUp(val prompt: Prompt) : TurnItem
+
+  /** Where the thread moved to another agent, alone in its turn. */
+  class Divider(val text: String) : TurnItem
 }
 
 /** The prompt that started a turn. */

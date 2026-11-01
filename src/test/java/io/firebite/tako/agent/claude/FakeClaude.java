@@ -7,8 +7,8 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * Stands in for {@code claude -p} in stream-json mode, with one prompt, one permission prompt and one result. A prompt
- * saying "fail" ends its turn with an error instead, one saying "exit now" ends the process, and an interrupt ends the
- * turn as interrupted. A new session is named after the process, a resumed one keeps its id.
+ * starting with "fail" ends its turn with an error instead, one saying "exit now" ends the process, and an interrupt
+ * ends the turn as interrupted. A new session is named after the process, a resumed one keeps its id.
  */
 public final class FakeClaude {
   private FakeClaude() {
@@ -43,7 +43,7 @@ public final class FakeClaude {
         emit("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"session_id\":\"" + session + "\"}");
       } else if (line.startsWith("{\"type\":\"user\"") && line.contains("exit now")) {
         System.exit(3);
-      } else if (line.startsWith("{\"type\":\"user\"") && line.contains("fail")) {
+      } else if (line.startsWith("{\"type\":\"user\"") && line.contains("\"text\":\"fail")) {
         emit("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + session + "\"}");
         emit("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"session_id\":\"" + session + "\"}");
       } else if (line.startsWith("{\"type\":\"user\"")) {

@@ -236,6 +236,13 @@ public sealed interface AgentEvent {
   record Compacted() implements AgentEvent {
   }
 
+  /** Tako's own event, which no agent sends: the thread moved from one agent to another, by their names. */
+  record AgentSwitched(
+    String from,
+    String to
+  ) implements AgentEvent {
+  }
+
   /** The agent withdrew a permission prompt. */
   record PermissionCancelled(
     String requestId

@@ -9,6 +9,7 @@ import com.intellij.util.EnvironmentUtil;
 import io.firebite.tako.agent.AgentBackend;
 import io.firebite.tako.agent.AgentHistory;
 import io.firebite.tako.agent.AgentRegistry;
+import io.firebite.tako.chat.store.ThreadPast;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.chat.thread.Conversation;
@@ -218,19 +219,29 @@ final class ThreadTools implements McpTools {
   }
 
   /**
-   * Adds the open thread's conversation, or else what its agent's records hold, or else a note on why it cannot be
-   * read. Reads the records without starting the agent, so the thread stays as it is.
+   * Adds the open thread's conversation, or else what its earlier agents and its agent's records hold, with a note on
+   * what cannot be read. Reads the records without starting the agent, so the thread stays as it is.
    */
   private void addConversation(JsonObject thread, ThreadStore.Record record, @Nullable ChatController controller) {
     String text = controller != null ? controller.conversation(MAX_CONVERSATION_CHARS) : "";
-    if (!text.isEmpty() || record.sessionId == null) {
+    if (!text.isEmpty()) {
       thread.addProperty(CONVERSATION, text);
+      return;
+    }
+    Conversation conversation = new Conversation();
+    conversation.restore(ThreadPast.read(this.store.pastFile(record.id)).firstSegments(record.agentSwitches));
+    if (record.sessionId == null || !conversation.isEmpty()) {
+      thread.addProperty(CONVERSATION, conversation.text(MAX_CONVERSATION_CHARS));
+    }
+    if (record.sessionId == null) {
       return;
     }
     AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
     switch (backend.history(this.service.workFolder(record), record.sessionId)) {
-      case AgentHistory.Loaded loaded -> thread.addProperty(CONVERSATION,
-        Conversation.of(loaded.events()).text(MAX_CONVERSATION_CHARS));
+      case AgentHistory.Loaded loaded -> {
+        conversation.reset(loaded.events());
+        thread.addProperty(CONVERSATION, conversation.text(MAX_CONVERSATION_CHARS));
+      }
       case AgentHistory.Missing missing -> thread.addProperty(NOTE, "The conversation cannot be read: the agent's "
         + "records of this session are gone.");
       case AgentHistory.FromSession fromSession -> {

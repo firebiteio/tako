@@ -210,6 +210,12 @@ public final class CodexBackend implements AgentBackend {
     return this.locate(this.environment) != null;
   }
 
+  /** The CLI is found; Codex checks its own login when it starts. */
+  @Override
+  public boolean canStart() {
+    return this.canAsk();
+  }
+
   @Override
   public String ask(Path workDirectory, String prompt) throws AgentException {
     try {

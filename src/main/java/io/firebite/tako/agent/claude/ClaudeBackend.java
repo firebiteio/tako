@@ -223,6 +223,11 @@ public final class ClaudeBackend implements AgentBackend {
   }
 
   @Override
+  public boolean canStart() {
+    return this.canAsk();
+  }
+
+  @Override
   public String ask(Path workDirectory, String prompt) throws AgentException {
     ChatSettings.Data settings = ChatSettings.state();
     String executable = executable(settings, this.environment);

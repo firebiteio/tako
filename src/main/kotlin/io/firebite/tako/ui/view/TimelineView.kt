@@ -112,12 +112,20 @@ private sealed class TimelineRow(val key: String) {
   class Queued(val queued: QueuedPrompt) : TimelineRow("q" + System.identityHashCode(queued))
 }
 
-/** The turns as rows: prompts, what the agent did (some folded away), what each turn changed and queued prompts. */
+/**
+ * The turns as rows: prompts, what the agent did (some folded away), what each turn changed and queued prompts. Forks
+ * copy the current agent's session, so they are offered after the last agent switch only and count prompts from there.
+ */
 private fun timelineRows(thread: ThreadState): List<TimelineRow> {
   val rows = ArrayList<TimelineRow>()
-  val canFork = thread.info?.capabilities?.fork == true && !thread.sideChat
+  val turns = thread.ownTurns
+  val lastSwitch = turns.indexOfLast { turn -> turn.items.any { it is TurnItem.Divider } }
   var prompts = 0
-  for (turn in thread.ownTurns) {
+  for ((index, turn) in turns.withIndex()) {
+    if (index == lastSwitch) {
+      prompts = 0
+    }
+    val canFork = thread.info?.capabilities?.fork == true && !thread.sideChat && index > lastSwitch
     turn.prompt?.let {
       prompts++
       rows.add(TimelineRow.PromptRow(turn, it))
@@ -271,6 +279,12 @@ private fun TurnItemView(thread: ThreadState, item: TurnItem, forkPrompts: Int?,
     is TurnItem.Completion -> CompletionRowView(item.card)
     is TurnItem.Plan -> PlanCard(thread, item, markdown, actions)
     is TurnItem.FollowUp -> UserRow(thread, item.prompt)
+    is TurnItem.Divider -> Row(Modifier.fillMaxWidth().padding(top = 8.dp, bottom = 16.dp),
+      verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+      Rule(Modifier.weight(1f))
+      Text(item.text, color = colors.muted, style = smallStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
+      Rule(Modifier.weight(1f))
+    }
   }
 }
 

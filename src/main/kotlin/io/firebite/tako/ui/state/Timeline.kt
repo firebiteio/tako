@@ -65,7 +65,31 @@ fun ThreadState.handleEvent(event: AgentEvent) {
     is AgentEvent.PermissionCancelled -> this.removeApproval(event.requestId)
     is AgentEvent.TaskUpdated -> this.onTaskEvent(event)
     is AgentEvent.PromptTaken -> this.takeQueued(event.key, event.startsTurn)
+    is AgentEvent.AgentSwitched -> this.addDivider(t("timeline.switched", event.from, event.to))
   }
+}
+
+/**
+ * Marks where the thread moved to another agent, whose process replaced the old one without an exit. The mark comes
+ * before anything of the new agent's session, so it drops what the old one measured. A prompt sent while the thread
+ * switched, which waits for the new agent, stays below the mark.
+ */
+private fun ThreadState.addDivider(text: String) {
+  if (!this.replaying) {
+    this.stopAllTasks()
+    this.forgetSession()
+  }
+  val divider = Turn(this.turnNo, null, true)
+  divider.items.add(TurnItem.Divider(text))
+  divider.done = true
+  val last = this.turns.lastOrNull()
+  val waits = last != null && last.prompt != null && !last.done && !last.replayed && last.items.isEmpty()
+  if (waits && this.busy && !this.replaying) {
+    this.turns.add(this.turns.size - 1, divider)
+    return
+  }
+  this.finishTurn(null)
+  this.turns.add(divider)
 }
 
 private fun retrying(attempt: Int?, message: String?): String = when {
@@ -102,13 +126,13 @@ private fun ThreadState.onText(messageId: String?, text: String, parentId: Strin
   }
 }
 
-/** Ends the running turn; the thread stays busy while queued prompts are to go. */
+/**
+ * Ends the running turn; the thread stays busy while queued prompts are to go. The cost shown comes with the thread's
+ * update, which adds the earlier agents' sessions to this one.
+ */
 private fun ThreadState.onTurnEnded(event: AgentEvent.TurnEnded) {
   this.finishTurn(event)
-  event.cost?.let {
-    this.costUsd = it.costUsd
-    this.inputRate = it.inputRate
-  }
+  event.cost?.let { this.inputRate = it.inputRate }
   if (this.queueGoesOn) {
     return
   }
@@ -381,7 +405,7 @@ fun ThreadState.onInit(info: AgentInfo, projectRoot: String?) {
   val wanted = info.model ?: ""
   val models = info.models
   if (models.isNotEmpty()) {
-    this.workspace.agentModels[this.agent] = models
+    this.workspace.agentModels[info.agent] = models
   }
   val match = models.firstOrNull { it.value == wanted } ?: models.firstOrNull { it.resolvedModel == wanted }
   if (this.model == null || models.none { it.value == this.model }) {

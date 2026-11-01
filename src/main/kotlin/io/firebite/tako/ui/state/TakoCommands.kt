@@ -111,8 +111,8 @@ private fun ThreadState.current(command: TakoCommand): String? = when (command) 
   else -> null
 }
 
-private val ThreadState.canSwitchAgent: Boolean
-  get() = this.workspace.agents.size > 1 && this.canChangeAgent
+private val ThreadState.offersAgentSwitch: Boolean
+  get() = this.workspace.agents.size > 1 && this.canSwitchAgent
 
 /** How well the choice fits the query, lower is better: exact value, exact label, prefix, contains. */
 private fun rank(choice: Choice, query: String): Int = when {
@@ -186,7 +186,7 @@ fun ThreadState.resolve(invocation: TakoInvocation): TakoAction {
 
 private fun ThreadState.resolveChoice(command: TakoCommand, argument: String): TakoAction {
   if (command == TakoCommand.AGENT) {
-    if (!this.canChangeAgent) {
+    if (!this.canSwitchAgent) {
       return TakoAction.Fail(t("slash.error.agent.locked"))
     }
     if (this.workspace.agents.size < 2) {
@@ -244,7 +244,7 @@ private fun quoted(argument: String): String = ChatController.cut(argument.repla
 fun ThreadState.forkPrompts(): Int? {
   var prompts = 0
   var last: Int? = null
-  for (turn in this.turns) {
+  for (turn in this.sessionTurns()) {
     if (turn.prompt != null) {
       prompts++
     }
@@ -371,7 +371,7 @@ fun ThreadState.slashMenu(box: String): SlashMenu {
   SLASH_QUERY.matchEntire(text)?.let { return SlashMenu(this.commandItems(it.groupValues[1]), 0) }
   val match = ARGUMENT_QUERY.matchEntire(text) ?: return NO_MENU
   val command = TakoCommand.of(match.groupValues[1]) ?: return NO_MENU
-  if (command == TakoCommand.AGENT && !this.canSwitchAgent) {
+  if (command == TakoCommand.AGENT && !this.offersAgentSwitch) {
     return NO_MENU
   }
   val choices = this.choices(command) ?: return NO_MENU
@@ -389,7 +389,7 @@ fun ThreadState.slashMenu(box: String): SlashMenu {
 /** Whether the menu lists the command for this thread; typed, it is Tako's either way. */
 private fun ThreadState.offers(command: TakoCommand): Boolean = when {
   this.sideChat && !this.offersInSideChat(command) -> false
-  command == TakoCommand.AGENT -> this.canSwitchAgent
+  command == TakoCommand.AGENT -> this.offersAgentSwitch
   command == TakoCommand.FORK -> this.info?.capabilities?.fork == true
   command == TakoCommand.RESTART -> this.info?.capabilities?.resume == true
   else -> true

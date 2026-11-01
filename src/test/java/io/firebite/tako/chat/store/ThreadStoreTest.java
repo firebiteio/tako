@@ -5,6 +5,7 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.nio.file.Files;
@@ -302,6 +303,63 @@ public class ThreadStoreTest {
 
     assertTrue(store.isRun(record.id));
     assertFalse(store.isRun("other"));
+  }
+
+  @Test
+  public void earlierSessionsKeepTheirUsageAndFindTheThread() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record record = store.create("claude-session", null, null, "claude");
+    record.setUsage(new SessionCost(1.5, 100, 20, 300, 4, null));
+    record.endSession();
+    record.agent = "codex";
+    record.sessionId = "codex-thread";
+    record.setUsage(new SessionCost(0.25, 10, 2, 0, 0, null));
+    record.endSession();
+    record.endSession();
+    record.sessionId = "acp-session";
+    record.handoffFrom = "Codex";
+    store.save();
+
+    ThreadStore reloaded = new ThreadStore(file);
+    ThreadStore.Record restored = reloaded.find(record.id);
+
+    assertEquals(2, restored.earlierSessions().size());
+    assertEquals("claude", restored.earlierSessions().get(0).agent);
+    assertEquals("codex", restored.earlierSessions().get(1).agent);
+    assertEquals("Codex", restored.handoffFrom);
+    assertEquals(1.75, restored.toItem().costUsd(), 1e-9);
+    assertEquals(436, restored.toItem().tokens());
+    assertEquals(record.id, reloaded.findBySession("claude-session").id);
+    assertEquals(record.id, reloaded.findBySession("codex-thread").id);
+    assertEquals(record.id, reloaded.findBySession("acp-session").id);
+    assertNull(reloaded.findBySession("other"));
+  }
+
+  @Test
+  public void aFileFromBeforeAgentSwitchesLoads() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    Files.writeString(file, "{\"threads\": [{\"id\": \"t1\", \"sessionId\": \"s1\", \"costUsd\": 2.0}]}");
+
+    ThreadStore.Record record = new ThreadStore(file).find("t1");
+
+    assertTrue(record.earlierSessions().isEmpty());
+    assertNull(record.handoffFrom);
+    assertEquals(2.0, record.toItem().costUsd(), 1e-9);
+  }
+
+  @Test
+  public void removingAThreadDeletesWhatItsEarlierAgentsDid() throws Exception {
+    Path file = Files.createTempDirectory("threads").resolve("threads.json");
+    ThreadStore store = new ThreadStore(file);
+    ThreadStore.Record record = store.create(null, null, null, "claude");
+    Path past = store.pastFile(record.id);
+    new ThreadPast(List.of(), List.of("a.txt"), null, null).write(past);
+    assertTrue(Files.isRegularFile(past));
+
+    store.remove(record.id);
+
+    assertFalse(Files.exists(past));
   }
 
   @Test

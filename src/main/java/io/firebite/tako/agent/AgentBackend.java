@@ -58,6 +58,14 @@ public interface AgentBackend {
     return false;
   }
 
+  /**
+   * Whether {@link #start} can run now: the agent's CLI is found and, where Tako holds its login, one is set. A login
+   * the CLI keeps itself is only checked once it starts. Looks for files, so call off the EDT.
+   */
+  default boolean canStart() {
+    return true;
+  }
+
   /** Whether {@link #ask} can run now, e.g. the agent's CLI is installed. Looks for files, so call off the EDT. */
   default boolean canAsk() {
     return false;

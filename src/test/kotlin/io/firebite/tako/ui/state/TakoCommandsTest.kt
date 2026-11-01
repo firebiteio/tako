@@ -138,12 +138,14 @@ class TakoCommandsTest : BasePlatformTestCase() {
     assertEquals(t("slash.error.argument", "usage"), this.fail("/usage   x"))
   }
 
-  fun testTheAgentCanOnlyChangeBeforeTheFirstPromptAndWithAnotherAgent() {
+  fun testTheAgentChangesMidThreadExceptInAParallelRun() {
     assertEquals(t("slash.error.agent.single"), this.fail("/agent codex"))
     this.workspace.agents = listOf(ChatMessage.AgentOption("claude", "Claude Code"),
       ChatMessage.AgentOption("codex", "Codex"))
     assertEquals(TakoAction.Select(TakoCommand.AGENT, "codex"), this.resolve("/agent codex"))
     this.answeredTurn("hi")
+    assertEquals(TakoAction.Select(TakoCommand.AGENT, "codex"), this.resolve("/agent codex"))
+    this.workspace.benches = listOf(ChatMessage.BenchItem("b", "Bench", null, "abc", listOf(this.thread.id)))
     assertEquals(t("slash.error.agent.locked"), this.fail("/agent codex"))
   }
 

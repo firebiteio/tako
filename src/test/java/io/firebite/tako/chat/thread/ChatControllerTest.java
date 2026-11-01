@@ -16,6 +16,7 @@ import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.codex.CodexBackend;
 import io.firebite.tako.agent.codex.FakeCodex;
 import io.firebite.tako.chat.store.PromptStash;
+import io.firebite.tako.chat.store.ThreadPast;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.project.GitDiffs;
 import io.firebite.tako.ide.project.GitInfo;
@@ -47,6 +48,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
   private final List<Boolean> looks = new ArrayList<>();
   /** What the controller told its host about prompts and limits, in order. */
   private final List<String> hostCalls = new ArrayList<>();
+  private Path pastFile;
 
   @Override
   protected void setUp() throws Exception {
@@ -58,6 +60,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     settings.claudePath = writeFakeExecutable().toString();
     settings.authMode = AuthMode.CLI_LOGIN;
     this.record.projectPath = Files.createTempDirectory("tako-work").toString();
+    this.pastFile = Files.createTempDirectory("tako-past").resolve("thread.json");
     this.host = new ChatHost() {
       @Override
       public void setTitle(String title) {
@@ -108,6 +111,11 @@ public class ChatControllerTest extends BasePlatformTestCase {
       @Override
       public String busyThreadIn(String topLevel) {
         return null;
+      }
+
+      @Override
+      public Path pastFile() {
+        return ChatControllerTest.this.pastFile;
       }
     };
     this.controller = new ChatController(this.getProject(), this.posted::add, this.host, this.record,
@@ -748,6 +756,186 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.controller.submit("from another agent");
     assertEquals(ChatController.State.WAITING, this.controller.state());
     assertEquals("from another agent", this.awaitPost(ChatMessage.Submit.class).text());
+  }
+
+  public void testSwitchingAgentsHandsTheConversationToTheNextPromptOnly() throws Exception {
+    this.controller.open();
+    this.awaitPost(ChatMessage.Init.class);
+    this.deniedTurn(this.controller, "write a.txt", 1);
+    String claudeSession = this.record.sessionId;
+    Path prompts = Files.createTempDirectory("acp-prompts").resolve("prompts.txt");
+    AcpBackend acp = this.fakeAcp(prompts);
+
+    assertTrue(this.controller.switchAgent(acp));
+    assertFalse("a second switch waits for the first", this.controller.switchAgent(new CodexBackend("codex",
+      AgentDefaults.NONE, Map.of())));
+    List<ChatMessage.ThreadMessage> switched = this.postsUntil(ChatMessage.Init.class);
+    ChatMessage.Event divider = find(switched, ChatMessage.Event.class);
+    assertEquals(new AgentEvent.AgentSwitched("Claude Code", "Fake"), divider.event());
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+    assertEquals(acp.id(), this.record.agent());
+    assertEquals("Claude Code", this.record.handoffFrom);
+    assertEquals(claudeSession, this.record.earlierSessions().getFirst().sessionId);
+    assertEquals("s1", this.record.sessionId);
+    assertEquals(1, this.record.agentSwitches);
+    ThreadPast past = ThreadPast.read(this.pastFile);
+    assertEquals(List.of(new ThreadPast.Turn("write a.txt", "denied")), past.segments().getFirst().turns());
+
+    this.controller.send("go on", List.of(), List.of(), 2, 0, QueuedPrompts.Delivery.QUEUE);
+    ChatMessage.Permission first = this.awaitPost(ChatMessage.Permission.class);
+    this.controller.send("and more", List.of(), List.of(), 3, 1, QueuedPrompts.Delivery.QUEUE);
+    this.controller.answer(first.requestId(), false, null, false, null, null);
+    while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+    }
+    ChatMessage.Permission second = this.awaitPost(ChatMessage.Permission.class);
+    assertNull("delivered once its turn ended without an error", this.record.handoffFrom);
+    this.controller.answer(second.requestId(), false, null, false, null, null);
+    while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+    }
+
+    List<String> sent = Files.readAllLines(prompts, StandardCharsets.UTF_8);
+    assertEquals(2, sent.size());
+    assertTrue(sent.get(0).startsWith("go on\\n\\n<ide_context>\\n<handoff>\\nThis thread ran with Claude Code"));
+    assertTrue(sent.get(0).contains("Person: write a.txt\\nAgent: denied"));
+    assertEquals("and more", sent.get(1));
+    assertTrue(
+      this.controller.conversation(10_000).startsWith("Person: write a.txt\n\nAgent: denied\n\nPerson: go on"));
+  }
+
+  public void testSwitchWaitsUntilTheAgentIsIdle() throws Exception {
+    this.controller.open();
+    this.awaitPost(ChatMessage.Init.class);
+    AcpBackend acp = this.fakeAcp(null);
+    this.controller.send("write a.txt", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
+    assertFalse("a prompt on its way to the agent", this.controller.switchAgent(acp));
+    ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
+
+    assertFalse(this.controller.switchAgent(acp));
+
+    this.controller.answer(permission.requestId(), false, null, false, null, null);
+    while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+    }
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+    assertNull(this.record.agent);
+    assertFalse("the same agent is no switch", this.controller.switchAgent(new ClaudeBackend(Map.of())));
+  }
+
+  public void testSwitchToAnAgentThatIsNotInstalledChangesNothing() throws Exception {
+    this.controller.open();
+    this.awaitPost(ChatMessage.Init.class);
+    this.deniedTurn(this.controller, "write a.txt", 1);
+    String session = this.record.sessionId;
+
+    assertTrue(this.controller.switchAgent(new AcpBackend("Missing", List.of("tako-no-such-agent-xyz"), Map.of())));
+    List<ChatMessage.ThreadMessage> posts = this.postsUntil(ChatMessage.Notice.class);
+
+    assertNull(find(posts, ChatMessage.Event.class));
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+    assertNull(this.record.agent);
+    assertEquals(session, this.record.sessionId);
+    assertNull(this.record.handoffFrom);
+    assertFalse(Files.exists(this.pastFile));
+    this.deniedTurn(this.controller, "write a.txt", 2);
+  }
+
+  public void testAFailedFirstTurnKeepsTheHandoffForTheNextPrompt() throws Exception {
+    ChatController acp = this.acpController();
+    try {
+      acp.open();
+      this.awaitPost(ChatMessage.Init.class);
+      assertEquals(ChatController.State.IDLE, acp.awaitSettled(TIMEOUT_MILLIS));
+      assertTrue(acp.hasConversation());
+
+      assertTrue(acp.switchAgent(new ClaudeBackend(Map.of())));
+      this.awaitPost(ChatMessage.Init.class);
+      assertEquals(ChatController.State.IDLE, acp.awaitSettled(TIMEOUT_MILLIS));
+      assertEquals("Fake", this.record.handoffFrom);
+      assertEquals("s0", this.record.earlierSessions().getFirst().sessionId);
+
+      acp.send("fail", List.of(), List.of(), 1, 0, QueuedPrompts.Delivery.QUEUE);
+      while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+      }
+      assertEquals("Fake", this.record.handoffFrom);
+
+      this.deniedTurn(acp, "write a.txt", 2);
+      assertNull(this.record.handoffFrom);
+    } finally {
+      acp.dispose();
+    }
+  }
+
+  public void testSwitchingBackBeforeAnyPromptKeepsWhoDidTheWork() throws Exception {
+    this.controller.open();
+    this.awaitPost(ChatMessage.Init.class);
+    this.deniedTurn(this.controller, "write a.txt", 1);
+
+    assertTrue(this.controller.switchAgent(this.fakeAcp(null)));
+    this.awaitPost(ChatMessage.Init.class);
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+    assertTrue(this.controller.switchAgent(new ClaudeBackend(Map.of())));
+    this.awaitPost(ChatMessage.Init.class);
+    assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
+
+    assertEquals("claude", this.record.agent());
+    assertEquals("Claude Code", this.record.handoffFrom);
+    assertEquals(2, this.record.agentSwitches);
+    ThreadPast past = ThreadPast.read(this.pastFile);
+    assertEquals(2, past.segments().size());
+    assertTrue(past.segments().get(1).turns().isEmpty());
+    assertEquals(2, this.record.earlierSessions().size());
+    this.deniedTurn(this.controller, "write a.txt", 2);
+    assertNull(this.record.handoffFrom);
+  }
+
+  public void testReopeningShowsTheEarlierAgentsBeforeTheSession() throws Exception {
+    new ThreadPast(List.of(new ThreadPast.Segment("Codex", "Claude Code",
+      List.of(new ThreadPast.Turn("earlier", "done")))), List.of(), null, null).write(this.pastFile);
+    this.record.handoffFrom = "Codex";
+    this.record.agentSwitches = 1;
+
+    this.controller.open();
+    List<ChatMessage.ThreadMessage> opened = this.postsUntil(ChatMessage.Init.class);
+
+    ChatMessage.Replay replay = find(opened, ChatMessage.Replay.class);
+    assertEquals(List.of(new AgentEvent.Prompt("earlier", false, List.of()), new AgentEvent.Text(null, "done", null),
+      new AgentEvent.AgentSwitched("Codex", "Claude Code")), replay.events());
+    assertTrue(this.controller.hasConversation());
+    assertEquals("Person: earlier\n\nAgent: done", this.controller.conversation(1000));
+  }
+
+  public void testReopeningDropsASwitchTheRecordNeverGot() throws Exception {
+    new ThreadPast(List.of(new ThreadPast.Segment("Fake", "Claude Code", List.of())), List.of(), null, null)
+      .write(this.pastFile);
+    ChatController acp = this.acpController();
+    try {
+      acp.open();
+      List<ChatMessage.ThreadMessage> opened = this.postsUntil(ChatMessage.Init.class);
+
+      ChatMessage.Replay replay = find(opened, ChatMessage.Replay.class);
+      for (AgentEvent event : replay.events()) {
+        assertFalse(event instanceof AgentEvent.AgentSwitched);
+      }
+      assertTrue(ThreadPast.read(this.pastFile).isEmpty());
+    } finally {
+      acp.dispose();
+    }
+  }
+
+  /** Sends a prompt to the fake Claude Code or ACP agent and declines its edit, until the turn ended. */
+  private void deniedTurn(ChatController thread, String prompt, int turn) throws InterruptedException {
+    thread.send(prompt, List.of(), List.of(), turn, turn - 1, QueuedPrompts.Delivery.QUEUE);
+    ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
+    thread.answer(permission.requestId(), false, "no", false, null, null);
+    while (!(this.awaitPost(ChatMessage.Event.class).event() instanceof AgentEvent.TurnEnded)) {
+    }
+    assertEquals(ChatController.State.IDLE, thread.awaitSettled(TIMEOUT_MILLIS));
+  }
+
+  /** The fake ACP agent, writing the prompts it gets to {@code prompts} if given. */
+  private AcpBackend fakeAcp(Path prompts) throws Exception {
+    Path agent = FakeExecutable.write("fake-acp", FakeAcpAgent.class);
+    List<String> command = prompts == null ? List.of(agent.toString()) : List.of(agent.toString(), prompts.toString());
+    return new AcpBackend("Fake", command, Map.of());
   }
 
   /** A thread of the fake ACP agent that resumes its session s0. */
