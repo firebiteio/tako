@@ -6,6 +6,8 @@ import io.firebite.tako.chat.thread.ChatHost;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.settings.ChatSettings;
 import java.nio.file.Path;
+import java.util.List;
+import java.util.Map;
 import org.jetbrains.annotations.Nullable;
 
 /** Pin, rename, unread, snooze and auto archive as the thread list asks the service for them. */
@@ -413,17 +415,54 @@ public class ThreadListTest extends BasePlatformTestCase {
     assertFalse(record.archived);
   }
 
-  public void testRefreshWithoutTheRuleAsksNothing() {
+  public void testRefreshWithoutTheRuleOrAnOpenPullRequestAsksNothing() {
     ThreadStore.Record record = this.thread();
     record.workPath = Path.of(System.getProperty("java.io.tmpdir"), "tako-missing-worktree").toString();
-    record.branch = "fix";
     record.pullRequest = new GitInfo.PullRequest("#7", "Fix", MERGED_URL, "open");
-
     this.service.upkeep().refreshPullRequests();
+    assertFalse(this.service.upkeep().isRefreshing());
+
     ChatSettings.state().settleOnPullRequest = true;
+    record.pullRequest = new GitInfo.PullRequest("#7", "Fix", MERGED_URL, "merged");
+    ThreadStore.Record shared = this.thread();
+    shared.pullRequest = new GitInfo.PullRequest("#8", "Other", "https://github.com/o/r/pull/8", "open");
     this.service.upkeep().refreshPullRequests();
 
-    assertEquals("open", record.pullRequest.state());
+    assertFalse(this.service.upkeep().isRefreshing());
+  }
+
+  public void testRefreshedStateIsKeptOnlyForTheSamePullRequest() {
+    GitInfo.PullRequest open = new GitInfo.PullRequest("#7", "Fix", MERGED_URL, "open");
+    GitInfo.PullRequest merged = new GitInfo.PullRequest("#7", "Fix", MERGED_URL, "merged");
+    ThreadStore.Record kept = this.thread();
+    kept.pullRequest = open;
+    ThreadStore.Record changed = this.thread();
+    changed.pullRequest = new GitInfo.PullRequest("#9", "New", "https://github.com/o/r/pull/9", "open");
+    ThreadStore.Record closed = this.thread();
+    closed.pullRequest = open;
+    this.service.close(closed.id);
+
+    this.service.upkeep().store(List.of(new ThreadUpkeep.Ask(kept, open, List.of()),
+      new ThreadUpkeep.Ask(changed, open, List.of()), new ThreadUpkeep.Ask(closed, open, List.of())),
+      Map.of(MERGED_URL, merged));
+
+    assertEquals(merged, kept.pullRequest);
+    assertEquals("#9", changed.pullRequest.number());
+    assertEquals(open, closed.pullRequest);
+  }
+
+  public void testRestoringAThreadWhoseSnoozeEndedMeanwhileWakesItUnread() {
+    ThreadStore.Record shown = this.thread();
+    this.service.select(shown.id);
+    ThreadStore.Record record = this.thread();
+    record.snoozedUntil = System.currentTimeMillis() - 1;
+    record.archived = true;
+
+    this.service.restore(record.id);
+
+    assertEquals(0, record.snoozedUntil);
+    assertTrue(record.unread);
+    assertFalse(this.store.isSnoozeHidden(record));
   }
 
   public void testArchivingTheShownThreadSkipsSnoozedOnesForTheNextOne() {

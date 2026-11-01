@@ -10,11 +10,13 @@ import io.firebite.tako.settings.ChatSettings;
 import java.nio.file.Files;
 import java.nio.file.InvalidPathException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -27,6 +29,8 @@ public final class ThreadUpkeep {
 
   private final ChatService service;
   private final ThreadStore store;
+  /** Whether a pull request refresh still waits for gh or glab, so a slow network does not pile them up. */
+  private final AtomicBoolean refreshing = new AtomicBoolean();
 
   ThreadUpkeep(ChatService service, ThreadStore store) {
     this.service = service;
@@ -61,16 +65,21 @@ public final class ThreadUpkeep {
     return "merged".equals(pullRequest.state()) || "closed".equals(pullRequest.state());
   }
 
-  /** Wakes the threads whose snooze ended as unread, then archives the done ones. Must run on the EDT. */
+  /**
+   * Wakes the threads whose snooze ended as unread, then archives the done ones. Saves the threads once for all of
+   * them. Must run on the EDT.
+   */
   void tick(long now) {
+    List<ThreadStore.Record> woken = new ArrayList<>();
     for (ThreadStore.Record record : this.store.all()) {
       if (!record.archived && isDue(record, now)) {
         record.snoozedUntil = 0;
         record.unread = true;
         record.seenAt = now;
-        this.service.postUpdate(record);
+        woken.add(record);
       }
     }
+    this.service.postUpdates(woken);
     Rules rules = Rules.of(ChatSettings.state());
     if (!rules.pullRequest() && !rules.idle()) {
       return;
@@ -82,6 +91,7 @@ public final class ThreadUpkeep {
         parents.add(record.parentId);
       }
     }
+    List<ThreadStore.Record> done = new ArrayList<>();
     for (ThreadStore.Record record : records) {
       Reason reason = settleReason(record, rules, now);
       if (reason == null || parents.contains(record.id) || this.isKept(record)) {
@@ -91,8 +101,9 @@ public final class ThreadUpkeep {
         record.settledPullRequest = record.pullRequest.url();
       }
       LOG.info("Archiving thread " + record.id + " automatically: " + reason);
-      this.service.archive(record.id);
+      done.add(record);
     }
+    this.service.archiveAll(done);
   }
 
   /** Whether the thread stays though done: it is shown, works, waits, is hidden by a snooze or is a run. */
@@ -110,54 +121,83 @@ public final class ThreadUpkeep {
 
   /**
    * Asks for the state of the open pull requests of threads in their own worktree, while the pull request rule is on.
-   * Keeps an answer only for the branch and pull request the thread already has, so a branch switched outside the IDE
-   * does not attach another one. Runs git and gh or glab, so call off the EDT.
+   * Asks for each by its url or number, so a merge that deleted the branch or the worktree is still seen. Reads the
+   * threads here, asks gh or glab in the background and stores the answers on the EDT, unless the thread got another
+   * pull request meanwhile. Skips while the last refresh still runs. Must run on the EDT.
    */
   void refreshPullRequests() {
     if (!Rules.of(ChatSettings.state()).pullRequest()) {
       return;
     }
-    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
-    Map<String, GitInfo> folders = new HashMap<>();
+    List<Ask> asks = new ArrayList<>();
     for (ThreadStore.Record record : this.store.all()) {
-      String folder = record.workPath;
-      String branch = record.branch;
-      GitInfo.PullRequest stored = record.pullRequest;
-      if (record.archived || folder == null || branch == null || stored == null || isClosed(stored)) {
-        continue;
+      GitInfo.PullRequest known = record.pullRequest;
+      if (!record.archived && record.workPath != null && known != null && !isClosed(known)) {
+        asks.add(new Ask(record, known, List.of(record.workPath, this.service.folderOf(record.projectPath))));
       }
-      GitInfo found = folders.computeIfAbsent(folder, key -> lookUp(key, environment));
-      GitInfo.PullRequest pullRequest = found.pullRequest();
-      if (!branch.equals(found.branch()) || pullRequest == null || !pullRequest.url().equals(stored.url())
-        || pullRequest.equals(stored)) {
-        continue;
-      }
-      Async.onEdt(() -> {
-        GitInfo.PullRequest current = record.pullRequest;
-        if (this.store.find(record.id) == record && current != null && current.url().equals(pullRequest.url())) {
-          record.pullRequest = pullRequest;
-          this.service.postUpdate(record);
-        }
-      });
     }
+    if (asks.isEmpty() || !this.refreshing.compareAndSet(false, true)) {
+      return;
+    }
+    Async.inBackground(() -> {
+      try {
+        Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+        Map<String, GitInfo.PullRequest> found = new HashMap<>();
+        for (Ask ask : asks) {
+          String url = ask.known().url();
+          if (!found.containsKey(url)) {
+            found.put(url, lookUp(ask, environment));
+          }
+        }
+        Async.onEdt(() -> this.store(asks, found));
+      } finally {
+        this.refreshing.set(false);
+      }
+    });
   }
 
-  /** The folder's branch and its pull request, or nothing when the folder is gone. */
-  private static GitInfo lookUp(String folder, Map<String, String> environment) {
-    Path path;
-    try {
-      path = Path.of(folder);
-    } catch (InvalidPathException e) {
-      return new GitInfo(null, null, null);
+  boolean isRefreshing() {
+    return this.refreshing.get();
+  }
+
+  /** Keeps each answer for a thread that still has the pull request it was asked for. Must run on the EDT. */
+  void store(List<Ask> asks, Map<String, GitInfo.PullRequest> found) {
+    List<ThreadStore.Record> changed = new ArrayList<>();
+    for (Ask ask : asks) {
+      ThreadStore.Record record = ask.record();
+      GitInfo.PullRequest pullRequest = found.get(ask.known().url());
+      boolean isSame = this.store.find(record.id) == record && ask.known().equals(record.pullRequest);
+      if (isSame && pullRequest != null && pullRequest.url().equals(ask.known().url())
+        && !pullRequest.equals(ask.known())) {
+        record.pullRequest = pullRequest;
+        changed.add(record);
+      }
     }
-    if (!Files.isDirectory(path)) {
-      return new GitInfo(null, null, null);
+    this.service.postUpdates(changed);
+  }
+
+  /** The pull request as it is now, asked in the first of the folders that still exists; null when none does. */
+  private static @Nullable GitInfo.PullRequest lookUp(Ask ask, Map<String, String> environment) {
+    for (String folder : ask.folders()) {
+      Path path;
+      try {
+        path = Path.of(folder);
+      } catch (InvalidPathException e) {
+        continue;
+      }
+      if (Files.isDirectory(path)) {
+        return GitInfo.pullRequest(path, environment, ask.known());
+      }
     }
-    GitInfo local = GitInfo.local(path, environment);
-    if (local.branch() == null) {
-      return local;
-    }
-    return new GitInfo(local.branch(), local.worktree(), GitInfo.pullRequest(path, environment));
+    return null;
+  }
+
+  /** A thread's pull request to ask for, and the folders of its repository to ask in, its own first. */
+  record Ask(
+    ThreadStore.Record record,
+    GitInfo.PullRequest known,
+    List<String> folders
+  ) {
   }
 
   enum Reason {

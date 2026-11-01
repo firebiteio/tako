@@ -117,7 +117,7 @@ public final class ChatService implements Disposable {
     ScheduledFuture<?> upkeepTick = scheduler.scheduleWithFixedDelay(() -> Async.onEdt(this::tickUpkeep),
       UPKEEP_SECONDS, UPKEEP_SECONDS, TimeUnit.SECONDS);
     ScheduledFuture<?> pullRequestRefresh = scheduler.scheduleWithFixedDelay(
-      () -> Async.inBackground(this.upkeep::refreshPullRequests), 1, PULL_REQUEST_REFRESH_MINUTES, TimeUnit.MINUTES);
+      () -> Async.onEdt(this::refreshPullRequests), 1, PULL_REQUEST_REFRESH_MINUTES, TimeUnit.MINUTES);
     this.project.getMessageBus().connect(content).subscribe(ToolWindowManagerListener.TOPIC,
       new ToolWindowManagerListener() {
         @Override
@@ -145,6 +145,12 @@ public final class ChatService implements Disposable {
   private void tickUpkeep() {
     if (this.panel != null) {
       this.upkeep.tick(System.currentTimeMillis());
+    }
+  }
+
+  private void refreshPullRequests() {
+    if (this.panel != null) {
+      this.upkeep.refreshPullRequests();
     }
   }
 
@@ -253,7 +259,7 @@ public final class ChatService implements Disposable {
   }
 
   /** @param projectPath a project folder, or null for the IDE project */
-  private String folderOf(@Nullable String projectPath) {
+  String folderOf(@Nullable String projectPath) {
     String basePath = this.project.getBasePath();
     return projectPath != null ? projectPath : basePath != null ? basePath : "";
   }
@@ -392,33 +398,53 @@ public final class ChatService implements Disposable {
   }
 
   /**
-   * Lists an archived thread again. A snoozed parent restored this way would hide the active thread, so that one's
-   * parents wake.
+   * Lists an archived thread again. A snooze that ended while it was archived ends now, as unread. A snoozed parent
+   * restored this way would hide the active thread, so that one's parents wake.
    */
   private void unarchive(ThreadStore.Record record) {
     if (!record.archived) {
       return;
     }
     record.archived = false;
-    this.postUpdate(record);
+    if (ThreadUpkeep.isDue(record, System.currentTimeMillis())) {
+      record.snoozedUntil = 0;
+      record.unread = true;
+    }
+    List<ThreadStore.Record> changed = new ArrayList<>(List.of(record));
     ThreadStore.Record active = this.store.find(this.store.activeId());
     if (active != null && this.store.isSnoozeHidden(active)) {
-      this.postAll(this.store.wakeWithAncestors(active));
+      changed.addAll(this.store.wakeWithAncestors(active));
     }
+    this.postUpdates(changed);
   }
 
   /** The person opened the thread: it is read, a snooze over it ends and its idle time starts again. */
   private void markSeen(ThreadStore.Record record) {
     record.unread = false;
     record.seenAt = System.currentTimeMillis();
-    this.postAll(this.store.wakeWithAncestors(record));
-    this.postUpdate(record);
+    List<ThreadStore.Record> changed = new ArrayList<>(this.store.wakeWithAncestors(record));
+    changed.add(record);
+    this.postUpdates(changed);
   }
 
-  private void postAll(List<ThreadStore.Record> records) {
-    for (ThreadStore.Record record : records) {
-      this.postUpdate(record);
+  /** Saves the threads once and tells the chat about each of them. */
+  void postUpdates(List<ThreadStore.Record> records) {
+    if (records.isEmpty()) {
+      return;
     }
+    this.store.save();
+    for (ThreadStore.Record record : records) {
+      this.post(new ChatMessage.ThreadUpdated(record.toItem()));
+    }
+  }
+
+  /** Archives threads that are not the active one and stops their agents, saving once. */
+  void archiveAll(List<ThreadStore.Record> records) {
+    for (ThreadStore.Record record : records) {
+      record.archived = true;
+      this.disposeController(record.id);
+    }
+    this.postUpdates(records);
   }
 
   public void setPinned(String id, boolean pinned) {
@@ -473,8 +499,9 @@ public final class ChatService implements Disposable {
     List<ThreadStore.Record> woken = this.store.wakeWithAncestors(record);
     if (!woken.isEmpty()) {
       record.seenAt = System.currentTimeMillis();
-      this.postAll(woken);
-      this.postUpdate(record);
+      List<ThreadStore.Record> changed = new ArrayList<>(woken);
+      changed.add(record);
+      this.postUpdates(changed);
     }
   }
 
@@ -1014,7 +1041,7 @@ public final class ChatService implements Disposable {
         return;
       }
       if (asks) {
-        ChatService.this.postAll(ChatService.this.store.wakeWithAncestors(this.record));
+        ChatService.this.postUpdates(ChatService.this.store.wakeWithAncestors(this.record));
       }
       if (!this.record.unread && !ChatService.this.isShown(this.record.id)) {
         this.record.unread = true;
