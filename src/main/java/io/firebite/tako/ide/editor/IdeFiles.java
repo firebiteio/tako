@@ -8,6 +8,7 @@ import com.intellij.diff.requests.DiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.command.WriteCommandAction;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.fileEditor.FileEditorManager;
@@ -203,6 +204,34 @@ public final class IdeFiles {
     if (resolved != null && resolved.getParent() != null) {
       VfsUtil.markDirtyAndRefresh(true, false, true, resolved.getParent().toFile(), resolved.toFile());
     }
+  }
+
+  /**
+   * Writes the text as UTF-8 into the file, creating it and its folder if needed, and replacing what it held. Must run
+   * on the EDT.
+   */
+  public static VirtualFile writeText(Path path, String text) throws IOException {
+    Path parent = path.toAbsolutePath().getParent();
+    if (parent == null) {
+      throw new IOException("No folder for " + path);
+    }
+    VirtualFile existing = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path);
+    if (existing != null && existing.isDirectory()) {
+      throw new IOException(path + " is a folder");
+    }
+    String name = path.getFileName().toString();
+    return WriteAction.compute(() -> {
+      VirtualFile file = existing;
+      if (file == null) {
+        VirtualFile folder = VfsUtil.createDirectoryIfMissing(parent.toString());
+        if (folder == null) {
+          throw new IOException("Could not create " + parent);
+        }
+        file = folder.createChildData(IdeFiles.class, name);
+      }
+      file.setBinaryContent(text.getBytes(StandardCharsets.UTF_8));
+      return file;
+    });
   }
 
   /** Replaces the selection, or inserts at the caret, of the editor in front. Must run on the EDT. */
