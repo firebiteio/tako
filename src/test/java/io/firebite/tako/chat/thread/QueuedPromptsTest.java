@@ -314,6 +314,33 @@ public class QueuedPromptsTest {
   }
 
   @Test
+  public void steerAfterStopGoesNextInstead() {
+    this.runTurn();
+    this.queue.offer(2, prompt("held"), Delivery.QUEUE, true);
+    this.queue.stop();
+    assertEquals(Action.HOLD, this.queue.offer(3, prompt("steer"), Delivery.STEER, true));
+    assertEquals(Status.NEXT, this.status(3));
+    assertFalse("a stopping turn takes no steer", this.queue.steer(2, true));
+  }
+
+  @Test
+  public void refusedSteerGoesAsAPromptUnlessTheQueueHolds() {
+    this.runTurn();
+    this.queue.offer(2, prompt("a"), Delivery.STEER, true);
+    this.queue.dispatch(2, true);
+    assertTrue(this.queue.steerRefused(2));
+    assertEquals(Status.STEERING, this.status(2));
+
+    this.queue.offer(3, prompt("b"), Delivery.STEER, true);
+    this.queue.dispatch(3, true);
+    this.queue.stop();
+    assertFalse(this.queue.steerRefused(3));
+    assertEquals(Status.HELD, this.status(3));
+    assertFalse("only a steering prompt", this.queue.steerRefused(3));
+    assertFalse(this.queue.steerRefused(99));
+  }
+
+  @Test
   public void steeredPromptIsListedBeforeTheHeldOnes() {
     this.runTurn();
     this.queue.offer(2, prompt("held"), Delivery.QUEUE, true);

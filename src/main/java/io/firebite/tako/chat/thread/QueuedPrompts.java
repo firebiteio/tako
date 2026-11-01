@@ -45,13 +45,13 @@ public final class QueuedPrompts {
       this.changed();
       return Action.SEND;
     }
-    if (delivery == Delivery.STEER && canSteer && steerable(prompt)) {
+    if (delivery == Delivery.STEER && canSteer && isSteerable(prompt.text()) && !this.isStopping()) {
       this.entries.add(this.frontEnd(), new Entry(turn, prompt, Status.STEERING, true));
       this.changed();
       return Action.STEER;
     }
     Entry entry = new Entry(turn, prompt, Status.HELD, true);
-    if (delivery == Delivery.NEXT || (this.isTurnOpen && (this.isStopRequested || this.wasInterrupted))) {
+    if (delivery == Delivery.NEXT || this.isStopping()) {
       entry.status = Status.NEXT;
       this.entries.add(this.frontEnd(), entry);
     } else {
@@ -127,7 +127,6 @@ public final class QueuedPrompts {
         if (entry.isShown && !entry.isDispatched
           && (entry.status == Status.SENDING || entry.status == Status.STEERING)) {
           entry.status = Status.HELD;
-          entry.isDispatched = false;
         }
         hasNext |= entry.status == Status.NEXT;
       }
@@ -204,11 +203,11 @@ public final class QueuedPrompts {
     return this.isTurnOpen && !isOnItsWay ? SendNow.INTERRUPT : SendNow.QUEUED;
   }
 
-  /** Hands a held prompt to the running turn. Slash commands are not steered. */
+  /** Hands a held prompt to the running turn, unless it is stopping. Slash commands are not steered. */
   public synchronized boolean steer(int turn, boolean canSteer) {
     Entry entry = this.find(turn);
     if (this.isClosed || entry == null || entry.status != Status.HELD || !this.isRunning || !canSteer
-      || !steerable(entry.prompt)) {
+      || !isSteerable(entry.prompt.text()) || this.isStopping()) {
       return false;
     }
     entry.status = Status.STEERING;
@@ -243,6 +242,25 @@ public final class QueuedPrompts {
   public synchronized ChatMessage.@Nullable Submit promptOf(int turn) {
     Entry entry = this.find(turn);
     return entry == null ? null : entry.prompt;
+  }
+
+  /**
+   * The agent refused a steered prompt. Unless the queue holds, it goes as a turn of its own; else it waits held.
+   *
+   * @return true to send it as a prompt; false when it was held, and the caller should {@link #settle}
+   */
+  public synchronized boolean steerRefused(int turn) {
+    Entry entry = this.find(turn);
+    if (this.isClosed || entry == null || entry.status != Status.STEERING) {
+      return false;
+    }
+    if (!this.isHeld && !this.isStopping()) {
+      return true;
+    }
+    entry.status = Status.HELD;
+    entry.isDispatched = false;
+    this.changed();
+    return false;
   }
 
   /** Whether the prompt is handed to the agent to steer its turn and still not taken. */
@@ -390,8 +408,9 @@ public final class QueuedPrompts {
     this.listener.changed(this.snapshot());
   }
 
-  private static boolean steerable(ChatMessage.Submit prompt) {
-    return isSteerable(prompt.text());
+  /** The person stopped the open turn, which has not ended yet. */
+  private boolean isStopping() {
+    return this.isTurnOpen && (this.isStopRequested || this.wasInterrupted);
   }
 
   /** Agents run slash commands only as a prompt of their own, so those are not steered. */

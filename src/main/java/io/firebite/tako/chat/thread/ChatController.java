@@ -465,10 +465,14 @@ public final class ChatController implements Disposable {
       return;
     }
     Runnable write = () -> {
+      if (this.project.isDisposed()) {
+        LOG.warn("The project closed before the queued prompts of thread " + this.record.id + " were stashed");
+        return;
+      }
       try {
         int kept = PromptStash.getInstance(this.project).pushAll(prompts);
         this.view.post(new ChatMessage.QueueStashed(kept));
-      } catch (IOException e) {
+      } catch (IOException | IllegalStateException e) {
         LOG.warn("Could not stash the queued prompts of thread " + this.record.id, e);
       }
     };
@@ -686,8 +690,16 @@ public final class ChatController implements Disposable {
     }
     if (steer) {
       session.steer(prompt, images, turn).thenAccept(isTaken -> {
-        if (!isTaken && session.isAlive() && this.queue.isSteering(turn)) {
+        if (isTaken || !session.isAlive()) {
+          return;
+        }
+        if (this.queue.steerRefused(turn)) {
           session.prompt(prompt, images, turn);
+          return;
+        }
+        QueuedPrompts.Entry next = this.queue.settle();
+        if (next != null) {
+          this.deliver(next.turn(), next.prompt(), false, null);
         }
       });
     } else {
