@@ -92,6 +92,16 @@ public final class PullRequestWatcher {
     return state == null || !(state.isBusy() || state == ChatController.State.WAITING);
   }
 
+  /** Whether any of the threads that are not archived watches a pull request. */
+  public static boolean hasWatches(List<ThreadStore.Record> records) {
+    for (ThreadStore.Record record : records) {
+      if (record.watch != null && !record.archived) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   /** Ends the thread's watch. @return the number of the pull request it watched, or null when it watched none */
   public @Nullable String stop(String threadId) {
     synchronized (this.lock) {

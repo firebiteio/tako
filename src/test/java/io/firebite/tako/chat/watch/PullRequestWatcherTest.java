@@ -488,6 +488,18 @@ public class PullRequestWatcherTest {
   }
 
   @Test
+  public void onlyWatchesOfListedThreadsNeedTheToolWindowAtStartup() throws WatchException {
+    ThreadStore.Record record = this.thread();
+    assertFalse(PullRequestWatcher.hasWatches(this.store.all()));
+
+    this.watcher.start(record.id, null, false);
+    assertTrue(PullRequestWatcher.hasWatches(this.store.all()));
+
+    record.archived = true;
+    assertFalse(PullRequestWatcher.hasWatches(this.store.all()));
+  }
+
+  @Test
   public void brokenUrlInASaveEndsTheWatchQuietly() throws WatchException {
     ThreadStore.Record record = this.watched();
     record.watch.url = "nonsense";
