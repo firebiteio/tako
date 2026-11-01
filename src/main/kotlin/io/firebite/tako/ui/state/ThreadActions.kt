@@ -35,21 +35,11 @@ fun Workspace.threadActions(thread: ThreadState): List<ThreadAction> {
 
 /** Whether a snooze hides the thread from the list: its own or one of its parents'. */
 fun Workspace.isHidden(thread: ThreadState): Boolean =
-  isSnoozeHidden(thread, { child -> child.parentId?.let { this.threads[it] } }, { it.snoozedUntil > 0 }, { it.archived })
+  isSnoozeHidden(thread, this::parentOf, { it.snoozedUntil > 0 }, { it.archived })
 
 /** Whether the thread or a sub thread under it waits for an answer, which a snooze would hide. */
 fun Workspace.waitsForAnswer(thread: ThreadState): Boolean = this.threads.values.any { waiting ->
-  waiting.approvals.isNotEmpty() && this.isWithin(waiting, thread)
+  waiting.approvals.isNotEmpty() && lineage(waiting, this::parentOf).any { it === thread }
 }
 
-private fun Workspace.isWithin(thread: ThreadState, ancestor: ThreadState): Boolean {
-  val seen = HashSet<ThreadState>()
-  var current: ThreadState? = thread
-  while (current != null && seen.add(current)) {
-    if (current === ancestor) {
-      return true
-    }
-    current = current.parentId?.let { this.threads[it] }
-  }
-  return false
-}
+private fun Workspace.parentOf(thread: ThreadState): ThreadState? = thread.parentId?.let { this.threads[it] }

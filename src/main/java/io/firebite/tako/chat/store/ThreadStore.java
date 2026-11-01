@@ -86,16 +86,10 @@ public final class ThreadStore {
    * missing ends the walk, as the list no longer nests the thread under it. An archived thread is never hidden.
    */
   public synchronized boolean isSnoozeHidden(Record record) {
-    if (record.archived) {
-      return false;
-    }
-    Set<String> seen = new HashSet<>();
-    Record current = record;
-    while (current != null && !current.archived && seen.add(current.id)) {
-      if (current.snoozedUntil > 0) {
+    for (Record listed : this.listedLineage(record)) {
+      if (listed.snoozedUntil > 0) {
         return true;
       }
-      current = this.find(current.parentId);
     }
     return false;
   }
@@ -103,16 +97,25 @@ public final class ThreadStore {
   /** Ends the snooze of the thread and of its parents, so the list shows it. Returns the threads it changed. */
   public synchronized List<Record> wakeWithAncestors(Record record) {
     List<Record> woken = new ArrayList<>();
+    for (Record listed : this.listedLineage(record)) {
+      if (listed.snoozedUntil > 0) {
+        listed.snoozedUntil = 0;
+        woken.add(listed);
+      }
+    }
+    return woken;
+  }
+
+  /** The thread and its parents up to the first archived or missing one, which the list no longer nests under. */
+  private List<Record> listedLineage(Record record) {
+    List<Record> lineage = new ArrayList<>();
     Set<String> seen = new HashSet<>();
     Record current = record;
     while (current != null && !current.archived && seen.add(current.id)) {
-      if (current.snoozedUntil > 0) {
-        current.snoozedUntil = 0;
-        woken.add(current);
-      }
+      lineage.add(current);
       current = this.find(current.parentId);
     }
-    return woken;
+    return lineage;
   }
 
   /** Whether the thread is a run of a parallel-run bench. */
