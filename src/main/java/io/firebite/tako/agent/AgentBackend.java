@@ -36,6 +36,18 @@ public interface AgentBackend {
     throw new UnsupportedOperationException(this.displayName() + " cannot fork sessions");
   }
 
+  /**
+   * Makes the session forget its prompts after the first {@code prompts.size() - 1}, for agents whose
+   * {@link AgentInfo.Capabilities#rewind()} is set. The thread's own agent must not run. Changes nothing when the
+   * session's prompts do not start with {@code prompts}. Reads and writes files or starts the agent.
+   *
+   * @param prompts the typed texts of the prompts to keep, then of the first one to forget
+   * @return the session the thread continues
+   */
+  default String rewind(String projectPath, String sessionId, List<String> prompts) throws AgentException {
+    throw new UnsupportedOperationException(this.displayName() + " cannot rewind sessions");
+  }
+
   /** Whether the session's prompts or answers contain {@code query}, ignoring case. False when unknown. May read files. */
   default boolean sessionMentions(String projectPath, String sessionId, String query) {
     return false;

@@ -6,10 +6,13 @@ import java.io.BufferedReader;
 import java.io.IOException;
 import java.io.InputStreamReader;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 
 /**
  * Stands in for {@code codex app-server}. It answers the handshake, starts or resumes its one thread, then plays one
- * turn that streams a message and asks to run a command, echoing the decision it got.
+ * turn that streams a message and asks to run a command, echoing the decision it got. It also lists a fixed history of
+ * turns and reverts them.
  */
 public final class FakeCodex {
   private static final String THREAD = "019a0000-0000-7000-8000-000000000001";
@@ -35,10 +38,46 @@ public final class FakeCodex {
         case "thread/start", "thread/resume" -> respond(id, "{\"thread\":{\"id\":\"" + THREAD + "\",\"turns\":[]},"
           + "\"model\":\"gpt-x\",\"cwd\":\"/work\",\"reasoningEffort\":\"low\"}");
         case "turn/start" -> turn(id, reader);
+        case "thread/turns/list" -> turns(id, message.getAsJsonObject("params"));
+        case "thread/revert" -> revert(id, message.getAsJsonObject("params"));
         default -> {
         }
       }
     }
+  }
+
+  /**
+   * Two pages of turns: "first"; one without a user message; "second" with the follow-up "steer" in the same turn;
+   * "third".
+   */
+  private static void turns(String id, JsonObject params) {
+    if (!params.has("cursor")) {
+      respond(id, "{\"data\":[" + turn("t1", userMessage("first")) + "," + turn("t2",
+        "{\"type\":\"commandExecution\",\"id\":\"c\",\"command\":\"ls\"}") + "],\"nextCursor\":\"page2\"}");
+      return;
+    }
+    respond(id, "{\"data\":[" + turn("t3", userMessage("second") + "," + userMessage("steer")) + ","
+      + turn("t4", userMessage("third")) + "],\"nextCursor\":null}");
+  }
+
+  /** Writes the turn it reverts to before into the file {@code FAKE_CODEX_LOG} names, or fails as told. */
+  private static void revert(String id, JsonObject params) throws IOException {
+    if ("fail".equals(System.getenv("FAKE_CODEX_REVERT"))) {
+      emit("{\"id\":" + id + ",\"error\":{\"code\":-32600,\"message\":\"thread uses legacy history\"}}");
+      return;
+    }
+    Files.writeString(Path.of(System.getenv("FAKE_CODEX_LOG")), params.get("beforeTurnId").getAsString(),
+      StandardCharsets.UTF_8);
+    respond(id, "{\"thread\":{\"id\":\"" + THREAD + "\",\"turns\":[]}}");
+  }
+
+  private static String turn(String turnId, String items) {
+    return "{\"id\":\"" + turnId + "\",\"status\":\"completed\",\"items\":[" + items + "]}";
+  }
+
+  private static String userMessage(String text) {
+    return "{\"type\":\"userMessage\",\"id\":\"u-" + text + "\",\"content\":[{\"type\":\"text\",\"text\":\"" + text
+      + "\"}]}";
   }
 
   private static void turn(String id, BufferedReader reader) throws IOException {

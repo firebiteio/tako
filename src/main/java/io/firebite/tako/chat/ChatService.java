@@ -37,6 +37,7 @@ import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
+import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
@@ -597,7 +598,14 @@ public final class ChatService implements Disposable {
   void closeAll(List<String> ids) {
     String activeId = this.store.activeId();
     for (String id : ids) {
-      if (this.store.find(id) != null) {
+      ThreadStore.Record record = this.store.find(id);
+      if (record != null) {
+        // Checkpoint refs are shared with the thread's worktree, so its project folder still reaches them once a bench
+        // removed the worktree.
+        String folder = this.folderOf(record);
+        if (!folder.isEmpty()) {
+          Async.inBackground(() -> Checkpoints.forget(Path.of(folder), id, 0, EnvironmentUtil.getEnvironmentMap()));
+        }
         this.disposeController(id);
         this.withdrawTools(id);
         this.store.remove(id);

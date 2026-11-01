@@ -1,12 +1,16 @@
 package io.firebite.tako.chat.thread;
 
 import com.intellij.openapi.Disposable;
+import com.intellij.openapi.application.ApplicationManager;
+import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
+import com.intellij.openapi.vfs.VfsUtil;
 import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.EnvironmentUtil;
 import com.intellij.util.concurrency.AppExecutorUtil;
@@ -37,13 +41,16 @@ import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.context.PromptComposer;
 import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
+import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.FileIndex;
 import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
+import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.awt.Image;
 import java.awt.datatransfer.DataFlavor;
+import java.io.File;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -54,7 +61,11 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jetbrains.annotations.Nullable;
 
@@ -67,6 +78,8 @@ public final class ChatController implements Disposable {
   private static final long PULL_REQUEST_INTERVAL_MILLIS = 120_000;
   private static final String PASTED_IMAGE_NAME = "pasted-image.png";
   private static final int SCRATCHPAD_FILES = 50;
+  /** How long a snapshot or restore waits for the editors to be saved, which a modal dialog holds up. */
+  private static final long SAVE_TIMEOUT_SECONDS = 2;
 
   private final Project project;
   private final ChatView view;
@@ -86,6 +99,12 @@ public final class ChatController implements Disposable {
   private CompletableFuture<Void> held = CompletableFuture.completedFuture(null);
   /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
   private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
+  /** Sends prompts one at a time, in the order the chat sent them. */
+  private final ExecutorService sender = AppExecutorUtil.createBoundedApplicationPoolExecutor("Tako Send", 1);
+  /** Guards starting a rewind. */
+  private final Object rewindLock = new Object();
+  /** Prompts {@link #submit} holds back until the running rewind is done. */
+  private final AtomicInteger deferredSubmits = new AtomicInteger();
 
   /** Guards waking {@link #awaitSettled} waiters on each change of {@link #state}. */
   private final Object stateLock = new Object();
@@ -100,6 +119,12 @@ public final class ChatController implements Disposable {
   private volatile boolean isTitled;
   /** Set by {@link #restartSession} until the next launch, whose session's past the chat already shows. */
   private volatile boolean keepsTimeline;
+  /** Done unless a {@link #rewind} runs. */
+  private volatile CompletableFuture<Void> rewinding = CompletableFuture.completedFuture(null);
+  /** Whether the running agent's sessions can be rewound, so prompts get file checkpoints. */
+  private volatile boolean canRewind;
+  /** The agent works on a turn, so the files may be half changed. */
+  private volatile boolean turnRunning;
 
   public ChatController(Project project, ChatView view, ChatHost host, ThreadStore.Record record,
     AgentBackend backend) {
@@ -157,10 +182,29 @@ public final class ChatController implements Disposable {
     });
   }
 
-  /** Sends {@code prompt} as if typed. The thread counts as working from now on, so a waiter never sees it idle first. */
+  /**
+   * Sends {@code prompt} as if typed. The thread counts as working from now on, so a waiter never sees it idle first.
+   * During a rewind it is sent once the rewind is done.
+   */
   public void submit(String prompt) {
     this.setState(State.WORKING);
     this.error = null;
+    CompletableFuture<Void> rewind;
+    boolean isDeferred;
+    synchronized (this.rewindLock) {
+      rewind = this.rewinding;
+      isDeferred = !rewind.isDone();
+      if (isDeferred) {
+        this.deferredSubmits.incrementAndGet();
+      }
+    }
+    if (isDeferred) {
+      rewind.whenComplete((done, failure) -> {
+        this.deferredSubmits.decrementAndGet();
+        this.submit(prompt);
+      });
+      return;
+    }
     this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of()));
   }
 
@@ -201,7 +245,10 @@ public final class ChatController implements Disposable {
 
   /** Starts the agent again, e.g. after its process ended. */
   public void restart() {
-    Async.inBackground(() -> this.launch(this.record.sessionId));
+    Async.inBackground(() -> {
+      this.rewinding.join();
+      this.launch(this.record.sessionId);
+    });
   }
 
   /**
@@ -213,6 +260,7 @@ public final class ChatController implements Disposable {
       return;
     }
     Async.inBackground(() -> {
+      this.rewinding.join();
       if (this.state != State.IDLE) {
         return;
       }
@@ -435,12 +483,13 @@ public final class ChatController implements Disposable {
         return;
       }
       this.hasTools = launch.toolsUrl() != null && session.takesTools();
+      this.canRewind = info.capabilities().rewind();
       String prompt = this.firstPrompt.getAndSet(null);
       this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
       if (prompt != null) {
         this.submit(prompt);
-      } else if (!forPrompt) {
+      } else if (!forPrompt && this.deferredSubmits.get() == 0) {
         this.setState(State.IDLE);
       }
     });
@@ -449,9 +498,10 @@ public final class ChatController implements Disposable {
   /**
    * Sends a prompt, starting the agent if it is not running.
    *
-   * @param turn the chat's number for this prompt's turn, which {@link #showTurnDiff} names later
+   * @param turn    the chat's number for this prompt's turn, which {@link #showTurnDiff} names later
+   * @param prompts how many prompts the session got before this one, which names its file checkpoint
    */
-  public void send(String text, List<ContextItem> context, List<ImageAttachment> attached, int turn) {
+  public void send(String text, List<ContextItem> context, List<ImageAttachment> attached, int turn, int prompts) {
     List<ImageAttachment> images = new ArrayList<>();
     for (ImageAttachment image : attached) {
       if (image.isValid()) {
@@ -466,26 +516,28 @@ public final class ChatController implements Disposable {
       String prompt = this.record.workPath != null && folder != null
         ? PromptComposer.rebase(composed, folder, this.record.workPath)
         : composed;
-      Async.inBackground(() -> this.sendPrompt(text, prompt, images, turn));
+      this.sender.execute(() -> this.sendPrompt(text, prompt, images, turn, prompts));
     });
   }
 
-  private void sendPrompt(String typed, String prompt, List<ImageAttachment> images, int turn) {
+  /** Runs on {@link #sender}, so a prompt waits for the one before it, and for a rewind. */
+  private void sendPrompt(String typed, String prompt, List<ImageAttachment> images, int turn, int prompts) {
     this.opened.join();
+    this.rewinding.join();
     AgentSession session = this.connection.live();
     if (session == null) {
-      this.launch(this.record.sessionId, true).whenComplete((ready, error) -> this.promptStarted(typed, prompt, images,
-        turn));
+      this.launch(this.record.sessionId, true).handle((ready, error) -> null).join();
+      this.promptStarted(typed, prompt, images, turn, prompts);
       return;
     }
-    this.prompt(session, typed, prompt, images, turn);
+    this.prompt(session, typed, prompt, images, turn, prompts);
   }
 
   /** Sends the prompt to the agent it launched, once that is ready, unless it did not start. */
-  private void promptStarted(String typed, String prompt, List<ImageAttachment> images, int turn) {
+  private void promptStarted(String typed, String prompt, List<ImageAttachment> images, int turn, int prompts) {
     AgentSession session = this.connection.live();
     if (session != null && this.state != State.STOPPED) {
-      this.prompt(session, typed, prompt, images, turn);
+      this.prompt(session, typed, prompt, images, turn, prompts);
     }
   }
 
@@ -494,7 +546,13 @@ public final class ChatController implements Disposable {
    * files while they are committed. The thread counts as working first, so an action that has not checked yet stops.
    * Held prompts go out in order, off the calling thread, which may be the agent's own.
    */
-  private void prompt(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn) {
+  private void prompt(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn,
+    int prompts) {
+    boolean holdsNone;
+    synchronized (this.heldLock) {
+      holdsNone = this.held.isDone();
+    }
+    this.checkpoint(prompts, typed, holdsNone && !this.turnRunning && this.untakenTurns.isEmpty());
     this.setState(State.WORKING);
     String folder = this.gitFolder();
     synchronized (this.heldLock) {
@@ -578,6 +636,219 @@ public final class ChatController implements Disposable {
       Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews,
         preview -> ReviewTarget.turn(this.record.id, IdeFiles.absolute(this.project, preview.filePath()))));
     });
+  }
+
+  /**
+   * Snapshots the files for the prompt about to be sent, when the agent is idle. A prompt sent during a turn gets no
+   * snapshot, since the turn may have half changed the files, and older ones of its number and later go.
+   */
+  private void checkpoint(int prompts, String typed, boolean idle) {
+    String folder = this.projectPath();
+    if (!this.canRewind || folder == null || prompts < 0 || this.isDisposed) {
+      return;
+    }
+    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+    if (!idle) {
+      Checkpoints.forget(Path.of(folder), this.record.id, prompts, environment);
+      return;
+    }
+    try {
+      this.saveDocuments();
+      Checkpoints.capture(Path.of(folder), this.record.id, prompts, typed, environment);
+    } catch (Worktrees.GitException e) {
+      LOG.debug("No file checkpoint for thread " + this.record.id, e);
+    }
+  }
+
+  /** Whether the files can go back to when the prompt after the first {@code prompts} was sent. Runs git. */
+  public boolean hasCheckpoint(int prompts, String prompt) {
+    String folder = this.projectPath();
+    return folder != null
+      && Checkpoints.find(Path.of(folder), this.record.id, prompts, prompt,
+        EnvironmentUtil.getEnvironmentMap()) != null;
+  }
+
+  /**
+   * Makes the agent forget the last of {@code prompts} and everything after it, and with {@code files} puts the
+   * files back to when that prompt was sent. Only while the agent is idle or stopped. Posts one
+   * {@link ChatMessage.Rewound} when done; the chat's timeline is replayed from the rewound session before.
+   *
+   * @param prompts the typed texts of the session's prompts up to and including the first one to forget
+   */
+  public void rewind(List<String> prompts, boolean files) {
+    CompletableFuture<Void> done = new CompletableFuture<>();
+    synchronized (this.rewindLock) {
+      boolean idle = this.state == State.IDLE || this.state == State.STOPPED;
+      if (!this.rewinding.isDone() || !idle || prompts.isEmpty() || this.isDisposed) {
+        this.view.post(new ChatMessage.Rewound(false, this.isDisposed || prompts.isEmpty()
+          ? null
+          : TakoBundle.message("error.rewind.busy")));
+        return;
+      }
+      this.rewinding = done;
+    }
+    Async.inBackground(() -> {
+      ChatMessage.Rewound result = new ChatMessage.Rewound(false, null);
+      try {
+        result = this.rewindNow(prompts, files);
+      } catch (RuntimeException e) {
+        LOG.warn("Could not rewind thread " + this.record.id, e);
+        result = new ChatMessage.Rewound(false, Objects.toString(e.getMessage(), e.toString()));
+      } finally {
+        this.view.post(result);
+        done.complete(null);
+      }
+    });
+  }
+
+  /**
+   * Why the files in the folder must not be put back now: a git action or another thread's agent works in its
+   * repository. Null when nothing does. Runs git.
+   */
+  private @Nullable String filesBlocker(String folder, Map<String, String> environment) {
+    if (ThreadGit.hasActions(Path.of(folder))) {
+      return TakoBundle.message("git.failed.running");
+    }
+    String topLevel = GitCommands.topLevel(Path.of(folder), environment);
+    String other = topLevel == null ? null : this.host.busyThreadIn(topLevel);
+    return other == null ? null : TakoBundle.message("error.rewind.folder.busy", other);
+  }
+
+  private ChatMessage.Rewound rewindNow(List<String> prompts, boolean files) {
+    int kept = prompts.size() - 1;
+    String folder = this.projectPath();
+    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+    String commit = null;
+    if (files) {
+      commit = folder == null
+        ? null
+        : Checkpoints.find(Path.of(folder), this.record.id, kept, prompts.getLast(), environment);
+      if (commit == null) {
+        return new ChatMessage.Rewound(false, TakoBundle.message("error.rewind.no.checkpoint"));
+      }
+      String blocker = this.filesBlocker(folder, environment);
+      if (blocker != null) {
+        return new ChatMessage.Rewound(false, blocker);
+      }
+    }
+    this.setState(State.STARTING);
+    this.connection.stop();
+    if (this.isDisposed) {
+      return new ChatMessage.Rewound(false, null);
+    }
+    String sessionId = this.record.sessionId;
+    String rewound = null;
+    if (kept > 0) {
+      try {
+        if (folder == null || sessionId == null) {
+          throw new AgentException(TakoBundle.message("error.rewind.mismatch"));
+        }
+        rewound = this.backend.rewind(folder, sessionId, prompts);
+      } catch (AgentException e) {
+        this.keepsTimeline = true;
+        this.stopped(null);
+        this.view.post(new ChatMessage.Exit(0, ""));
+        return new ChatMessage.Rewound(false, e.getMessage());
+      }
+    }
+    if (this.isDisposed) {
+      return new ChatMessage.Rewound(false, null);
+    }
+    this.record.sessionId = rewound;
+    this.recordChanged();
+    this.changes.clear();
+    synchronized (this.answer) {
+      this.answer.setLength(0);
+    }
+    this.keepsTimeline = false;
+    this.turnRunning = false;
+    String filesError = null;
+    if (commit != null) {
+      try {
+        this.setState(State.WORKING);
+        String blocker = this.filesBlocker(folder, environment);
+        if (blocker != null) {
+          throw new Worktrees.GitException(blocker);
+        }
+        this.restoreFiles(folder, commit, environment);
+      } catch (Worktrees.GitException | RuntimeException e) {
+        filesError = TakoBundle.message("error.rewind.files", Objects.toString(e.getMessage(), e.toString()));
+      }
+    }
+    if (folder != null) {
+      Checkpoints.forget(Path.of(folder), this.record.id, kept + 1, environment);
+    }
+    rewound = this.replayRewound(rewound, folder);
+    if (this.isDisposed) {
+      return new ChatMessage.Rewound(true, filesError);
+    }
+    this.launch(rewound, this.deferredSubmits.get() > 0).handle((ready, error) -> null).join();
+    if (this.isDisposed) {
+      this.connection.stop();
+    }
+    return new ChatMessage.Rewound(true, filesError);
+  }
+
+  /**
+   * Shows the rewound session's past, or none for a new session. An agent that sends its history after it started
+   * fills the emptied timeline then.
+   *
+   * @return the session to resume, null when it is gone
+   */
+  private @Nullable String replayRewound(@Nullable String sessionId, @Nullable String folder) {
+    if (sessionId == null || folder == null) {
+      this.replay(List.of());
+      return null;
+    }
+    switch (this.backend.history(folder, sessionId)) {
+      case AgentHistory.Loaded loaded -> this.replay(loaded.events());
+      case AgentHistory.FromSession fromSession -> this.replay(List.of());
+      case AgentHistory.Missing missing -> {
+        this.replay(List.of());
+        this.record.sessionId = null;
+        this.recordChanged();
+        return null;
+      }
+    }
+    return sessionId;
+  }
+
+  /**
+   * Writes unsaved editor changes to disk, so a snapshot or restore sees what the person sees. Waits for the EDT at
+   * most {@link #SAVE_TIMEOUT_SECONDS}, then goes on with what is on disk.
+   */
+  private void saveDocuments() {
+    CompletableFuture<Void> saved = new CompletableFuture<>();
+    ApplicationManager.getApplication().invokeLater(() -> {
+      FileDocumentManager.getInstance().saveAllDocuments();
+      saved.complete(null);
+    }, ModalityState.defaultModalityState());
+    try {
+      saved.get(SAVE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    } catch (TimeoutException | ExecutionException e) {
+      LOG.debug("Editors not saved, e.g. while a dialog is open", e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
+  }
+
+  /** Saves the editors, puts the files back and lets the IDE see the changed ones. */
+  private void restoreFiles(String folder, String commit, Map<String, String> environment)
+    throws Worktrees.GitException {
+    this.saveDocuments();
+    List<File> refreshed = new ArrayList<>();
+    for (Path path : Checkpoints.restore(Path.of(folder), this.record.id, commit, environment)) {
+      Path existing = path;
+      while (existing != null && !Files.exists(existing)) {
+        existing = existing.getParent();
+      }
+      if (existing != null) {
+        refreshed.add(existing.toFile());
+      }
+    }
+    if (!refreshed.isEmpty()) {
+      VfsUtil.markDirtyAndRefresh(true, false, true, refreshed.toArray(new File[0]));
+    }
   }
 
   /** Attaches the clipboard's image, if it holds one. Must run on the EDT. */
@@ -701,7 +972,10 @@ public final class ChatController implements Disposable {
         }
         this.scratchpadPath = started.scratchpadPath();
       }
-      case AgentEvent.Busy busy -> this.setState(State.WORKING);
+      case AgentEvent.Busy busy -> {
+        this.turnRunning = true;
+        this.setState(State.WORKING);
+      }
       case AgentEvent.PermissionCancelled cancelled -> this.setState(State.WORKING);
       case AgentEvent.Text text -> {
         if (text.parentId() == null && !text.text().isBlank()) {
@@ -723,6 +997,9 @@ public final class ChatController implements Disposable {
 
   /** A prompt that joins the running turn keeps its changes and answer under that turn. */
   private void onPromptTaken(AgentEvent.PromptTaken taken) {
+    if (taken.startsTurn()) {
+      this.turnRunning = true;
+    }
     this.untakenTurns.remove(taken.key());
     this.conversation.take(taken.key());
     if (taken.startsTurn()) {
@@ -735,6 +1012,7 @@ public final class ChatController implements Disposable {
 
   /** The thread stays working while prompts wait. */
   private void onTurnEnded(AgentEvent.TurnEnded ended) {
+    this.turnRunning = false;
     if (this.untakenTurns.isEmpty()) {
       this.setState(State.IDLE);
     }
@@ -763,6 +1041,7 @@ public final class ChatController implements Disposable {
   }
 
   private void stopped(@Nullable String error) {
+    this.turnRunning = false;
     this.untakenTurns.clear();
     this.setState(State.STOPPED);
     this.error = error;

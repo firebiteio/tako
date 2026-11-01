@@ -151,7 +151,8 @@ final class CodexTranslator {
     return minutes % 60 == 0 ? minutes / 60 + "h" : minutes + "m";
   }
 
-  private static @Nullable AgentEvent.Prompt prompt(JsonObject item) {
+  /** The prompt a {@code userMessage} item holds, null for one without text, which the history leaves out too. */
+  static @Nullable AgentEvent.Prompt prompt(JsonObject item) {
     StringBuilder text = new StringBuilder();
     for (JsonObject input : Json.objects(item, "content")) {
       if (TEXT.equals(Json.string(input, TYPE))) {

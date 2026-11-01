@@ -39,6 +39,9 @@ fun ThreadState.takeFeedback(): String {
 
 /** Sends what is typed; with the agent waiting, it answers the question or declines the approval instead. */
 fun ThreadState.submit() {
+  if (this.rewinding != null) {
+    return
+  }
   if (this.question != null) {
     this.advanceQuestion()
     return
@@ -73,7 +76,7 @@ fun ThreadState.submit() {
 /** Sends, then opens a new thread in the same folder. */
 fun ThreadState.submitAndBranch() {
   if (this.question != null || this.approvals.isNotEmpty()
-    || (this.typed.isEmpty() && this.images.isEmpty() && !hasReviews(this.contexts))) {
+    || (this.typed.isEmpty() && this.images.isEmpty() && !hasReviews(this.contexts)) || this.rewinding != null) {
     return
   }
   this.submit()
@@ -82,6 +85,9 @@ fun ThreadState.submitAndBranch() {
 
 /** Sends a command as if typed, e.g. `/compact`. */
 fun ThreadState.sendCommand(command: String) {
+  if (this.rewinding != null) {
+    return
+  }
   this.input.setTextAndPlaceCursorAtEnd(command)
   this.submit()
 }
@@ -150,7 +156,7 @@ private suspend fun <T> ThreadState.withStash(call: (PromptStash) -> T): T {
 }
 
 /** Puts a prompt back in the box: its context and images, and its text unless something new was typed. */
-private fun ThreadState.putBack(prompt: ChatMessage.Submit) {
+internal fun ThreadState.putBack(prompt: ChatMessage.Submit) {
   this.contexts.clear()
   this.contexts.addAll(prompt.context)
   this.images.clear()
