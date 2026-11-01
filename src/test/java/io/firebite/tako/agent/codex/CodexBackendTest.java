@@ -5,6 +5,8 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
+import com.google.gson.JsonArray;
+import com.google.gson.JsonObject;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentDefaults;
 import io.firebite.tako.agent.AgentException;
@@ -81,6 +83,52 @@ public class CodexBackendTest {
     CodexBackend backend = new CodexBackend("Z:/no/such/codex", AgentDefaults.NONE, Map.of("PATH", ""));
 
     assertThrows(AgentException.class, () -> backend.rewind(folder(), THREAD, List.of("first")));
+  }
+
+  @Test
+  public void anImageOnlyPromptMatchesWhenTheChatSentItAndIsSkippedWhenReplayed() throws Exception {
+    List<JsonObject> turns = List.of(
+      turn("t1", userMessage("look at this")),
+      turn("t2", imageMessage()),
+      turn("t3", userMessage("now fix it")));
+
+    assertEquals("live chat", "t3", CodexBackend.cutTurn(turns, List.of("look at this", "", "now fix it")));
+    assertEquals("replayed chat", "t3", CodexBackend.cutTurn(turns, List.of("look at this", "now fix it")));
+    assertEquals("t2", CodexBackend.cutTurn(turns, List.of("look at this", "")));
+    assertThrows(AgentException.class, () -> CodexBackend.cutTurn(turns, List.of()));
+    assertThrows(AgentException.class, () -> CodexBackend.cutTurn(turns, List.of("", "now fix it")));
+  }
+
+  private static JsonObject turn(String id, JsonObject item) {
+    JsonObject turn = new JsonObject();
+    turn.addProperty("id", id);
+    JsonArray items = new JsonArray();
+    items.add(item);
+    turn.add("items", items);
+    return turn;
+  }
+
+  private static JsonObject userMessage(String text) {
+    JsonObject input = new JsonObject();
+    input.addProperty("type", "text");
+    input.addProperty("text", text);
+    return message(input);
+  }
+
+  private static JsonObject imageMessage() {
+    JsonObject input = new JsonObject();
+    input.addProperty("type", "image");
+    input.addProperty("url", "data:image/png;base64,AAAA");
+    return message(input);
+  }
+
+  private static JsonObject message(JsonObject input) {
+    JsonArray content = new JsonArray();
+    content.add(input);
+    JsonObject item = new JsonObject();
+    item.addProperty("type", "userMessage");
+    item.add("content", content);
+    return item;
   }
 
   private static CodexBackend backend(Path log, boolean failsRevert) throws Exception {

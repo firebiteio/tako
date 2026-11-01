@@ -170,9 +170,16 @@ public final class ChatController implements Disposable {
   public void submit(String prompt) {
     this.setState(State.WORKING);
     this.error = null;
-    CompletableFuture<Void> rewind = this.rewinding;
-    if (!rewind.isDone()) {
-      this.deferredSubmits.incrementAndGet();
+    CompletableFuture<Void> rewind;
+    boolean isDeferred;
+    synchronized (this.rewindLock) {
+      rewind = this.rewinding;
+      isDeferred = !rewind.isDone();
+      if (isDeferred) {
+        this.deferredSubmits.incrementAndGet();
+      }
+    }
+    if (isDeferred) {
       rewind.whenComplete((done, failure) -> {
         this.deferredSubmits.decrementAndGet();
         this.submit(prompt);
@@ -534,7 +541,7 @@ public final class ChatController implements Disposable {
    */
   private void checkpoint(int prompts, String typed, boolean idle) {
     String folder = this.projectPath();
-    if (!this.canRewind || folder == null || prompts < 0) {
+    if (!this.canRewind || folder == null || prompts < 0 || this.isDisposed) {
       return;
     }
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
@@ -614,9 +621,9 @@ public final class ChatController implements Disposable {
     }
     String sessionId = this.record.sessionId;
     String rewound = null;
-    if (kept > 0 && sessionId != null) {
+    if (kept > 0) {
       try {
-        if (folder == null) {
+        if (folder == null || sessionId == null) {
           throw new AgentException(TakoBundle.message("error.rewind.mismatch"));
         }
         rewound = this.backend.rewind(folder, sessionId, prompts);
@@ -641,6 +648,9 @@ public final class ChatController implements Disposable {
     String filesError = null;
     if (commit != null) {
       try {
+        if (this.host.isFolderBusy(folder)) {
+          throw new Worktrees.GitException(TakoBundle.message("error.rewind.folder.busy"));
+        }
         this.restoreFiles(folder, commit, environment);
       } catch (Worktrees.GitException | RuntimeException e) {
         filesError = TakoBundle.message("error.rewind.files", Objects.toString(e.getMessage(), e.toString()));

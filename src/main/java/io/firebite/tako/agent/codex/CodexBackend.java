@@ -162,26 +162,37 @@ public final class CodexBackend implements AgentBackend {
   }
 
   /**
-   * The id of the turn whose user message is the last of {@code prompts}, counting user messages as the thread's
-   * history shows them. That message must open its turn, since a revert drops whole turns.
+   * The id of the turn whose user message is the last of {@code prompts}, matching user messages to {@code prompts} in
+   * order. A message without text, e.g. only an image, matches an empty prompt the chat sent live and is skipped
+   * otherwise, since a replayed thread does not show it. The cut message must open its turn, since a revert drops
+   * whole turns.
    *
    * @throws AgentException when the thread's prompts do not start with {@code prompts}
    */
   static String cutTurn(List<JsonObject> turns, List<String> prompts) throws AgentException {
-    List<String> seen = new ArrayList<>();
+    if (prompts.isEmpty()) {
+      throw new AgentException(TakoBundle.message("error.rewind.mismatch"));
+    }
+    int matched = 0;
     for (JsonObject turn : turns) {
       boolean opensTurn = true;
       for (JsonObject item : Json.objects(turn, "items")) {
-        AgentEvent.Prompt prompt = "userMessage".equals(Json.string(item, "type"))
-          ? CodexTranslator.prompt(item)
-          : null;
-        if (prompt == null) {
+        if (!"userMessage".equals(Json.string(item, "type"))) {
           continue;
         }
-        seen.add(prompt.text());
-        if (seen.size() == prompts.size()) {
+        AgentEvent.Prompt prompt = CodexTranslator.prompt(item);
+        String expected = prompts.get(matched);
+        if (prompt == null && !PromptText.normalize(expected).isEmpty()) {
+          opensTurn = false;
+          continue;
+        }
+        if (!PromptText.same(prompt == null ? "" : prompt.text(), expected)) {
+          throw new AgentException(TakoBundle.message("error.rewind.mismatch"));
+        }
+        matched++;
+        if (matched == prompts.size()) {
           String id = Json.string(turn, "id");
-          if (!opensTurn || id == null || !PromptText.startsWith(seen, prompts)) {
+          if (!opensTurn || id == null) {
             throw new AgentException(TakoBundle.message("error.rewind.mismatch"));
           }
           return id;
