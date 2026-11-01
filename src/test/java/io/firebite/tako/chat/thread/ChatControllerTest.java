@@ -502,16 +502,18 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
   public void testPromptDuringATurnWaitsAndGoesAfterIt() throws Exception {
     ChatMessage.Permission permission = this.startWaitingTurn();
-    assertEquals(QueuedPrompts.Action.HOLD, this.controller.send("fail", List.of(), List.of(), 2, 1,
+    assertEquals(QueuedPrompts.Action.HOLD, this.controller.send("write b.txt", List.of(), List.of(), 2, 1,
       QueuedPrompts.Delivery.QUEUE));
     assertEquals(ChatController.State.WAITING, this.controller.state());
 
     this.controller.answer(permission.requestId(), true, null, false, null, null);
     List<ChatMessage.ThreadMessage> posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
     assertFalse("the queued prompt waits for the turn's end", hasEvent(posts, new AgentEvent.PromptTaken(2, true)));
-    assertEquals(ChatController.State.WORKING, this.controller.state());
-    posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
+    assertNotSame("never idle between the turns", ChatController.State.IDLE, this.controller.state());
+    posts = this.postsUntil(ChatMessage.Permission.class);
     assertTrue(hasEvent(posts, new AgentEvent.PromptTaken(2, true)));
+    this.controller.answer(((ChatMessage.Permission) posts.getLast()).requestId(), true, null, false, null, null);
+    posts = this.postsUntilEvent(AgentEvent.TurnEnded.class);
     assertEquals(ChatController.State.IDLE, this.controller.awaitSettled(TIMEOUT_MILLIS));
     assertTrue(lastQueue(posts).items().isEmpty());
   }

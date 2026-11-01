@@ -213,9 +213,15 @@ public final class ChatController implements Disposable {
     this.view.post(new ChatMessage.Submit(prompt, List.of(), List.of()));
   }
 
-  /** Stops the running turn. The queued prompts wait until a prompt is sent. */
+  /**
+   * Stops the running turn. The queued prompts wait until a prompt is sent. When nothing is left running at once, e.g.
+   * a prompt that had not reached the agent, the chat ends its turn as stopped, since no turn's end will.
+   */
   public void interrupt() {
-    this.queue.stop();
+    if (this.queue.stop()) {
+      this.view.post(new ChatMessage.Event(new AgentEvent.Interrupted()));
+      this.view.post(new ChatMessage.Event(new AgentEvent.TurnEnded(null, null, null)));
+    }
     this.connection.ifLive(AgentSession::interrupt);
   }
 
@@ -626,7 +632,7 @@ public final class ChatController implements Disposable {
         return;
       }
     }
-    if (!this.queue.dispatch(turn)) {
+    if (!this.queue.dispatch(turn, steer)) {
       if (this.state == State.STARTING && !this.queue.isRunning()) {
         this.setState(State.IDLE);
       }
@@ -672,6 +678,12 @@ public final class ChatController implements Disposable {
     boolean steer) {
     this.error = null;
     this.conversation.send(turn, typed);
+    Async.onEdt(this.host::activity);
+    if (!this.isTitled && !typed.startsWith("/")) {
+      this.isTitled = true;
+      String title = titleOf(typed);
+      Async.onEdt(() -> this.host.setTitle(title));
+    }
     if (steer) {
       session.steer(prompt, images, turn).thenAccept(isTaken -> {
         if (!isTaken && session.isAlive() && this.queue.isSteering(turn)) {
@@ -682,12 +694,6 @@ public final class ChatController implements Disposable {
       session.prompt(prompt, images, turn);
     }
     this.queue.refresh();
-    Async.onEdt(this.host::activity);
-    if (!this.isTitled && !typed.startsWith("/")) {
-      this.isTitled = true;
-      String title = titleOf(typed);
-      Async.onEdt(() -> this.host.setTitle(title));
-    }
   }
 
   /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */

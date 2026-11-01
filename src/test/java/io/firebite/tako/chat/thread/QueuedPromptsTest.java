@@ -27,7 +27,7 @@ public class QueuedPromptsTest {
   /** A turn runs for prompt 1, which the agent took. */
   private void runTurn() {
     assertEquals(Action.SEND, this.queue.offer(1, prompt("first"), Delivery.QUEUE, true));
-    this.queue.dispatch(1);
+    this.queue.dispatch(1, false);
     this.queue.taken(1, true);
   }
 
@@ -58,8 +58,8 @@ public class QueuedPromptsTest {
     assertTrue(this.queue.isRunning());
     assertTrue(this.last().running());
     assertTrue(this.last().items().isEmpty());
-    assertTrue(this.queue.dispatch(1));
-    assertFalse("handed once", this.queue.dispatch(1));
+    assertTrue(this.queue.dispatch(1, false));
+    assertFalse("handed once", this.queue.dispatch(1, false));
   }
 
   @Test
@@ -108,7 +108,7 @@ public class QueuedPromptsTest {
 
     assertEquals("a new prompt goes first", Action.SEND, this.queue.offer(3, prompt("new"), Delivery.QUEUE, true));
     assertFalse(this.last().held());
-    this.queue.dispatch(3);
+    this.queue.dispatch(3, false);
     this.queue.taken(3, true);
     assertEquals("then the queue goes on", 2, this.queue.turnEnded(false).turn());
   }
@@ -183,7 +183,7 @@ public class QueuedPromptsTest {
     assertEquals(SendNow.SEND, this.queue.sendNow(3));
     assertTrue(this.queue.isRunning());
     assertFalse(this.last().held());
-    assertTrue(this.queue.dispatch(3));
+    assertTrue(this.queue.dispatch(3, false));
     this.queue.taken(3, true);
     assertEquals(2, this.queue.turnEnded(false).turn());
   }
@@ -208,7 +208,7 @@ public class QueuedPromptsTest {
     assertFalse("twice does nothing", this.queue.steer(3, true));
     assertEquals(List.of(3, 2), this.turns());
     assertTrue(this.queue.isSteering(3));
-    assertTrue(this.queue.dispatch(3));
+    assertTrue(this.queue.dispatch(3, true));
     assertFalse("a joining prompt during the turn settles nothing", this.queue.taken(3, false));
     assertFalse(this.queue.isSteering(3));
     assertEquals(2, this.queue.turnEnded(false).turn());
@@ -227,7 +227,7 @@ public class QueuedPromptsTest {
   @Test
   public void steerWithNothingRunningJustSends() {
     assertEquals(Action.SEND, this.queue.offer(1, prompt("a"), Delivery.STEER, true));
-    this.queue.dispatch(1);
+    this.queue.dispatch(1, false);
     this.queue.taken(1, true);
     this.queue.turnEnded(false);
     assertFalse(this.queue.isRunning());
@@ -239,7 +239,7 @@ public class QueuedPromptsTest {
     this.runTurn();
     this.queue.offer(2, prompt("steer"), Delivery.STEER, true);
     this.queue.offer(3, prompt("later"), Delivery.QUEUE, true);
-    this.queue.dispatch(2);
+    this.queue.dispatch(2, true);
     assertNull(this.queue.turnEnded(false));
     assertTrue(this.queue.taken(2, false));
     assertEquals(3, this.queue.settle().turn());
@@ -255,17 +255,31 @@ public class QueuedPromptsTest {
   }
 
   @Test
-  public void stoppedTurnBringsUntakenPromptsBackHeld() {
+  public void stoppedTurnHoldsWhatTheAgentDoesNotHaveYet() {
     this.runTurn();
-    this.queue.offer(2, prompt("steer"), Delivery.STEER, true);
-    this.queue.dispatch(2);
+    this.queue.offer(2, prompt("handed"), Delivery.STEER, true);
+    this.queue.offer(3, prompt("not handed"), Delivery.STEER, true);
+    this.queue.dispatch(2, true);
     this.queue.stop();
     assertNull(this.queue.turnEnded(false));
-    assertEquals(Status.HELD, this.status(2));
-    assertFalse(this.queue.isRunning());
-    assertFalse("a held prompt is handed only once it is sent again", this.queue.dispatch(2));
+    assertEquals("the agent has it and can't give it back", Status.STEERING, this.status(2));
+    assertEquals(Status.HELD, this.status(3));
+    assertTrue("it still owes a turn for the handed one", this.queue.isRunning());
+    assertFalse("a held prompt is handed only once it is sent again", this.queue.dispatch(3, true));
     this.queue.taken(2, true);
-    assertTrue("the agent ran it anyway: it leaves the queue", this.last().items().isEmpty());
+    assertEquals(List.of(3), this.turns());
+  }
+
+  @Test
+  public void stopAfterAStoppedTurnStopsWaitingForAPromptTheAgentDropped() {
+    this.runTurn();
+    this.queue.offer(2, prompt("handed"), Delivery.STEER, true);
+    this.queue.dispatch(2, true);
+    this.queue.stop();
+    this.queue.turnEnded(false);
+    assertTrue(this.queue.stop());
+    assertFalse(this.queue.isRunning());
+    assertEquals(Status.HELD, this.status(2));
   }
 
   @Test
@@ -273,28 +287,63 @@ public class QueuedPromptsTest {
     this.runTurn();
     this.queue.offer(2, prompt("second"), Delivery.QUEUE, true);
     assertEquals(2, this.queue.turnEnded(false).turn());
-    this.queue.stop();
+    assertTrue(this.queue.stop());
     assertFalse(this.queue.isRunning());
     assertEquals(Status.HELD, this.status(2));
     assertTrue(this.last().held());
-    assertFalse("a delivery still on its way is dropped", this.queue.dispatch(2));
+    assertFalse("a delivery still on its way is dropped", this.queue.dispatch(2, false));
+  }
+
+  @Test
+  public void stopBeforeTheAgentHasThePromptDropsIt() {
+    assertEquals(Action.SEND, this.queue.offer(1, prompt("first"), Delivery.QUEUE, true));
+    assertTrue(this.queue.stop());
+    assertFalse(this.queue.isRunning());
+    assertFalse("the launch that follows sends nothing", this.queue.dispatch(1, false));
+    assertTrue(this.last().items().isEmpty());
   }
 
   @Test
   public void secondStopSettlesATurnThatNeverEnds() {
     this.runTurn();
-    this.queue.stop();
+    assertFalse(this.queue.stop());
     assertTrue(this.queue.isRunning());
-    this.queue.stop();
+    assertTrue(this.queue.stop());
     assertFalse(this.queue.isRunning());
     assertNull("the late end changes nothing", this.queue.turnEnded(false));
   }
 
   @Test
+  public void stopWithNothingRunningSettlesNothing() {
+    assertFalse(this.queue.stop());
+    assertFalse(this.queue.isRunning());
+  }
+
+  @Test
   public void agentBusyOnItsOwnMakesPromptsQueue() {
     this.queue.busy();
+    int changes = this.snapshots.size();
+    this.queue.busy();
+    assertEquals("a busy agent that stays busy tells nothing", changes, this.snapshots.size());
     assertEquals(Action.HOLD, this.queue.offer(1, prompt("a"), Delivery.QUEUE, true));
     assertEquals(1, this.queue.turnEnded(false).turn());
+  }
+
+  @Test
+  public void interruptedOutsideATurnDoesNotStopTheNext() {
+    this.queue.interrupted();
+    this.runTurn();
+    this.queue.offer(2, prompt("second"), Delivery.QUEUE, true);
+    assertEquals(Status.HELD, this.status(2));
+    assertEquals(2, this.queue.turnEnded(false).turn());
+  }
+
+  @Test
+  public void dispatchHandsAPromptOnlyTheWayItIsMeantToGo() {
+    this.runTurn();
+    this.queue.offer(2, prompt("steer"), Delivery.STEER, true);
+    assertFalse(this.queue.dispatch(2, false));
+    assertTrue(this.queue.dispatch(2, true));
   }
 
   @Test
@@ -367,7 +416,7 @@ public class QueuedPromptsTest {
     this.queue.stop();
     this.queue.stopped();
     assertNull(this.queue.turnEnded(false));
-    assertFalse(this.queue.dispatch(4));
+    assertFalse(this.queue.dispatch(4, false));
     assertEquals("a closed queue tells nothing", changes, this.snapshots.size());
     assertTrue(this.queue.drain().isEmpty());
   }

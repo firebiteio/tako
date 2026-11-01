@@ -399,7 +399,7 @@ private fun QueuedMeta(thread: ThreadState, queued: QueuedPrompt) {
     }
     if (thread.busy) {
       TextAction(t("queue.send.now"), t("queue.send.now.tip")) { thread.sendQueuedNow(queued) }
-      if (thread.canSteer && !queued.prompt.text.trimStart().startsWith("/")) {
+      if (thread.canSteer && QueuedPrompts.isSteerable(queued.prompt.text)) {
         TextAction(t("queue.steer"), t("queue.steer.tip")) { thread.steerQueued(queued) }
       }
     } else {

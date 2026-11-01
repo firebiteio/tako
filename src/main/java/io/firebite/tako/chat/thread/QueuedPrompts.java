@@ -63,7 +63,7 @@ public final class QueuedPrompts {
 
   /** The agent works, on a prompt or on its own. */
   public synchronized void busy() {
-    if (this.isClosed) {
+    if (this.isClosed || (this.isRunning && this.isTurnOpen)) {
       return;
     }
     this.isRunning = true;
@@ -73,16 +73,21 @@ public final class QueuedPrompts {
 
   /** The agent says it stopped the running turn. */
   public synchronized void interrupted() {
-    this.wasInterrupted = true;
+    if (this.isTurnOpen) {
+      this.wasInterrupted = true;
+    }
   }
 
   /**
    * The person stops the agent: the queue holds, and prompts that were to go next wait too. A second stop before the
-   * turn ended, or a stop between turns while a prompt is on its way, settles the turn at once.
+   * turn ended, or a stop between turns while a prompt is on its way, settles at once: prompts on their way are held
+   * again, and the one sent at once is dropped.
+   *
+   * @return true when it settled at once, so no turn's end will tell the chat
    */
-  public synchronized void stop() {
+  public synchronized boolean stop() {
     if (this.isClosed) {
-      return;
+      return false;
     }
     this.isHeld = true;
     for (Entry entry : this.entries) {
@@ -92,17 +97,19 @@ public final class QueuedPrompts {
     }
     if (this.isRunning && (!this.isTurnOpen || this.isStopRequested)) {
       this.endStopped();
-      return;
+      return true;
     }
     if (this.isTurnOpen) {
       this.isStopRequested = true;
     }
     this.changed();
+    return false;
   }
 
   /**
-   * The running turn ended. After a stop or an error, prompts on their way that the agent did not take come back held,
-   * and so does the queue unless a prompt is to go next.
+   * The running turn ended. After a stop or an error, prompts on their way that were not handed to the agent yet come
+   * back held, and so does the queue unless a prompt is to go next. Prompts the agent already has stay on their way:
+   * it may still take them, and it can't give them back.
    *
    * @return the prompt to send now, marked {@link Status#SENDING}, or null
    */
@@ -117,7 +124,8 @@ public final class QueuedPrompts {
     if (stopped || failed) {
       boolean hasNext = false;
       for (Entry entry : this.entries) {
-        if (entry.isShown && (entry.status == Status.SENDING || entry.status == Status.STEERING)) {
+        if (entry.isShown && !entry.isDispatched
+          && (entry.status == Status.SENDING || entry.status == Status.STEERING)) {
           entry.status = Status.HELD;
           entry.isDispatched = false;
         }
@@ -211,10 +219,10 @@ public final class QueuedPrompts {
   }
 
   /** Whether the prompt is still to be handed to the agent. Marks it handed. Call right before handing it. */
-  public synchronized boolean dispatch(int turn) {
+  public synchronized boolean dispatch(int turn, boolean steer) {
     Entry entry = this.find(turn);
     if (this.isClosed || entry == null || entry.isDispatched
-      || (entry.status != Status.SENDING && entry.status != Status.STEERING)) {
+      || entry.status != (steer ? Status.STEERING : Status.SENDING)) {
       return false;
     }
     entry.isDispatched = true;
@@ -382,9 +390,13 @@ public final class QueuedPrompts {
     this.listener.changed(this.snapshot());
   }
 
-  /** Agents run slash commands only as a prompt of their own. */
   private static boolean steerable(ChatMessage.Submit prompt) {
-    return !prompt.text().stripLeading().startsWith("/");
+    return isSteerable(prompt.text());
+  }
+
+  /** Agents run slash commands only as a prompt of their own, so those are not steered. */
+  public static boolean isSteerable(String text) {
+    return !text.stripLeading().startsWith("/");
   }
 
   /** Hears every change, under the queue's lock: it must not block or call back into the queue. */
