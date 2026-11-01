@@ -206,10 +206,6 @@ public final class WorktreeSetup {
     return this.phase == ChatMessage.SetupPhase.FAILED ? this.error : null;
   }
 
-  public synchronized boolean holds() {
-    return !this.held.isEmpty();
-  }
-
   /** Whether prompts wait for a setup that failed. */
   public synchronized boolean holdsFailed() {
     return this.phase == ChatMessage.SetupPhase.FAILED && !this.held.isEmpty();
@@ -326,6 +322,11 @@ public final class WorktreeSetup {
       isTimedOut = left <= 0 || !started.waitFor(left, TimeUnit.NANOSECONDS);
     } catch (InterruptedException e) {
       Thread.currentThread().interrupt();
+      synchronized (this) {
+        if (token == this.run) {
+          this.isCancelled = true;
+        }
+      }
       kill(started);
       reader.cancel(true);
       this.forget(started);

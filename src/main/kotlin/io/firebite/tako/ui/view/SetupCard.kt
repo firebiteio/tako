@@ -80,7 +80,7 @@ fun SetupCard(thread: ThreadState, setup: ChatMessage.Setup) {
 @Composable
 private fun SetupOutput(output: String, expanded: Boolean) {
   val shape = RoundedCornerShape(8.dp)
-  val text = if (expanded) output.trimEnd() else setupTail(output, TAIL_LINES)
+  val text = remember(output, expanded) { if (expanded) output.trimEnd() else setupTail(output, TAIL_LINES) }
   Box(Modifier.fillMaxWidth().clip(shape).background(colors.bg).border(1.dp, colors.softBorder, shape)
     .heightIn(max = 240.dp).let { if (expanded) it.verticalScroll(rememberScrollState()) else it }
     .padding(horizontal = 8.dp, vertical = 6.dp)) {

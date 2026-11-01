@@ -18,6 +18,7 @@ public final class SetupScript {
   public static final String FILE = ".worktreesetup";
   public static final String WORKTREE_VARIABLE = "TAKO_WORKTREE";
   public static final String REPOSITORY_VARIABLE = "TAKO_REPOSITORY";
+  private static final char BYTE_ORDER_MARK = 0xFEFF;
 
   private SetupScript() {
   }
@@ -38,7 +39,7 @@ public final class SetupScript {
 
   /** The trimmed lines that are neither empty nor comments. A byte order mark at the start is ignored. */
   public static List<String> commands(String text) {
-    String content = text.startsWith("﻿") ? text.substring(1) : text;
+    String content = !text.isEmpty() && text.charAt(0) == BYTE_ORDER_MARK ? text.substring(1) : text;
     List<String> commands = new ArrayList<>();
     for (String line : content.split("\\R")) {
       String command = line.strip();

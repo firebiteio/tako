@@ -136,7 +136,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
       written.contains(this.worktree.getParent().toString() + this.worktree.getFileSystem().getSeparator()
         + "tako-work tree "));
     assertEquals(this.repository.toString(), Files.readString(this.worktree.resolve("second.txt")).strip());
-    assertFalse(setup.holds());
+    assertFalse(setup.holdsPrompts());
     for (Object late : this.drainFor(600)) {
       assertFalse("nothing shows after the setup is done: " + late, late instanceof ChatMessage.Setup);
     }
@@ -355,7 +355,9 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     setup.start();
     this.await(ChatMessage.Setup.class, s -> s.step() == 1);
 
-    assertTrue(setup.holds());
+    assertTrue("a held start can be cancelled", setup.cancelHeld());
+    this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    assertTrue(setup.holdsFailed());
     assertFalse(setup.holdsPrompts());
     setup.whenReady(this.prompt("a"));
     assertTrue(setup.holdsPrompts());
@@ -392,7 +394,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     setup.dispose();
     setup.dispose();
 
-    assertFalse(setup.holds());
+    assertFalse(setup.holdsPrompts());
     assertTrue(this.drainFor(1500).isEmpty());
     setup.whenReady(this.prompt("b"));
     setup.start();

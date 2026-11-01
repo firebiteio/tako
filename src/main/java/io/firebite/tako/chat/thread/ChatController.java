@@ -104,8 +104,15 @@ public final class ChatController implements Disposable {
     ThreadStore.PendingSetup pending = record.pendingSetup;
     this.setup = pending == null
       ? null
-      : new WorktreeSetup(pending, new SetupListener(),
-        () -> TrustedProjects.isProjectTrusted(project), WorktreeSetup.TIMEOUT_MILLIS);
+      : new WorktreeSetup(pending, new SetupListener(), this::isTrusted, WorktreeSetup.TIMEOUT_MILLIS);
+  }
+
+  /** Whether the IDE trusts the thread's project, and its project folder when that is another one than the IDE's. */
+  private boolean isTrusted() {
+    String folder = this.record.projectPath;
+    boolean isOwnFolder = folder == null || ThreadStore.samePath(folder, this.project.getBasePath());
+    return TrustedProjects.isProjectTrusted(this.project)
+      && (isOwnFolder || TrustedProjects.isProjectTrusted(Path.of(folder)));
   }
 
   /**
@@ -785,6 +792,9 @@ public final class ChatController implements Disposable {
 
   /** Shows the setup in the chat and keeps the thread working, or waiting for the person, while prompts wait for it. */
   private final class SetupListener implements WorktreeSetup.Listener {
+    /** The thread's error this setup set, which goes once the setup is through. */
+    private @Nullable String error;
+
     @Override
     public void changed(ChatMessage.Setup setup) {
       ChatController.this.view.post(setup);
@@ -792,17 +802,17 @@ public final class ChatController implements Disposable {
 
     @Override
     public void held(@Nullable String failure) {
-      if (failure != null) {
-        ChatController.this.error = TakoBundle.message("setup.failed", failure);
-        ChatController.this.setState(State.WAITING);
-      } else {
-        ChatController.this.error = null;
-        ChatController.this.setState(State.WORKING);
-      }
+      this.error = failure != null ? TakoBundle.message("setup.failed", failure) : null;
+      ChatController.this.error = this.error;
+      ChatController.this.setState(failure != null ? State.WAITING : State.WORKING);
     }
 
     @Override
     public void finished() {
+      if (this.error != null && this.error.equals(ChatController.this.error)) {
+        ChatController.this.error = null;
+      }
+      this.error = null;
       ChatController.this.record.pendingSetup = null;
       ChatController.this.recordChanged();
     }
