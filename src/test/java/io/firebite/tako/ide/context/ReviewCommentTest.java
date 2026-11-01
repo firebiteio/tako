@@ -86,8 +86,10 @@ public class ReviewCommentTest {
     assertTrue(before.text().startsWith("Review comment on C:/repo/Bar.kt, line 2 (the current file, before the "
       + "proposed edit):\n"));
     assertEquals("Bar.kt:2: no", after.label());
-    assertTrue(ReviewComment.isOnProposedEdit(after));
-    assertTrue(ReviewComment.isOnProposedEdit(before));
+    assertTrue(ReviewComment.isOnProposedEdit(after, null));
+    assertTrue(ReviewComment.isOnProposedEdit(before, "c:\\REPO\\Bar.kt"));
+    assertFalse(ReviewComment.isOnProposedEdit(after, "C:/repo/Bar.kts"));
+    assertFalse(ReviewComment.isOnProposedEdit(after, "C:/repo/Other.kt"));
   }
 
   @Test
@@ -97,8 +99,8 @@ public class ReviewCommentTest {
     ContextItem selection = IdeContext.excerpt("Terminal", "the terminal (the proposed edit, not applied yet)", "x");
 
     assertNotNull(turn);
-    assertFalse(ReviewComment.isOnProposedEdit(turn));
-    assertFalse(ReviewComment.isOnProposedEdit(selection));
+    assertFalse(ReviewComment.isOnProposedEdit(turn, null));
+    assertFalse(ReviewComment.isOnProposedEdit(selection, null));
   }
 
   @Test

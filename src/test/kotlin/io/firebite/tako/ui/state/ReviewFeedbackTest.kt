@@ -25,18 +25,37 @@ class ReviewFeedbackTest {
   @Test
   fun typedFeedbackComesFirstThenEachCommentOnTheProposedEdit() {
     assertEquals("use a list\n\n" + this.review.text + "\n\n" + this.other.text,
-      withReviews("use a list", listOf(this.review, this.selection, this.turnReview, this.other)))
+      withReviews("use a list", listOf(this.review, this.selection, this.turnReview, this.other), this.edit))
   }
 
   @Test
   fun reviewCommentsAloneAreTheFeedback() {
-    assertEquals(this.review.text, withReviews("", listOf(this.review)))
+    assertEquals(this.review.text, withReviews("", listOf(this.review), this.edit))
   }
 
   @Test
   fun otherContextAndCommentsOnOtherDiffsAreNotFeedback() {
-    assertEquals("why", withReviews("why", listOf(this.selection, this.turnReview)))
-    assertEquals("", withReviews("", emptyList()))
+    assertEquals("why", withReviews("why", listOf(this.selection, this.turnReview), this.edit))
+    assertEquals("", withReviews("", emptyList(), this.edit))
+  }
+
+  @Test
+  fun commentsOnAnotherQueuedEditStayForThatEdit() {
+    val otherEdit = PermissionPrompt(PermissionPrompt.Kind.TOOL, "Edit", ToolKind.EDIT,
+      JsonObject().apply { this.addProperty("file_path", "/repo/Other.java") }, "call-4", null, null, true,
+      emptyList(), emptyList(), null)
+
+    assertFalse(foldsReviews(otherEdit, false, true, listOf(this.review)))
+    assertEquals("", withReviews("", listOf(this.review), otherEdit))
+  }
+
+  @Test
+  fun anEditWithoutAKnownFileTakesEveryProposedEditComment() {
+    val acpEdit = PermissionPrompt(PermissionPrompt.Kind.TOOL, "edit", ToolKind.EDIT, JsonObject(), "call-5", null,
+      null, true, emptyList(), emptyList(), null)
+
+    assertTrue(foldsReviews(acpEdit, false, true, listOf(this.review)))
+    assertFalse(foldsReviews(acpEdit, false, true, listOf(this.turnReview)))
   }
 
   @Test

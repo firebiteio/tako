@@ -88,15 +88,24 @@ public final class ReviewComment {
     return lines.isEmpty() ? name : name + ":" + Range.of(lines);
   }
 
-  /** The item is a review comment made in the diff of an edit a permission prompt proposes. */
-  public static boolean isOnProposedEdit(ContextItem item) {
+  /**
+   * The item is a review comment made in the diff of an edit a permission prompt proposes.
+   *
+   * @param path the edited file, null for an edit to any file. Compared ignoring case and separators.
+   */
+  public static boolean isOnProposedEdit(ContextItem item, @Nullable String path) {
     if (item.kind() != ContextItem.Kind.REVIEW) {
       return false;
     }
     int newline = item.text().indexOf('\n');
     String header = newline < 0 ? item.text() : item.text().substring(0, newline);
-    return header.contains(" (" + ReviewTarget.PROPOSED_BEFORE + ")")
+    boolean isProposed = header.contains(" (" + ReviewTarget.PROPOSED_BEFORE + ")")
       || header.contains(" (" + ReviewTarget.PROPOSED_AFTER + ")");
+    if (!isProposed || path == null) {
+      return isProposed;
+    }
+    String prefix = "Review comment on " + path.replace('\\', '/') + ", line";
+    return header.regionMatches(true, 0, prefix, 0, prefix.length());
   }
 
   /** None of the lines is in the new version, so the comment is on the old one. */

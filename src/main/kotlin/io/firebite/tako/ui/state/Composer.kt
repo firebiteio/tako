@@ -179,14 +179,17 @@ fun ThreadState.addContext(item: ContextItem, prefill: String?) {
 
 fun hasReviews(contexts: List<ContextItem>): Boolean = contexts.any { it.kind == ContextItem.Kind.REVIEW }
 
-/** The typed feedback, then each review comment on a proposed edit, with an empty line between them. */
-fun withReviews(typed: String, contexts: List<ContextItem>): String {
+/**
+ * The typed feedback, then each review comment made in the diff of the prompt's proposed edit, with an empty line
+ * between them.
+ */
+fun withReviews(typed: String, contexts: List<ContextItem>, prompt: PermissionPrompt): String {
   val parts = mutableListOf<String>()
   if (typed.isNotEmpty()) {
     parts.add(typed)
   }
   for (item in contexts) {
-    if (ReviewComment.isOnProposedEdit(item)) {
+    if (isOnEdit(item, prompt)) {
       parts.add(item.text)
     }
   }
@@ -288,20 +291,19 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
 
 /**
  * Declines with the typed text as the reason, or the fallback without one. Declining a proposed edit, without stopping,
- * also gives the review comments on proposed edits as the reason, see [foldsReviews]; they then leave the box. See
- * [decline] for agents
- * without a reason.
+ * also gives the review comments made in its diff as the reason, see [foldsReviews]; they then leave the box. See
+ * [decline] for agents without a reason.
  */
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
   val readsReason = this.info?.capabilities?.declineReason != false
   val foldsReviews = foldsReviews(approval.prompt, interrupt, readsReason, this.contexts)
-  val feedback = if (foldsReviews) withReviews(this.typed, this.contexts) else this.typed
+  val feedback = if (foldsReviews) withReviews(this.typed, this.contexts, approval.prompt) else this.typed
   val decline = decline(approval.prompt, feedback, fallback, interrupt, readsReason)
   if (!decline.keepsFeedback) {
     this.input.clearText()
   }
   if (foldsReviews) {
-    this.contexts.removeAll { ReviewComment.isOnProposedEdit(it) }
+    this.contexts.removeAll { isOnEdit(it, approval.prompt) }
   }
   this.answer(approval, false, decline.message, decline.interrupt)
   val followUp = decline.followUp ?: return
@@ -339,13 +341,17 @@ private fun declinedPrompt(prompt: PermissionPrompt, feedback: String): String {
 }
 
 /**
- * Review comments made in a proposed edit's diff go along as the reason for declining a proposed edit, to an agent that
- * reads a reason. Comments on other diffs or files stay in the box, and so do all when declining stops the turn: the
+ * Review comments made in the diff of the proposed edit go along as the reason for declining it, to an agent that reads
+ * a reason. Comments on other diffs, files or edits stay in the box, and so do all when declining stops the turn: the
  * agent would not act on them.
  */
 fun foldsReviews(prompt: PermissionPrompt, stop: Boolean, readsReason: Boolean, contexts: List<ContextItem>): Boolean =
   !stop && readsReason && prompt.kind == PermissionPrompt.Kind.TOOL && prompt.canDiff
-    && contexts.any { ReviewComment.isOnProposedEdit(it) }
+    && contexts.any { isOnEdit(it, prompt) }
+
+/** The item is a review comment made in the diff of the prompt's edit, or of any proposed edit without a known file. */
+private fun isOnEdit(item: ContextItem, prompt: PermissionPrompt): Boolean =
+  ReviewComment.isOnProposedEdit(item, prompt.input.string("file_path") ?: prompt.input.string("path"))
 
 /** Enter declines the waiting approval with review comments alone, see [foldsReviews]. */
 fun ThreadState.declinesWithReviews(approval: Approval): Boolean =
