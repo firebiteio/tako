@@ -14,7 +14,7 @@ public enum Blocker {
   NOTHING_TO_COMMIT,
   NO_REMOTE,
   NOTHING_TO_PUSH,
-  /** Pull requests need {@code origin} on GitHub as the push remote. */
+  /** Pull requests need the remote the branch pushes to on GitHub. */
   NOT_GITHUB,
   /** The GitHub CLI's state is being asked for, see {@link ThreadGit#checkGitHub}. */
   GH_CHECKING,

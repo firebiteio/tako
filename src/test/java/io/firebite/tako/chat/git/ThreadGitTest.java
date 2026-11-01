@@ -424,6 +424,29 @@ public class ThreadGitTest {
   }
 
   @Test
+  public void pullRequestsGoToAnyGitHubRemoteThePushUses() throws Exception {
+    Path repository = TestRepos.committed();
+    git(repository, "checkout", "-q", "-b", "feat");
+    write(repository, "a.txt", "changed\n");
+    git(repository, "remote", "add", "origin", "https://gitlab.com/team/app.git");
+    Path bare = TestRepos.addRemote(repository, "fork");
+    git(repository, "remote", "set-url", "fork", "https://github.com/me/app.git");
+    git(repository, "remote", "set-url", "--push", "fork", bare.toString());
+    git(repository, "config", "remote.pushDefault", "fork");
+    ThreadGit git = this.threadGit(repository);
+    ThreadGit.Menu menu = menu(git);
+    ThreadGit.Option pullRequest = menu.options().getLast();
+    assertNull(pullRequest.blocker());
+
+    ThreadGit.Result result = git.run(pullRequest, menu.status(), new Draft("m", "t", "b"), s -> {
+    }, NEVER);
+
+    assertEquals("fork/feat", result.pushedTo());
+    assertEquals(List.of("feat->main: t / b"), this.gitHub.created);
+    assertEquals(new GitCommands.GitHubRepo("github.com", "me", "app"), this.gitHub.repositories.getFirst());
+  }
+
+  @Test
   public void parallelChecksAskTheGitHubCliOnce() throws Exception {
     Path repository = TestRepos.committed();
     write(repository, "a.txt", "changed\n");
@@ -551,6 +574,7 @@ public class ThreadGitTest {
 
   private static final class FakeGitHub implements GitHubCli {
     private final List<String> created = new ArrayList<>();
+    private final List<GitCommands.GitHubRepo> repositories = new ArrayList<>();
     private final AtomicInteger stateCalls = new AtomicInteger();
     private volatile State state = State.READY;
     private volatile String createError;
@@ -581,6 +605,7 @@ public class ThreadGitTest {
         throw new GitCommands.CommandException(GitCommands.CommandException.Kind.FAILED, this.createError);
       }
       this.created.add(head + "->" + base + ": " + title + " / " + body);
+      this.repositories.add(repository);
       return new GitInfo.PullRequest("#" + this.created.size(), title, "https://github.com/o/r/pull/1", "open");
     }
   }

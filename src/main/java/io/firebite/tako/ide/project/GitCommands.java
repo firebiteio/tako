@@ -9,7 +9,6 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
-import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -60,7 +59,7 @@ public final class GitCommands {
     CompletableFuture<Output> config = readLater(directory, environment, "config", "--list", "-z");
     CompletableFuture<Output> remoteHeads = readLater(directory, environment, "for-each-ref",
       "--format=%(refname) %(symref)", "refs/remotes/*/HEAD");
-    CompletableFuture<Output> originUrl = readLater(directory, environment, "remote", "get-url", "origin");
+    CompletableFuture<Output> remotes = readLater(directory, environment, "remote", "-v");
     try {
       String[] locations = success(top.get()).strip().split("\\R");
       if (locations.length != 2) {
@@ -68,11 +67,8 @@ public final class GitCommands {
       }
       String topLevel = Path.of(locations[0].strip()).toAbsolutePath().normalize().toString();
       boolean isMerging = Files.exists(directory.resolve(locations[1].strip()));
-      Output origin = originUrl.get();
       return parseStatus(topLevel, isMerging, success(status.get()), !success(unmerged.get()).isBlank(),
-        parseConfig(config.get().stdout()), remoteHeads.get().stdout(), origin.exitCode() == 0
-          ? origin.stdout()
-          : null);
+        parseConfig(config.get().stdout()), remoteHeads.get().stdout(), parseRemotes(remotes.get().stdout()));
     } catch (CommandException | ExecutionException | NumberFormatException e) {
       return Status.NONE;
     } catch (InterruptedException e) {
@@ -87,10 +83,10 @@ public final class GitCommands {
    * @param porcelain   {@code status --porcelain=v2 --branch}
    * @param config      every config value by its key, as {@link #parseConfig} reads them
    * @param remoteHeads {@code for-each-ref --format="%(refname) %(symref)" refs/remotes/*}{@code /HEAD}
-   * @param originUrl   {@code remote get-url origin}, null without origin
+   * @param remotes     each remote's fetch URL, as {@link #parseRemotes} reads them
    */
   static Status parseStatus(String topLevel, boolean isMerging, String porcelain, boolean hasConflicts,
-    Map<String, String> config, String remoteHeads, @Nullable String originUrl) {
+    Map<String, String> config, String remoteHeads, Map<String, String> remotes) {
     String branch = null;
     boolean hasCommits = false;
     int ahead = -1;
@@ -108,7 +104,7 @@ public final class GitCommands {
         changedFiles++;
       }
     }
-    String remote = branch == null ? null : pushRemote(config, branch);
+    String remote = branch == null ? null : pushRemote(config, remotes.keySet(), branch);
     boolean tracksBranch = remote != null && ahead >= 0
       && ("refs/heads/" + branch).equals(config.get("branch." + branch + ".merge"))
       && remote.equals(config.get("branch." + branch + ".remote"));
@@ -122,9 +118,24 @@ public final class GitCommands {
         }
       }
     }
-    GitHubRepo gitHub = "origin".equals(remote) ? parseGitHub(originUrl) : null;
+    GitHubRepo gitHub = remote == null ? null : parseGitHub(remotes.get(remote));
     return new Status(true, topLevel, branch, changedFiles, hasConflicts, isMerging, hasCommits, remote,
       tracksBranch, tracksBranch ? ahead : 0, defaultBranch, gitHub);
+  }
+
+  /**
+   * {@code remote -v}: each remote's fetch URL by its name, in git's order. The URLs are rewritten by
+   * {@code url.<base>.insteadOf} already.
+   */
+  static Map<String, String> parseRemotes(String output) {
+    Map<String, String> remotes = new LinkedHashMap<>();
+    for (String line : output.split("\\R")) {
+      int tab = line.indexOf('\t');
+      if (tab > 0 && line.endsWith(" (fetch)")) {
+        remotes.put(line.substring(0, tab), line.substring(tab + 1, line.length() - " (fetch)".length()).strip());
+      }
+    }
+    return remotes;
   }
 
   /**
@@ -357,13 +368,7 @@ public final class GitCommands {
    * The remote a plain {@code git push} would use: the branch's push remote, the default push remote, the branch's
    * remote, {@code origin} or the first one. Only configured remotes count.
    */
-  private static @Nullable String pushRemote(Map<String, String> config, String branch) {
-    Set<String> remotes = new LinkedHashSet<>();
-    for (String key : config.keySet()) {
-      if (key.startsWith("remote.") && key.endsWith(".url") && key.length() > "remote..url".length()) {
-        remotes.add(key.substring("remote.".length(), key.length() - ".url".length()));
-      }
-    }
+  private static @Nullable String pushRemote(Map<String, String> config, Set<String> remotes, String branch) {
     for (String key : List.of("branch." + branch + ".pushremote", "remote.pushdefault",
       "branch." + branch + ".remote")) {
       String remote = config.get(key);
@@ -559,7 +564,7 @@ public final class GitCommands {
    * @param tracksBranch  the branch tracks the branch of the same name on {@code remote}, which exists
    * @param ahead         commits not on the tracked branch, 0 when it tracks none
    * @param defaultBranch the remote's default branch as the last fetch recorded it, null when unknown
-   * @param gitHub        the GitHub repository of {@code origin} when the push goes there
+   * @param gitHub        the GitHub repository of {@code remote}, null when it is elsewhere
    */
   public record Status(
     boolean isRepository,

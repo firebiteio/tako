@@ -234,6 +234,30 @@ public class GitCommandsTest {
   }
 
   @Test
+  public void githubIsTheRepositoryOfThePushRemoteWhateverItsName() throws Exception {
+    Path repository = TestRepos.committed();
+    git(repository, "config", "url.https://github.com/.insteadOf", "gh:");
+    git(repository, "remote", "add", "origin", "https://gitlab.com/team/app.git");
+    git(repository, "remote", "add", "fork", "gh:me/app.git");
+    git(repository, "config", "remote.pushDefault", "fork");
+
+    GitCommands.Status status = GitCommands.status(repository, ENVIRONMENT);
+
+    assertEquals("fork", status.remote());
+    assertEquals(new GitCommands.GitHubRepo("github.com", "me", "app"), status.gitHub());
+  }
+
+  @Test
+  public void remotesAreReadWithTheirFetchUrls() {
+    Map<String, String> remotes = GitCommands.parseRemotes("origin\thttps://github.com/o/r.git (fetch)\n"
+      + "origin\t../bare (push)\nmy.fork\tgit@github.com:me/r.git (fetch)\nmy.fork\tgit@github.com:me/r.git (push)\n");
+
+    assertEquals(Map.of("origin", "https://github.com/o/r.git", "my.fork", "git@github.com:me/r.git"), remotes);
+    assertEquals(List.of("origin", "my.fork"), List.copyOf(remotes.keySet()));
+    assertEquals(Map.of(), GitCommands.parseRemotes(""));
+  }
+
+  @Test
   public void configKeepsTheLastValueAndTheFirstOrder() {
     Map<String, String> config = GitCommands.parseConfig("remote.fork.url\nhttps://a\0core.bare\nfalse\0"
       + "remote.my.dotted.url\n../x\0remote.fork.url\nhttps://b\0core.flag\0");
@@ -246,14 +270,16 @@ public class GitCommandsTest {
 
   @Test
   public void statusIsReadFromGitsAnswers() {
-    Map<String, String> config = GitCommands.parseConfig("remote.upstream.url\n../u\0remote.my.fork.url\n../f\0"
-      + "remote.pushdefault\nmy.fork\0branch.Feat.remote\nmy.fork\0branch.Feat.merge\nrefs/heads/Feat\0");
+    Map<String, String> config = GitCommands.parseConfig("remote.pushdefault\nmy.fork\0branch.Feat.remote\nmy.fork\0"
+      + "branch.Feat.merge\nrefs/heads/Feat\0");
+    Map<String, String> remotes = GitCommands.parseRemotes("upstream\thttps://github.com/up/r (fetch)\n"
+      + "my.fork\thttps://github.com/me/r (fetch)\n");
     String porcelain = "# branch.oid 1234\n# branch.head Feat\n# branch.upstream my.fork/Feat\n# branch.ab +3 -1\n"
       + "1 .M N... 100644 100644 100644 a a a.txt\n? new file.txt\n";
 
     GitCommands.Status status = GitCommands.parseStatus("/r", false, porcelain, false, config,
       "refs/remotes/my.fork/HEAD refs/remotes/my.fork/develop\nrefs/remotes/upstream/HEAD refs/remotes/upstream/main\n",
-      null);
+      remotes);
 
     assertEquals("Feat", status.branch());
     assertEquals(2, status.changedFiles());
@@ -262,15 +288,15 @@ public class GitCommandsTest {
     assertTrue(status.tracksBranch());
     assertEquals(3, status.ahead());
     assertEquals("develop", status.defaultBranch());
-    assertNull(status.gitHub());
+    assertEquals(new GitCommands.GitHubRepo("github.com", "me", "r"), status.gitHub());
   }
 
   @Test
   public void statusBeforeTheFirstCommitAndDetached() {
     GitCommands.Status unborn = GitCommands.parseStatus("/r", false, "# branch.oid (initial)\n# branch.head main\n",
-      false, Map.of(), "", null);
+      false, Map.of(), "", Map.of());
     GitCommands.Status detached = GitCommands.parseStatus("/r", false, "# branch.oid 12\n# branch.head (detached)\n",
-      false, GitCommands.parseConfig("remote.origin.url\nhttps://github.com/o/r\0"), "", "https://github.com/o/r");
+      false, Map.of(), "", Map.of("origin", "https://github.com/o/r"));
 
     assertEquals("main", unborn.branch());
     assertFalse(unborn.hasCommits());
