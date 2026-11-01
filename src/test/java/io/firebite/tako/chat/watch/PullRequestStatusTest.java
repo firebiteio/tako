@@ -40,7 +40,7 @@ public class PullRequestStatusTest {
       Gh.recorded("comments.json")).comments();
 
     assertEquals(new PullRequestStatus.Comment(1002, "bob", "src/main/java/io/firebite/tako/Foo.java", 42, 40,
-      "nit: make this `final` — ünïcödé 👍", "https://github.com/firebiteio/tako/pull/12#discussion_r1002"),
+      "nit: make this `final`: ünïcödé 👍", "https://github.com/firebiteio/tako/pull/12#discussion_r1002"),
       comments.get(0));
     assertNull(comments.get(1).line());
     assertEquals(Integer.valueOf(7), comments.get(1).originalLine());

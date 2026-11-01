@@ -31,7 +31,7 @@ public class PullRequestWatchServiceTest extends BasePlatformTestCase {
 
   private ThreadStore.Record watchedThread() {
     ThreadStore.Record record = this.store.create(null, null, null, "claude");
-    record.watch = PullRequestWatch.baseline(PullRequestStatus.parse(VIEW, "[]"), "me");
+    record.watch = PullRequestWatch.baseline(PullRequestStatus.parse(VIEW, "[]"), "me", true);
     return record;
   }
 

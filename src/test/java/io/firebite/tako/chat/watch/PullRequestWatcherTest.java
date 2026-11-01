@@ -113,18 +113,23 @@ public class PullRequestWatcherTest {
 
   @Test
   public void startFailsRateLimited() {
-    this.gh.comments = new GhCli.Result(1, "", "API rate limit exceeded");
+    this.gh.view = new GhCli.Result(1, "", "API rate limit exceeded");
 
     assertEquals(WatchException.Reason.RATE_LIMITED, this.startFails(this.thread(), null).reason());
   }
 
   @Test
-  public void startFailsWhenCommentsCannotBeRead() {
+  public void startsWhenCommentsCannotBeReadWithoutTellingOldOnesLater() throws WatchException {
     this.gh.comments = new GhCli.Result(1, "", "HTTP 502");
-    ThreadStore.Record record = this.thread();
+    ThreadStore.Record record = this.watched();
+    assertTrue(record.watch.commentsUnknown);
 
-    assertEquals(WatchException.Reason.FAILED, this.startFails(record, null).reason());
-    assertNull(record.watch);
+    this.gh.comments = ok(Gh.recorded("comments.json"));
+    this.later();
+    this.watcher.tick();
+
+    assertEquals(List.of(), this.host.prompts);
+    assertFalse(record.watch.commentsUnknown);
   }
 
   @Test

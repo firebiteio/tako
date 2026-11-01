@@ -93,10 +93,11 @@ public class WakePromptTest {
 
     assertTrue(prompt.contains("comment 9\""));
     assertFalse(prompt.contains("comment 10\""));
-    assertTrue(prompt.contains("\n- and 15 more\n"));
+    assertTrue(prompt, prompt.contains("\n- and 15 more; read them all with gh api --paginate --hostname github.com "
+      + "repos/firebiteio/tako/pulls/12/comments and gh pr view 12 -R github.com/firebiteio/tako --json reviews\n"));
     assertTrue(prompt.contains("  - job 9\n"));
     assertFalse(prompt.contains("job 10"));
-    assertTrue(prompt.contains("\n  - and 15 more\n"));
+    assertTrue(prompt.contains("\n  - and 15 more; see gh pr checks 12 -R github.com/firebiteio/tako\n"));
   }
 
   @Test

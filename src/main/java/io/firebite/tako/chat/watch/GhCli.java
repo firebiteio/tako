@@ -19,6 +19,8 @@ public final class GhCli {
   public static final int TIMED_OUT = -2;
   private static final Logger LOG = Logger.getInstance(GhCli.class);
   private static final long TIMEOUT_SECONDS = 20;
+  /** How long a killed gh may take to exit, so its output files are free to delete, on Windows too. */
+  private static final long KILL_WAIT_SECONDS = 5;
   private static final int AUTH_EXIT_CODE = 4;
   private static final int MESSAGE_LENGTH = 200;
 
@@ -88,7 +90,7 @@ public final class GhCli {
       }
       process.getOutputStream().close();
       if (!process.waitFor(TIMEOUT_SECONDS, TimeUnit.SECONDS)) {
-        process.destroyForcibly();
+        process.destroyForcibly().waitFor(KILL_WAIT_SECONDS, TimeUnit.SECONDS);
         return new Result(TIMED_OUT, "", "gh did not answer within " + TIMEOUT_SECONDS + " seconds");
       }
       return new Result(process.exitValue(), Files.readString(out, StandardCharsets.UTF_8),

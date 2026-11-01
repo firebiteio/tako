@@ -30,6 +30,8 @@ public final class PullRequestWatch {
   public @Nullable List<String> seenReviews = new ArrayList<>();
   /** The review comments of the last read. */
   public @Nullable List<Long> seenComments = new ArrayList<>();
+  /** The watch started without reading the comments, so their first read only learns which there are. */
+  public boolean commentsUnknown;
   public boolean conflicting;
   public int commentWakes;
   /** Failed reads in a row. */
@@ -37,9 +39,14 @@ public final class PullRequestWatch {
   /** When to poll next; 0 polls at the next tick. Not saved, so a restarted IDE polls right away. */
   public transient long nextPollAt;
 
-  /** A watch that has seen everything the pull request holds now. */
-  public static PullRequestWatch baseline(PullRequestStatus status, String self) {
+  /**
+   * A watch that has seen everything the pull request holds now.
+   *
+   * @param commentsRead whether {@code status} holds the review comments
+   */
+  public static PullRequestWatch baseline(PullRequestStatus status, String self, boolean commentsRead) {
     PullRequestWatch watch = new PullRequestWatch();
+    watch.commentsUnknown = !commentsRead;
     watch.url = status.url();
     watch.number = status.label();
     watch.self = self;
@@ -158,7 +165,8 @@ public final class PullRequestWatch {
     List<Long> ids = new ArrayList<>();
     for (PullRequestStatus.Comment comment : status.comments()) {
       ids.add(comment.id());
-      boolean isNew = !seen.contains(comment.id()) && (!isWindowFull || comment.id() > oldestSeen);
+      boolean isNew = !this.commentsUnknown && !seen.contains(comment.id())
+        && (!isWindowFull || comment.id() > oldestSeen);
       if (isNew && !this.isSelf(comment.author())) {
         fresh.add(comment);
       }
@@ -168,6 +176,7 @@ public final class PullRequestWatch {
       events.add(new WatchEvent.Commented(comment));
     }
     next.seenComments = ids;
+    next.commentsUnknown = false;
   }
 
   private boolean isSelf(String login) {
@@ -209,6 +218,7 @@ public final class PullRequestWatch {
     copy.passed = this.passed;
     copy.seenReviews = new ArrayList<>(list(this.seenReviews));
     copy.seenComments = new ArrayList<>(list(this.seenComments));
+    copy.commentsUnknown = this.commentsUnknown;
     copy.conflicting = this.conflicting;
     copy.commentWakes = this.commentWakes;
     copy.failures = this.failures;

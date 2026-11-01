@@ -39,7 +39,12 @@ public final class WakePrompt {
         case WatchEvent.Closed closed -> text.append("- The pull request was closed. Tako stopped watching it.\n");
       }
     }
-    appendListed(text, remarks, "- ");
+    appendListed(text, remarks, "- ", url == null
+      ? ""
+      : "; read them all with gh api --paginate --hostname "
+        + url.host() + " repos/" + url.owner() + "/" + url.repo() + "/pulls/" + url.number()
+        + "/comments and gh pr view "
+        + url.number() + " -R " + url.repository() + " --json reviews");
     if (update.end() == PullRequestWatch.End.COMMENT_LOOP) {
       text.append("\nTako stopped watching after ").append(PullRequestWatch.COMMENT_WAKE_LIMIT)
         .append(" comment-only updates in a row. Call watch_pull_request to watch it again.");
@@ -66,15 +71,19 @@ public final class WakePrompt {
       }
       lines.add(line.toString());
     }
-    appendListed(text, lines, "  - ");
+    appendListed(text, lines, "  - ", url == null
+      ? ""
+      : "; see gh pr checks " + url.number() + " -R "
+        + url.repository());
   }
 
-  private static void appendListed(StringBuilder text, List<String> lines, String bullet) {
+  /** @param where how the agent reads the items left out, after the count of them */
+  private static void appendListed(StringBuilder text, List<String> lines, String bullet, String where) {
     for (int i = 0; i < lines.size() && i < LISTED; i++) {
       text.append(bullet).append(lines.get(i)).append('\n');
     }
     if (lines.size() > LISTED) {
-      text.append(bullet).append("and ").append(lines.size() - LISTED).append(" more\n");
+      text.append(bullet).append("and ").append(lines.size() - LISTED).append(" more").append(where).append('\n');
     }
   }
 

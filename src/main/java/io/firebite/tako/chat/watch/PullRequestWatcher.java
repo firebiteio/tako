@@ -65,18 +65,31 @@ public final class PullRequestWatcher {
       PullRequestUrl target = this.target(record, url, freshLookup);
       Path folder = this.host.folder(record);
       String view = this.view(folder, target);
-      String comments = this.output(this.gh.run(folder, commentsArgs(target)));
-      PullRequestStatus status = Objects.requireNonNull(PullRequestStatus.parse(view, comments));
+      GhCli.Result comments = this.gh.run(folder, commentsArgs(target));
+      boolean commentsRead = GhCli.classify(comments) == null;
+      if (!commentsRead) {
+        LOG.debug("Could not read the review comments of " + target.repository() + ": " + comments.err());
+      }
+      PullRequestStatus status = Objects.requireNonNull(PullRequestStatus.parse(view,
+        commentsRead ? comments.out() : null));
       String self = this.output(this.gh.run(folder, List.of("api", "--hostname", target.host(), "user", "--jq",
         ".login"))).trim();
       if (self.isEmpty()) {
         throw new WatchException(WatchException.Reason.FAILED, "gh did not tell your login", "gh did not tell your "
           + "GitHub login.");
       }
-      return this.begin(record, status, self);
+      return this.begin(record, status, self, commentsRead);
     } finally {
       this.starting.remove(threadId);
     }
+  }
+
+  /**
+   * Whether a thread in this state takes a wake prompt now: idle, stopped (the prompt starts its agent) or not open
+   * (null; the prompt opens it). Not while its agent works or waits for the person.
+   */
+  public static boolean canWake(@Nullable ChatController.State state) {
+    return state == null || !(state.isBusy() || state == ChatController.State.WAITING);
   }
 
   /** Ends the thread's watch. @return the number of the pull request it watched, or null when it watched none */
@@ -104,9 +117,7 @@ public final class PullRequestWatcher {
         this.endSilently(record, watch);
         continue;
       }
-      ChatController.State state = this.host.state(record.id);
-      boolean isBusy = state != null && (state.isBusy() || state == ChatController.State.WAITING);
-      if (this.clock.getAsLong() < watch.nextPollAt || isBusy) {
+      if (this.clock.getAsLong() < watch.nextPollAt || !canWake(this.host.state(record.id))) {
         continue;
       }
       try {
@@ -235,7 +246,8 @@ public final class PullRequestWatcher {
     };
   }
 
-  private Started begin(ThreadStore.Record record, PullRequestStatus status, String self) throws WatchException {
+  private Started begin(ThreadStore.Record record, PullRequestStatus status, String self, boolean commentsRead)
+    throws WatchException {
     synchronized (this.lock) {
       if (this.store.find(record.id) != record) {
         throw new WatchException(WatchException.Reason.NO_THREAD, "", "The thread no longer exists in Tako.");
@@ -248,7 +260,7 @@ public final class PullRequestWatcher {
       if (existing != null && url != null && url.equals(PullRequestUrl.parse(existing.url))) {
         return new Started(status, true);
       }
-      PullRequestWatch watch = PullRequestWatch.baseline(status, self);
+      PullRequestWatch watch = PullRequestWatch.baseline(status, self, commentsRead);
       watch.nextPollAt = this.clock.getAsLong() + POLL_MILLIS;
       this.swap(record, watch);
       this.host.changed(record);

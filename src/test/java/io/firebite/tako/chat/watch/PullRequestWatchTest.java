@@ -19,7 +19,7 @@ public class PullRequestWatchTest {
   }
 
   private static PullRequestWatch watch(PullRequestStatus status) {
-    return PullRequestWatch.baseline(status, SELF);
+    return PullRequestWatch.baseline(status, SELF, true);
   }
 
   /** Advances {@code watch} as if every update was delivered, returning the events of the last one. */
@@ -133,7 +133,7 @@ public class PullRequestWatchTest {
   @Test
   public void commentOfAReviewSubmittedLaterIsToldThoughItsIdIsOlder() {
     PullRequestWatch[] watch = {PullRequestWatch.baseline(Gh.status(Gh.open(Gh.SHA_A),
-      Gh.comments(Gh.comment(1005, "alice", "single"))), SELF)};
+      Gh.comments(Gh.comment(1005, "alice", "single"))), SELF, true)};
 
     List<WatchEvent> events = events(watch, Gh.status(Gh.open(Gh.SHA_A),
       Gh.comments(Gh.comment(1005, "alice", "single"), Gh.comment(1001, "bob", "drafted earlier"))));
@@ -154,12 +154,27 @@ public class PullRequestWatchTest {
   }
 
   @Test
+  public void watchStartedWithoutCommentsLearnsThemSilentlyThenTellsNewOnes() {
+    PullRequestWatch[] watch = {PullRequestWatch.baseline(Gh.status(Gh.open(Gh.SHA_A), null), SELF, false)};
+    PullRequestStatus old = Gh.status(Gh.open(Gh.SHA_A), Gh.comments(Gh.comment(5, "bob", "old")));
+
+    PullRequestWatch.Update unread = watch[0].advance(Gh.status(Gh.open(Gh.SHA_A), null), false);
+    assertEquals(List.of(), unread.events());
+    assertTrue(unread.next().commentsUnknown);
+    watch[0] = unread.next();
+    assertEquals(List.of(), events(watch, old));
+    assertEquals(1, events(watch, Gh.status(Gh.open(Gh.SHA_A), Gh.comments(Gh.comment(6, "bob", "new"),
+      Gh.comment(5, "bob", "old")))).size());
+  }
+
+  @Test
   public void fullWindowIgnoresOldCommentsMovingIn() {
     JsonObject[] window = new JsonObject[PullRequestWatch.COMMENT_WINDOW];
     for (int i = 0; i < window.length; i++) {
       window[i] = Gh.comment(1000 + window.length - i, "bob", "c" + i);
     }
-    PullRequestWatch[] watch = {PullRequestWatch.baseline(Gh.status(Gh.open(Gh.SHA_A), Gh.comments(window)), SELF)};
+    PullRequestWatch[] watch = {PullRequestWatch.baseline(Gh.status(Gh.open(Gh.SHA_A), Gh.comments(window)), SELF,
+      true)};
     JsonObject[] shifted = new JsonObject[window.length];
     System.arraycopy(window, 1, shifted, 0, window.length - 1);
     shifted[window.length - 1] = Gh.comment(1000, "bob", "older one that moved into the window");

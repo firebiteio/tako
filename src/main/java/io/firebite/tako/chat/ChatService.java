@@ -1038,9 +1038,9 @@ public final class ChatService implements Disposable {
       ApplicationManager.getApplication().invokeAndWait(() -> {
         ChatController controller = ChatService.this.controllers.get(record.id);
         ChatController.State state = controller == null ? null : controller.state();
-        boolean isBusy = state != null && (state.isBusy() || state == ChatController.State.WAITING);
         if (ChatService.this.panel == null || ChatService.this.project.isDisposed()
-          || ChatService.this.store.find(record.id) != record || record.archived || record.watch != watch || isBusy) {
+          || ChatService.this.store.find(record.id) != record || record.archived || record.watch != watch
+          || !PullRequestWatcher.canWake(state)) {
           return;
         }
         ChatService.this.prompt(record, prompt);
