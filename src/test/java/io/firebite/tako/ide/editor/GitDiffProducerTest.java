@@ -113,6 +113,23 @@ public class GitDiffProducerTest extends BasePlatformTestCase {
     assertInstanceOf(folder, MessageDiffRequest.class);
   }
 
+  public void testAMovedSubmoduleShowsAMessage() throws Exception {
+    git(this.repository, "update-index", "--add", "--cacheinfo", "160000," + this.first + ",sub");
+    git(this.repository, "commit", "-q", "-m", "submodule");
+    String withSubmodule = git(this.repository, "rev-parse", "HEAD").trim();
+    git(this.repository, "update-index", "--cacheinfo", "160000," + this.second + ",sub");
+    git(this.repository, "commit", "-q", "-m", "move submodule");
+    String moved = git(this.repository, "rev-parse", "HEAD").trim();
+    GitDiffs.Changes changes = new GitDiffs.Changes(this.repository, withSubmodule, moved, "a", "b",
+      List.of(new GitDiffs.Change('M', "sub", null)));
+
+    DiffRequest request = this.producer(changes, changes.files().get(0), 1000)
+      .process(new UserDataHolderBase(), new EmptyProgressIndicator());
+
+    assertInstanceOf(request, MessageDiffRequest.class);
+    assertEquals("Submodule or nested repository, no file diff", ((MessageDiffRequest) request).getMessage());
+  }
+
   public void testAGitFailureIsReportedForThatFileOnly() {
     GitDiffs.Changes changes = new GitDiffs.Changes(this.repository, "0123456789012345678901234567890123456789",
       null, "gone", null, List.of());

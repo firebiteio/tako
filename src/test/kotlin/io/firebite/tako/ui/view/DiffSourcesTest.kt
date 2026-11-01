@@ -2,12 +2,12 @@ package io.firebite.tako.ui.view
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import io.firebite.tako.ide.project.GitDiffs
-import java.nio.file.Path
 
 class DiffSourcesTest : BasePlatformTestCase() {
   private val opened = mutableListOf<GitDiffs.Source>()
   private val now = 10L * 24 * 3600 * 1000
   private val commit = GitDiffs.Commit("a".repeat(40), "aaaaaaa", "Fix the login", now - 2 * 3600 * 1000)
+  private val branch = GitDiffs.Branch("origin/main", "1".repeat(40), "1234567", "c".repeat(40), "feature (ccccccc)")
 
   fun testAnErrorIsTheOnlyEntry() {
     val entries = diffMenu(null, "fatal: not a git repository", this.now) { this.opened += it }
@@ -32,8 +32,8 @@ class DiffSourcesTest : BasePlatformTestCase() {
       entry.run()
       entry.run()
     }
-    assertEquals(listOf(GitDiffs.Uncommitted(), GitDiffs.Uncommitted(), GitDiffs.Branch(), GitDiffs.Branch(),
-      this.commit, this.commit), this.opened)
+    assertEquals(listOf(GitDiffs.Uncommitted(), GitDiffs.Uncommitted(), this.branch, this.branch, this.commit,
+      this.commit), this.opened)
   }
 
   fun testNothingToShowIsDisabled() {
@@ -70,6 +70,6 @@ class DiffSourcesTest : BasePlatformTestCase() {
 
   private fun sources(uncommitted: Int, state: GitDiffs.BranchState, branchCommits: Int,
     commits: List<GitDiffs.Commit>, base: String? = "origin/main"): GitDiffs.Sources =
-    GitDiffs.Sources(Path.of("repo"), "feature", "c".repeat(40), uncommitted, base,
-      if (base == null) null else "1234567890", branchCommits, state, commits)
+    GitDiffs.Sources(uncommitted, state, base, if (state == GitDiffs.BranchState.OK) this.branch else null,
+      branchCommits, commits)
 }

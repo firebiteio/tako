@@ -21,18 +21,16 @@ fun diffMenu(sources: GitDiffs.Sources?, error: String?, now: Long, open: (GitDi
   } else {
     MenuEntry(t("diff.uncommitted"), t("diff.uncommitted.none"), Icons.diff, enabled = false) {}
   }
+  val branch = sources.branch
   val base = sources.base ?: ""
-  entries += when (sources.branchState) {
-    GitDiffs.BranchState.OK -> MenuEntry(t("diff.branch.base", base),
-      t("diff.branch.commits", sources.branchCommits, sources.mergeBase?.take(7) ?: ""), Icons.branch) {
-      open(GitDiffs.Branch())
-    }
-    GitDiffs.BranchState.NO_OWN_COMMITS ->
+  entries += when {
+    branch != null -> MenuEntry(t("diff.branch.base", branch.base),
+      t("diff.branch.commits", sources.branchCommits, branch.mergeBaseShort), Icons.branch) { open(branch) }
+    sources.branchState == GitDiffs.BranchState.NO_OWN_COMMITS ->
       MenuEntry(t("diff.branch.base", base), t("diff.branch.no.own", base), Icons.branch, enabled = false) {}
-    GitDiffs.BranchState.UNBORN ->
+    sources.branchState == GitDiffs.BranchState.UNBORN ->
       MenuEntry(t("diff.branch"), t("diff.branch.unborn"), Icons.branch, enabled = false) {}
-    GitDiffs.BranchState.NO_BASE ->
-      MenuEntry(t("diff.branch"), t("diff.branch.no.base"), Icons.branch, enabled = false) {}
+    else -> MenuEntry(t("diff.branch"), t("diff.branch.no.base"), Icons.branch, enabled = false) {}
   }
   for (commit in sources.commits) {
     entries += MenuEntry(commit.subject.ifBlank { t("diff.commit.no.message") },

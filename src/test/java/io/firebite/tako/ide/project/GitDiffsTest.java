@@ -24,7 +24,6 @@ import org.junit.Test;
 public class GitDiffsTest {
   private static final Map<String, String> ENVIRONMENT = System.getenv();
   private static final GitDiffs.Source UNCOMMITTED = new GitDiffs.Uncommitted();
-  private static final GitDiffs.Source BRANCH = new GitDiffs.Branch();
 
   @Test
   public void aFolderOutsideGitOrAGoneFolderCannotBeRead() throws Exception {
@@ -44,8 +43,7 @@ public class GitDiffsTest {
     Sources sources = GitDiffs.sources(repository, ENVIRONMENT);
     Changes changes = GitDiffs.changes(repository, UNCOMMITTED, ENVIRONMENT);
 
-    assertEquals("main", sources.headLabel());
-    assertNull(sources.head());
+    assertNull(sources.branch());
     assertEquals(BranchState.UNBORN, sources.branchState());
     assertEquals(1, sources.uncommitted());
     assertTrue(sources.commits().isEmpty());
@@ -53,7 +51,6 @@ public class GitDiffsTest {
     assertNull(changes.afterRevision());
     assertEquals(List.of(new Change('A', "a.txt", null)), changes.files());
     assertFalse(Files.exists(repository.resolve(".git/index")));
-    assertThrows(Worktrees.GitException.class, () -> GitDiffs.changes(repository, BRANCH, ENVIRONMENT));
   }
 
   @Test
@@ -88,7 +85,7 @@ public class GitDiffsTest {
       new Change('M', "staged.txt", null), new Change('A', "ünïcödé fïlé.txt", null));
     assertEquals(expected, changes.files());
     assertEquals(6, sources.uncommitted());
-    assertEquals(sources.head(), changes.beforeRevision());
+    assertEquals(git(repository, "rev-parse", "HEAD").trim(), changes.beforeRevision());
     assertEquals("HEAD", changes.beforeName());
     assertNull(changes.afterRevision());
     assertArrayEquals(indexBefore, Files.readAllBytes(index));
@@ -114,7 +111,10 @@ public class GitDiffsTest {
     write(clone, "dirty.txt", "not committed\n");
 
     Sources sources = GitDiffs.sources(clone, ENVIRONMENT);
-    Changes changes = GitDiffs.changes(clone, BRANCH, ENVIRONMENT);
+    String head = git(clone, "rev-parse", "HEAD").trim();
+    write(clone, "later.txt", "committed after the menu was read\n");
+    commit(clone, "later");
+    Changes changes = GitDiffs.changes(clone, sources.branch(), ENVIRONMENT);
 
     assertEquals("origin/main", sources.base());
     assertEquals(BranchState.OK, sources.branchState());
@@ -123,7 +123,7 @@ public class GitDiffsTest {
     assertEquals(List.of(new Change('A', "feature.txt", null)), changes.files());
     assertTrue(changes.beforeName().startsWith("origin/main ("));
     assertTrue(changes.afterName().startsWith("feature ("));
-    assertEquals(sources.head(), changes.afterRevision());
+    assertEquals(head, changes.afterRevision());
   }
 
   @Test
@@ -144,7 +144,7 @@ public class GitDiffsTest {
     assertEquals("main", sources.base());
     assertEquals(1, sources.branchCommits());
     assertEquals(List.of(new Change('A', "feature.txt", null)),
-      GitDiffs.changes(repository, BRANCH, ENVIRONMENT).files());
+      GitDiffs.changes(repository, sources.branch(), ENVIRONMENT).files());
   }
 
   @Test
@@ -201,7 +201,7 @@ public class GitDiffsTest {
     assertEquals(BranchState.NO_BASE, sources.branchState());
     assertNull(sources.base());
     assertEquals(List.of("second", "first"), subjects(sources.commits()));
-    assertThrows(Worktrees.GitException.class, () -> GitDiffs.changes(repository, BRANCH, ENVIRONMENT));
+    assertNull(sources.branch());
   }
 
   @Test
@@ -224,7 +224,7 @@ public class GitDiffsTest {
     assertEquals(BranchState.NO_OWN_COMMITS, sources.branchState());
     assertEquals("origin/main", sources.base());
     assertTrue(sources.commits().isEmpty());
-    assertTrue(GitDiffs.changes(clone, BRANCH, ENVIRONMENT).files().isEmpty());
+    assertNull(sources.branch());
 
     commit(clone, "unpushed");
     Sources ahead = GitDiffs.sources(clone, ENVIRONMENT);
@@ -243,10 +243,10 @@ public class GitDiffsTest {
     git(repository, "checkout", "-q", "--detach");
 
     Sources sources = GitDiffs.sources(repository, ENVIRONMENT);
-    Changes changes = GitDiffs.changes(repository, BRANCH, ENVIRONMENT);
+    Changes changes = GitDiffs.changes(repository, sources.branch(), ENVIRONMENT);
 
     String shortHead = git(repository, "rev-parse", "--short", "HEAD").trim();
-    assertEquals(shortHead, sources.headLabel());
+    assertEquals(shortHead, sources.branch().headName());
     assertEquals(BranchState.OK, sources.branchState());
     assertEquals(shortHead, changes.afterName());
     assertEquals(List.of(new Change('A', "b.txt", null)), changes.files());
@@ -334,8 +334,27 @@ public class GitDiffsTest {
     assertEquals(binary.length, small.size());
     assertNull(big.bytes());
     assertEquals(10, big.size());
+    assertFalse(big.isSubmodule());
     assertThrows(Worktrees.GitException.class, () -> GitDiffs.content(repository, "HEAD", "none.txt", 5,
       ENVIRONMENT));
+  }
+
+  @Test
+  public void contentReadsPathsLiterallyAndSkipsSubmodules() throws Exception {
+    Path repository = repository();
+    write(repository, "[a].txt", "bracket\n");
+    write(repository, "a.txt", "plain\n");
+    commit(repository, "files");
+    String commit = git(repository, "rev-parse", "HEAD").trim();
+    git(repository, "update-index", "--add", "--cacheinfo", "160000," + commit + ",sub");
+    git(repository, "commit", "-q", "-m", "submodule");
+
+    GitDiffs.Content star = GitDiffs.content(repository, "HEAD", "[a].txt", GitDiffs.MAX_FILE_BYTES, ENVIRONMENT);
+    GitDiffs.Content submodule = GitDiffs.content(repository, "HEAD", "sub", GitDiffs.MAX_FILE_BYTES, ENVIRONMENT);
+
+    assertEquals("bracket\n", new String(star.bytes(), StandardCharsets.UTF_8));
+    assertTrue(submodule.isSubmodule());
+    assertNull(submodule.bytes());
   }
 
   @Test
@@ -348,6 +367,7 @@ public class GitDiffsTest {
       new Change('A', "ünï.txt", null)), GitDiffs.parseNameStatus(output));
     assertEquals(List.of(), GitDiffs.parseNameStatus(""));
     assertEquals(List.of(), GitDiffs.parseNameStatus("M\0"));
+    assertEquals(List.of(new Change('U', "both.txt", null)), GitDiffs.parseNameStatus("U\0both.txt\0M\0both.txt\0"));
   }
 
   @Test

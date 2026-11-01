@@ -86,6 +86,9 @@ final class GitDiffProducer implements DiffRequestProducer {
   private DiffContent committed(String revision, String path) throws Unshown, Worktrees.GitException, IOException {
     GitDiffs.Content content = GitDiffs.content(this.changes.topLevel(), revision, path, this.limit,
       this.environment);
+    if (content.isSubmodule()) {
+      throw new Unshown(TakoBundle.message("diff.git.submodule"));
+    }
     if (content.bytes() == null) {
       throw Unshown.tooLarge(content.size());
     }

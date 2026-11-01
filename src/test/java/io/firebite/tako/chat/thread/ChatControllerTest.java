@@ -178,7 +178,14 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertEquals("No uncommitted changes.", this.awaitPost(ChatMessage.Error.class).text());
     this.controller.showGitDiff(sources.commits().get(0));
     assertEquals("The commit changed no files.", this.awaitPost(ChatMessage.Error.class).text());
-    this.controller.showGitDiff(new GitDiffs.Branch());
+    git(folder, "branch", "-m", "feature");
+    git(folder, "branch", "main");
+    git(folder, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "--allow-empty", "-m",
+      "also empty");
+    GitDiffs.Branch branch = this.controller.gitDiffSources().branch();
+    this.controller.showGitDiff(branch);
+    assertEquals("The branch changed no files.", this.awaitPost(ChatMessage.Error.class).text());
+    this.controller.showGitDiff(new GitDiffs.Commit("0".repeat(40), "0000000", "gone", 0));
     assertTrue(this.awaitPost(ChatMessage.Error.class).text().startsWith("Could not read the changes: "));
   }
 

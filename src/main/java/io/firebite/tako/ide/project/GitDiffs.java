@@ -5,6 +5,7 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import org.jetbrains.annotations.Nullable;
@@ -20,6 +21,7 @@ public final class GitDiffs {
   public static final long MAX_FILE_BYTES = 20L << 20;
   private static final String REMOTE_HEAD = "refs/remotes/origin/HEAD";
   private static final String REMOTES = "refs/remotes/";
+  private static final String HEADS = "refs/heads/";
   private static final List<String> DEFAULT_BRANCHES = List.of("main", "master");
   private static final char FIELD = '\u001f';
   private static final char RECORD = '\u001e';
@@ -31,75 +33,77 @@ public final class GitDiffs {
   public static Sources sources(Path directory, Map<String, String> environment) throws GitException {
     Path topLevel = Worktrees.topLevel(directory, environment);
     String head = resolve(topLevel, environment, "HEAD");
-    String branch = probe(topLevel, environment, "symbolic-ref", "--short", "-q", "HEAD");
-    String headLabel = branch != null ? branch : head != null ? shortSha(topLevel, head, environment) : "HEAD";
     int uncommitted = uncommittedFiles(topLevel, head, environment).size();
     if (head == null) {
-      return new Sources(topLevel, headLabel, null, uncommitted, null, null, 0, BranchState.UNBORN, List.of());
+      return new Sources(uncommitted, BranchState.UNBORN, null, null, 0, List.of());
     }
-    Base base = findBase(topLevel, branch, environment);
+    String name = probe(topLevel, environment, "symbolic-ref", "--short", "-q", "HEAD");
+    Base base = findBase(topLevel, name, environment);
     String mergeBase = base == null ? null : probe(topLevel, environment, "merge-base", base.sha(), head);
     if (base == null || mergeBase == null) {
-      return new Sources(topLevel, headLabel, head, uncommitted, null, null, 0, BranchState.NO_BASE,
-        commits(topLevel, head, environment));
+      return new Sources(uncommitted, BranchState.NO_BASE, null, null, 0, commits(topLevel, head, environment));
     }
     int count = Integer.parseInt(Worktrees.git(topLevel, environment, "rev-list", "--count",
       mergeBase + ".." + head).trim());
     if (count == 0) {
-      return new Sources(topLevel, headLabel, head, uncommitted, base.name(), mergeBase, 0, BranchState.NO_OWN_COMMITS,
-        List.of());
+      return new Sources(uncommitted, BranchState.NO_OWN_COMMITS, base.name(), null, 0, List.of());
     }
-    return new Sources(topLevel, headLabel, head, uncommitted, base.name(), mergeBase, count, BranchState.OK,
+    String headShort = shortSha(topLevel, head, environment);
+    Branch branch = new Branch(base.name(), mergeBase, shortSha(topLevel, mergeBase, environment), head,
+      name == null ? headShort : name + " (" + headShort + ")");
+    return new Sources(uncommitted, BranchState.OK, base.name(), branch, count,
       commits(topLevel, mergeBase + ".." + head, environment));
   }
 
-  /**
-   * The files the source changed. Commits are resolved now, so the result does not move when the branch does. Call off
-   * the EDT.
-   */
+  /** The files the source changed. Call off the EDT. */
   public static Changes changes(Path directory, Source source, Map<String, String> environment) throws GitException {
     Path topLevel = Worktrees.topLevel(directory, environment);
-    String head = resolve(topLevel, environment, "HEAD");
     return switch (source) {
-      case Uncommitted uncommitted -> new Changes(topLevel, head, null, head == null ? null : "HEAD", null,
-        uncommittedFiles(topLevel, head, environment));
-      case Branch branch -> {
-        String name = probe(topLevel, environment, "symbolic-ref", "--short", "-q", "HEAD");
-        Base base = head == null ? null : findBase(topLevel, name, environment);
-        String mergeBase = base == null ? null : probe(topLevel, environment, "merge-base", base.sha(), head);
-        if (head == null || base == null || mergeBase == null) {
-          throw new GitException("No base branch found");
-        }
-        String headShort = shortSha(topLevel, head, environment);
-        yield new Changes(topLevel, mergeBase, head,
-          base.name() + " (" + shortSha(topLevel, mergeBase, environment) + ")",
-          name == null ? headShort : name + " (" + headShort + ")", diff(topLevel, environment, mergeBase, head));
+      case Uncommitted uncommitted -> {
+        String head = resolve(topLevel, environment, "HEAD");
+        yield new Changes(topLevel, head, null, head == null ? null : "HEAD", null,
+          uncommittedFiles(topLevel, head, environment));
       }
+      case Branch branch -> new Changes(topLevel, branch.mergeBase(), branch.head(),
+        branch.base() + " (" + branch.mergeBaseShort() + ")", branch.headName(),
+        diff(topLevel, environment, branch.mergeBase(), branch.head()));
       case Commit commit -> {
-        String sha = resolve(topLevel, environment, commit.sha());
-        if (sha == null) {
-          throw new GitException("Commit " + commit.shortSha() + " not found");
-        }
+        String sha = Worktrees.git(topLevel, environment, "rev-parse", "--verify", commit.sha() + "^{commit}").trim();
         String parent = probe(topLevel, environment, "rev-parse", "--verify", "-q", sha + "^1");
-        String from = parent != null ? parent.trim() : emptyTree(topLevel, environment);
-        yield new Changes(topLevel, parent == null ? null : from, sha, parent == null ? null : commit.shortSha() + "^",
-          commit.shortSha(), diff(topLevel, environment, from, sha));
+        String from = parent != null ? parent : emptyTree(topLevel, environment);
+        yield new Changes(topLevel, parent, sha, parent == null ? null : commit.shortSha() + "^", commit.shortSha(),
+          diff(topLevel, environment, from, sha));
       }
     };
   }
 
-  /** The file at {@code revision} as git stores it, or only its size when it is larger than {@code limit} bytes. */
+  /**
+   * The file at {@code revision} as git stores it, or only its size when it is larger than {@code limit} bytes or a
+   * submodule.
+   */
   public static Content content(Path topLevel, String revision, String path, long limit,
     Map<String, String> environment) throws GitException {
-    String object = revision + ":" + path;
-    long size = Long.parseLong(Worktrees.git(topLevel, environment, "cat-file", "-s", object).trim());
+    Map<String, String> literal = new HashMap<>(environment);
+    literal.put("GIT_LITERAL_PATHSPECS", "1");
+    String entry = Worktrees.git(topLevel, literal, "ls-tree", "-l", "-z", "--full-tree", revision, "--", path);
+    int tab = entry.indexOf('\t');
+    String[] fields = tab < 0 ? new String[0] : entry.substring(0, tab).trim().split("\\s+");
+    if (fields.length < 4) {
+      // Fails with git's own message, such as that the path is not in the commit.
+      Worktrees.git(topLevel, literal, "cat-file", "-e", revision + ":" + path);
+      throw new GitException(revision + ":" + path);
+    }
+    if ("commit".equals(fields[1])) {
+      return new Content(null, 0, true);
+    }
+    long size = Long.parseLong(fields[3]);
     if (size > limit) {
-      return new Content(null, size);
+      return new Content(null, size, false);
     }
     Path output = Worktrees.createTemp(".blob");
     try {
-      Worktrees.run(topLevel, environment, output, "cat-file", "blob", object);
-      return new Content(Files.readAllBytes(output), size);
+      Worktrees.run(topLevel, environment, output, "cat-file", "blob", fields[2]);
+      return new Content(Files.readAllBytes(output), size, false);
     } catch (IOException e) {
       throw new GitException(e.getMessage());
     } finally {
@@ -116,27 +120,30 @@ public final class GitDiffs {
     List<String> candidates = new ArrayList<>();
     String remoteHead = probe(directory, environment, "symbolic-ref", "-q", REMOTE_HEAD);
     if (remoteHead != null) {
-      candidates.add(remoteHead.trim());
+      candidates.add(remoteHead);
     }
     for (String name : DEFAULT_BRANCHES) {
       candidates.add(REMOTES + "origin/" + name);
     }
     for (String name : DEFAULT_BRANCHES) {
       if (!name.equals(currentBranch)) {
-        candidates.add("refs/heads/" + name);
+        candidates.add(HEADS + name);
       }
     }
     for (String ref : candidates) {
       String sha = resolve(directory, environment, ref);
       if (sha != null) {
-        String name = ref.startsWith(REMOTES) ? ref.substring(REMOTES.length()) : ref.substring("refs/heads/".length());
+        String name = ref.startsWith(REMOTES) ? ref.substring(REMOTES.length()) : ref.substring(HEADS.length());
         return new Base(name, sha);
       }
     }
     return null;
   }
 
-  /** {@code git diff --name-status -z} output, with renames and copies read as old path then new path. */
+  /**
+   * {@code git diff --name-status -z} output, with renames and copies read as old path then new path. A path listed
+   * twice, as unmerged files can be, is kept once.
+   */
   static List<Change> parseNameStatus(String output) {
     String[] parts = output.split("\0");
     List<Change> changes = new ArrayList<>();
@@ -147,11 +154,15 @@ public final class GitDiffs {
         continue;
       }
       char letter = status.charAt(0);
+      Change change;
       if ((letter == 'R' || letter == 'C') && i + 1 < parts.length) {
-        changes.add(new Change(letter, parts[i + 1], parts[i]));
+        change = new Change(letter, parts[i + 1], parts[i]);
         i += 2;
       } else {
-        changes.add(new Change(letter, parts[i++], null));
+        change = new Change(letter, parts[i++], null);
+      }
+      if (changes.isEmpty() || !changes.getLast().path().equals(change.path())) {
+        changes.add(change);
       }
     }
     return changes;
@@ -212,10 +223,10 @@ public final class GitDiffs {
   /** The commit {@code ref} names, or null when it names none. */
   private static @Nullable String resolve(Path directory, Map<String, String> environment, String ref) {
     String sha = probe(directory, environment, "rev-parse", "--verify", "-q", ref + "^{commit}");
-    return sha == null || sha.isBlank() ? null : sha.trim();
+    return sha == null || sha.isEmpty() ? null : sha;
   }
 
-  /** The output of a lookup, or null when git finds nothing, which it reports by failing. */
+  /** The trimmed output of a lookup, or null when git finds nothing, which it reports by failing. */
   private static @Nullable String probe(Path directory, Map<String, String> environment, String... arguments) {
     try {
       return Worktrees.git(directory, environment, arguments).trim();
@@ -227,23 +238,19 @@ public final class GitDiffs {
   /**
    * What the checkout has to diff.
    *
-   * @param headLabel the branch name, or the short commit on a detached HEAD
-   * @param head the checked-out commit, null before the first commit
    * @param uncommitted how many files differ from HEAD, untracked ones included
    * @param base the default branch's name, like {@code origin/main}, when the branch has one
-   * @param branchCommits how many commits the branch has since {@code mergeBase}
+   * @param branch the branch's commits since {@code base}, only when it has some
+   * @param branchCommits how many commits the branch has since it left {@code base}
    * @param commits the branch's own commits, newest first, or HEAD's newest when there is no base; at most
    *   {@link #COMMIT_LIMIT}
    */
   public record Sources(
-    Path topLevel,
-    String headLabel,
-    @Nullable String head,
     int uncommitted,
-    @Nullable String base,
-    @Nullable String mergeBase,
-    int branchCommits,
     BranchState branchState,
+    @Nullable String base,
+    @Nullable Branch branch,
+    int branchCommits,
     List<Commit> commits
   ) {
   }
@@ -263,8 +270,20 @@ public final class GitDiffs {
   public record Uncommitted() implements Source {
   }
 
-  /** The branch's commits since it left its base branch, without uncommitted changes. */
-  public record Branch() implements Source {
+  /**
+   * The branch's commits since it left its base branch, without uncommitted changes. Holds the commits as read, so the
+   * diff shows what the menu said even when the branch moved since.
+   *
+   * @param base the base branch's name, like {@code origin/main}
+   * @param headName the branch and its short commit, or only the commit on a detached HEAD
+   */
+  public record Branch(
+    String base,
+    String mergeBase,
+    String mergeBaseShort,
+    String head,
+    String headName
+  ) implements Source {
   }
 
   /** One commit against its first parent. */
@@ -305,10 +324,11 @@ public final class GitDiffs {
   ) {
   }
 
-  /** @param bytes the file, null when it is larger than the limit */
+  /** @param bytes the file, null when it is larger than the limit or a submodule */
   public record Content(
     byte[] bytes,
-    long size
+    long size,
+    boolean isSubmodule
   ) {
   }
 
