@@ -16,6 +16,10 @@ import org.jetbrains.annotations.NotNull;
 @Service(Service.Level.APP)
 @State(name = "TakoSettings", storages = @Storage("tako.xml"))
 public final class ChatSettings implements PersistentStateComponent<ChatSettings.Data> {
+  public static final int DEFAULT_IDLE_DAYS = 7;
+  public static final int MIN_IDLE_DAYS = 1;
+  public static final int MAX_IDLE_DAYS = 365;
+
   private Data data = new Data();
 
   public static ChatSettings getInstance() {
@@ -42,6 +46,13 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
     public String defaultAgent = "claude";
     /** Lets one prompt start several runs at once, each in its own git worktree. */
     public boolean parallelRuns;
+    /** A prompt sent while the agent works steers its running turn instead of waiting for it to end. */
+    public boolean steerWhileWorking;
+    /** Archives a thread in a worktree of its own once its pull request is merged or closed. */
+    public boolean settleOnPullRequest;
+    /** Archives a thread after {@link #settleIdleDays} without activity. */
+    public boolean settleIdle;
+    public int settleIdleDays = DEFAULT_IDLE_DAYS;
 
     @OptionTag("executablePath")
     public String claudePath = "";
@@ -60,6 +71,11 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
 
     /** ACP agents, one {@code Name = command line} per line. */
     public String acpAgents = "Gemini CLI = gemini --acp";
+
+    /** The idle days within the allowed range, as a hand-edited file may hold any number. */
+    public int idleDays() {
+      return Math.clamp(this.settleIdleDays, MIN_IDLE_DAYS, MAX_IDLE_DAYS);
+    }
 
     public AgentDefaults claudeDefaults() {
       return new AgentDefaults(this.claudeModel, this.claudeMode, this.claudeEffort);

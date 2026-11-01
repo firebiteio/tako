@@ -6,14 +6,6 @@ import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.t
 
-private val SIDE_COMMAND = Regex("^/(?:side|btw)(?:\\s+(.*))?$", setOf(RegexOption.IGNORE_CASE, RegexOption.DOT_MATCHES_ALL))
-
-/** The names of Tako's own slash commands that start a side chat. */
-val SIDE_COMMANDS = listOf("side", "btw")
-
-/** The question of a typed `/side` or `/btw` prompt, empty without one; null for any other text. */
-fun sideCommand(text: String): String? = SIDE_COMMAND.matchEntire(text.trim())?.let { it.groupValues[1].trim() }
-
 /** The prompts the agent got in the turn, as its session counts them: the turn's prompt and its follow-ups. */
 private val Turn.promptCount: Int
   get() = (if (this.prompt != null) 1 else 0) + this.items.count { it is TurnItem.FollowUp }

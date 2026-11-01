@@ -11,6 +11,7 @@ import io.firebite.tako.agent.AgentEvent
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.ToolKind
+import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.ide.context.ContextItem
 
 enum class EntryStatus { RUNNING, DONE, ERROR, DECLINED }
@@ -117,8 +118,8 @@ sealed interface TurnItem {
   /** A task that ended after its turn, said at the end of the conversation. */
   class Completion(val card: TaskCard) : TurnItem
 
-  /** A plan the agent proposes. */
-  class Plan(val plan: String) : TurnItem
+  /** A plan the agent proposes. @param requestId the approval it waits for, null for a replayed plan */
+  class Plan(val plan: String, val requestId: String? = null) : TurnItem
 
   /** A prompt sent while the turn ran, which the agent took into it. */
   class FollowUp(val prompt: Prompt) : TurnItem
@@ -129,8 +130,10 @@ class Prompt(val text: String, val contexts: List<ContextItem>, val images: List
   val at = System.currentTimeMillis()
 }
 
-/** A prompt the agent holds until the running turn ends; [no] is the chat's number for the turn it starts. */
-class QueuedPrompt(val no: Int, val prompt: Prompt)
+/** A prompt the agent has not taken yet; [no] is the chat's number for the turn it starts. */
+class QueuedPrompt(val no: Int, val prompt: Prompt, status: QueuedPrompts.Status = QueuedPrompts.Status.HELD) {
+  var status by mutableStateOf(status)
+}
 
 /** A finished turn's work up to its end or a follow-up, folded under "Worked for …". */
 class Fold(val label: String, val items: Set<TurnItem>) {

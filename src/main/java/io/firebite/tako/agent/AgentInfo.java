@@ -30,6 +30,7 @@ public record AgentInfo(
    * @param declineReason the agent reads {@link PermissionAnswer#message} when a permission prompt is declined
    * @param resume  a new process can resume the session, so the thread can restart its agent
    * @param rewind  {@link AgentBackend#rewind} makes the session forget its later prompts
+   * @param steer   {@link AgentSession#steer} hands a prompt to the running turn
    */
   public record Capabilities(
     boolean images,
@@ -37,7 +38,8 @@ public record AgentInfo(
     boolean fork,
     boolean declineReason,
     boolean resume,
-    boolean rewind
+    boolean rewind,
+    boolean steer
   ) {
   }
 

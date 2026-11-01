@@ -29,6 +29,15 @@ public final class Worktrees {
     return Path.of(git(directory, environment, "rev-parse", "--show-toplevel").trim());
   }
 
+  /** The main checkout's top folder, also when {@code directory} is in a linked worktree. */
+  public static Path mainCheckout(Path directory, Map<String, String> environment) throws GitException {
+    String commonDir = git(directory, environment, "rev-parse", "--path-format=absolute", "--git-common-dir").trim();
+    if (commonDir.isEmpty()) {
+      throw new GitException("git rev-parse found no repository");
+    }
+    return Path.of(commonDir).getParent();
+  }
+
   public static String head(Path repository, Map<String, String> environment) throws GitException {
     return git(repository, environment, "rev-parse", "HEAD").trim();
   }
@@ -203,10 +212,18 @@ public final class Worktrees {
 
   static String git(Path directory, Map<String, String> environment, String... arguments)
     throws GitException {
+    return new String(gitBytes(directory, environment, arguments), StandardCharsets.UTF_8);
+  }
+
+  /** Git's output as it wrote it, for file contents in any encoding. */
+  static byte[] gitBytes(Path directory, Map<String, String> environment, String... arguments)
+    throws GitException {
     Path output = createTemp(".out");
     try {
       run(directory, environment, output, arguments);
-      return readText(output);
+      return Files.readAllBytes(output);
+    } catch (IOException e) {
+      throw new GitException(e.getMessage());
     } finally {
       deleteQuietly(output);
     }

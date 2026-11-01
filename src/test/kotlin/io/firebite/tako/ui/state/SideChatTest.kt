@@ -79,17 +79,35 @@ class SideChatTest : BasePlatformTestCase() {
     return turn
   }
 
+  private fun sideQuestion(text: String): String? {
+    val invocation = parseTakoCommand(text) ?: return null
+    val main = this.thread()
+    return (main.resolve(invocation) as? TakoAction.SideChat)?.question
+  }
+
   fun testSideCommandTakesTheQuestionAfterSideOrBtw() {
-    assertEquals("why?", sideCommand("/side why?"))
-    assertEquals("why?", sideCommand("/BTW   why?"))
-    assertEquals("line one\nline two 🐙", sideCommand("/side line one\nline two 🐙\n"))
-    assertEquals("", sideCommand("/side"))
-    assertEquals("", sideCommand("  /btw \n "))
-    assertNull(sideCommand("/sidebar"))
-    assertNull(sideCommand("/sides why"))
-    assertNull(sideCommand("/btwx"))
-    assertNull(sideCommand("ask /side later"))
-    assertNull(sideCommand(""))
+    assertEquals("why?", this.sideQuestion("/side why?"))
+    assertEquals("why?", this.sideQuestion("/BTW   why?"))
+    assertEquals("line one\nline two 🐙", this.sideQuestion("/side line one\nline two 🐙\n"))
+    assertEquals("", this.sideQuestion("/side"))
+    assertEquals("", this.sideQuestion("/btw \n "))
+    assertNull(this.sideQuestion("/sidebar"))
+    assertNull(this.sideQuestion("/sides why"))
+    assertNull(this.sideQuestion("/btwx"))
+    assertNull(this.sideQuestion("ask /side later"))
+    assertNull(this.sideQuestion(""))
+    assertEquals("an escaped one goes to the agent", "/side why?", escapedTakoCommand("//side why?"))
+  }
+
+  fun testSideChatsDontForkArchiveOrSwitchAgent() {
+    val side = this.sideChat(this.thread())
+
+    for (command in listOf("/fork", "/archive", "/agent codex")) {
+      assertTrue(command, side.resolve(parseTakoCommand(command)!!) is TakoAction.Fail)
+    }
+    assertTrue(side.resolve(parseTakoCommand("/side more")!!) is TakoAction.SideChat)
+    assertTrue(side.slashMenu("/").items.none { it.name == "fork" || it.name == "archive" })
+    assertTrue(side.slashMenu("/").items.any { it.name == "side" })
   }
 
   fun testSettledPromptsStopAtTheRunningTurn() {
@@ -169,7 +187,7 @@ class SideChatTest : BasePlatformTestCase() {
     assertEquals(1, SideChats.of(this.store, main.id).size)
   }
 
-  fun testSideCommandOfAClosedThreadKeepsTheText() {
+  fun testSideCommandOfAClosedThreadStartsNothing() {
     val main = this.thread()
     this.show(main)
     this.store.remove(main.id)
@@ -177,8 +195,20 @@ class SideChatTest : BasePlatformTestCase() {
 
     main.submit()
 
-    assertEquals("/side why?", main.input.text.toString())
     assertFalse(main.startingSideChat)
+    assertTrue(SideChats.of(this.store, main.id).isEmpty())
+  }
+
+  fun testASecondSideCommandWhileOneStartsSaysSoAndKeepsTheText() {
+    val main = this.thread()
+    this.show(main)
+    main.startingSideChat = true
+    main.input.setTextAndPlaceCursorAtEnd("/btw why?")
+
+    main.submit()
+
+    assertEquals("/btw why?", main.input.text.toString())
+    assertEquals(1, main.alerts.size)
   }
 
   fun testOwnTurnsWithoutAPromptAfterTheInheritedOnesShow() {
@@ -355,24 +385,6 @@ class SideChatTest : BasePlatformTestCase() {
     assertNull("a working side chat offers no undo", this.workspace.archivedToast)
   }
 
-  fun testAShownSideChatEndsTurnsRead() {
-    val main = this.thread()
-    this.show(main)
-    val side = this.sideChat(main)
-    this.workspace.showSideChat(side.id, false)
-    side.startTurn(Prompt("why?", emptyList(), emptyList()), false)
-    side.setBusy(true)
-
-    side.handleEvent(ended())
-    assertFalse(side.unread)
-
-    main.sideChatShown = null
-    side.startTurn(Prompt("and?", emptyList(), emptyList()), false)
-    side.setBusy(true)
-    side.handleEvent(ended())
-    assertTrue(side.unread)
-  }
-
   fun testBringBackQuotesTheAnswerUnderTheTitleAfterWhatIsTyped() {
     val main = this.thread()
     this.show(main)
@@ -499,5 +511,5 @@ class SideChatTest : BasePlatformTestCase() {
     null, null, false, emptyList(), emptyList(), null)
 
   private fun info(fork: Boolean) = AgentInfo("claude", "Claude Code", "", AgentInfo.Capabilities(true, true, fork,
-    true, true, true), emptyList(), null, emptyList(), null, null, emptyList())
+    true, true, true, false), emptyList(), null, emptyList(), null, null, emptyList())
 }

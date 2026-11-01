@@ -4,6 +4,7 @@ import io.firebite.tako.agent.AgentEvent;
 import io.firebite.tako.agent.AgentInfo;
 import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.agent.PermissionPrompt;
+import io.firebite.tako.chat.thread.QueuedPrompts;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.ProjectIcons;
@@ -92,14 +93,22 @@ public sealed interface ChatMessage {
     long firstTurnMillis,
     @Nullable String parentId,
     @Nullable String watching,
+    boolean pinned,
+    boolean unread,
+    long snoozedUntil,
     boolean sideChat,
     int inheritedPrompts
   ) {
   }
 
-  /** What the settings let the chat offer. */
+  /**
+   * What the settings let the chat offer.
+   *
+   * @param steers a prompt sent while the agent works steers its turn by default, instead of queuing
+   */
   record Settings(
-    boolean parallelRuns
+    boolean parallelRuns,
+    boolean steers
   ) implements WorkspaceMessage {
   }
 
@@ -275,6 +284,65 @@ public sealed interface ChatMessage {
     int code,
     String stderr
   ) implements ThreadMessage {
+  }
+
+  /**
+   * The prompts the agent has not taken that the chat shows as queued, in order.
+   *
+   * @param held    they wait until a prompt is sent, after a stop, an error or the agent's end
+   * @param running a turn runs or a prompt is on its way to the agent
+   */
+  record Queue(
+    List<QueueItem> items,
+    boolean held,
+    boolean running
+  ) implements ThreadMessage {
+  }
+
+  record QueueItem(
+    int turn,
+    QueuedPrompts.Status status
+  ) {
+  }
+
+  /**
+   * The thread closed with prompts queued, which went to the prompt stash.
+   *
+   * @param count how many the stash kept
+   */
+  record QueueStashed(
+    int count
+  ) implements ThreadMessage {
+  }
+
+  /**
+   * How the {@code .worktreesetup} of the thread's new worktree is doing. DONE with no steps only takes the card away.
+   *
+   * @param step      the running or failed command's number, from 1
+   * @param output    the end of the output so far
+   * @param error     why it failed, when it did
+   * @param startedAt when the setup started, in epoch millis
+   * @param endedAt   when it ended, 0 while it runs
+   */
+  record Setup(
+    SetupPhase phase,
+    int step,
+    int steps,
+    String command,
+    String output,
+    @Nullable String error,
+    long startedAt,
+    long endedAt
+  ) implements ThreadMessage {
+  }
+
+  enum SetupPhase {
+    RUNNING,
+    /** Failed or cancelled; the thread's prompts wait for a retry or a start without setup. */
+    FAILED,
+    DONE,
+    /** The person started the agent without setup. */
+    SKIPPED
   }
 
   /** Sends a prompt as if the person typed it, e.g. the one an agent gave the thread it created. */

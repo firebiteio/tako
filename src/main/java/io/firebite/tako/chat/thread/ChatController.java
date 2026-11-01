@@ -1,5 +1,6 @@
 package io.firebite.tako.chat.thread;
 
+import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.Disposable;
 import com.intellij.openapi.application.ApplicationManager;
 import com.intellij.openapi.application.ModalityState;
@@ -32,6 +33,7 @@ import io.firebite.tako.chat.git.Blocker;
 import io.firebite.tako.chat.git.GitActionFlow;
 import io.firebite.tako.chat.git.GitDrafts;
 import io.firebite.tako.chat.git.ThreadGit;
+import io.firebite.tako.chat.store.PromptStash;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
@@ -44,6 +46,7 @@ import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.FileIndex;
 import io.firebite.tako.ide.project.GitCommands;
+import io.firebite.tako.ide.project.GitDiffs;
 import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.Worktrees;
@@ -58,9 +61,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
-import java.util.Set;
 import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
@@ -97,10 +98,12 @@ public final class ChatController implements Disposable {
   private final Object heldLock = new Object();
   /** Done once the prompts held for a git action went out. Guarded by {@link #heldLock}. */
   private CompletableFuture<Void> held = CompletableFuture.completedFuture(null);
-  /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
-  private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
-  /** Sends prompts one at a time, in the order the chat sent them. */
+  /** The prompts the agent has not taken yet, which the state follows. */
+  private final QueuedPrompts queue = new QueuedPrompts(this::queueChanged);
+  /** Sends prompts one at a time, in the order the chat and the queue decided. */
   private final ExecutorService sender = AppExecutorUtil.createBoundedApplicationPoolExecutor("Tako Send", 1);
+  /** How many prompts the session got before the next queued one, which names its file checkpoint. */
+  private volatile int promptsSent;
   /** Guards starting a rewind. */
   private final Object rewindLock = new Object();
   /** Prompts {@link #submit} holds back until the running rewind is done. */
@@ -112,6 +115,8 @@ public final class ChatController implements Disposable {
   private volatile State state = State.STARTING;
   private volatile boolean isDisposed;
   private volatile boolean hasTools;
+  /** Whether the running agent takes prompts into its running turn. */
+  private volatile boolean canSteer;
   private volatile @Nullable String error;
   private volatile @Nullable String workingDirectory;
   private volatile @Nullable String scratchpadPath;
@@ -119,6 +124,8 @@ public final class ChatController implements Disposable {
   private volatile boolean isTitled;
   /** Set by {@link #restartSession} until the next launch, whose session's past the chat already shows. */
   private volatile boolean keepsTimeline;
+  /** The setup of the thread's new worktree, which its prompts wait for, while it has not run yet. */
+  private final @Nullable WorktreeSetup setup;
   /** Done unless a {@link #rewind} runs. */
   private volatile CompletableFuture<Void> rewinding = CompletableFuture.completedFuture(null);
   /** Whether the running agent's sessions can be rewound, so prompts get file checkpoints. */
@@ -136,13 +143,28 @@ public final class ChatController implements Disposable {
     this.isTitled = record.sessionId != null && !record.sideChat
       || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
+    ThreadStore.PendingSetup pending = record.pendingSetup;
+    this.setup = pending == null
+      ? null
+      : new WorktreeSetup(pending, new SetupListener(), this::isTrusted, WorktreeSetup.TIMEOUT_MILLIS);
     this.git = new ThreadGit(() -> {
       String folder = this.gitFolder();
       return folder == null ? null : Path.of(folder);
     }, EnvironmentUtil.getEnvironmentMap(), this::busyIn, GitHubCli.GH);
   }
 
-  /** Replays the thread's past, if it has one, and starts its agent. */
+  /** Whether the IDE trusts the thread's project, and its project folder when that is another one than the IDE's. */
+  private boolean isTrusted() {
+    String folder = this.record.projectPath;
+    boolean isOwnFolder = folder == null || ThreadStore.samePath(folder, this.project.getBasePath());
+    return TrustedProjects.isProjectTrusted(this.project)
+      && (isOwnFolder || TrustedProjects.isProjectTrusted(Path.of(folder)));
+  }
+
+  /**
+   * Replays the thread's past, if it has one, and starts its agent. In a new worktree the agent starts once the
+   * worktree's setup is through, so it loads what the setup installed.
+   */
   public void open() {
     this.open((ChatMessage.Submit) null);
   }
@@ -180,7 +202,13 @@ public final class ChatController implements Disposable {
             this.recordChanged();
           }
         }
-        this.launch(resume);
+        if (this.setup != null) {
+          String resumed = resume;
+          this.setup.start();
+          this.setup.startWhenReady(() -> this.launch(resumed));
+        } else {
+          this.launch(resume);
+        }
       } finally {
         this.opened.complete(null);
       }
@@ -197,7 +225,9 @@ public final class ChatController implements Disposable {
   }
 
   private void submit(ChatMessage.Submit prompt) {
-    this.setState(State.WORKING);
+    if (this.state != State.WAITING) {
+      this.setState(State.WORKING);
+    }
     this.error = null;
     CompletableFuture<Void> rewind;
     boolean isDeferred;
@@ -218,8 +248,40 @@ public final class ChatController implements Disposable {
     this.view.post(prompt);
   }
 
+  /**
+   * Stops the running turn. The queued prompts wait until a prompt is sent. When nothing is left running at once, e.g.
+   * a prompt that had not reached the agent, the chat ends its turn as stopped, since no turn's end will. While prompts
+   * wait for the worktree setup it cancels the setup instead, and while they wait after it failed it does nothing: the
+   * setup's card offers the way on.
+   */
   public void interrupt() {
+    if (this.setup != null && (this.setup.holdsFailed() || this.setup.cancelHeld())) {
+      return;
+    }
+    if (this.queue.stop()) {
+      this.view.post(new ChatMessage.Event(new AgentEvent.Interrupted()));
+      this.view.post(new ChatMessage.Event(new AgentEvent.TurnEnded(null, null, null)));
+    }
     this.connection.ifLive(AgentSession::interrupt);
+  }
+
+  public void retrySetup() {
+    if (this.setup != null) {
+      this.setup.retry();
+    }
+  }
+
+  /** Sends the prompts that wait for the worktree setup without it. */
+  public void skipSetup() {
+    if (this.setup != null) {
+      this.setup.skip();
+    }
+  }
+
+  public void cancelSetup() {
+    if (this.setup != null) {
+      this.setup.cancel();
+    }
   }
 
   /**
@@ -283,7 +345,9 @@ public final class ChatController implements Disposable {
 
   /**
    * Re-reads branch and worktree, which is local and cheap. Asks for the pull request only when the branch changed or
-   * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. Call off the EDT.
+   * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. A thread in a folder of its own keeps its pull
+   * request when none is found and it is not on another branch, e.g. once the merge deleted the branch, so auto archive
+   * still sees how it ended. Call off the EDT.
    */
   public void refreshGit() {
     String directory = this.gitFolder();
@@ -300,6 +364,10 @@ public final class ChatController implements Disposable {
     } else if (branchChanged || now - this.lastPullRequestCheck > PULL_REQUEST_INTERVAL_MILLIS) {
       this.lastPullRequestCheck = now;
       pullRequest = GitInfo.pullRequest(Path.of(directory), environment);
+    }
+    boolean isOtherBranch = info.branch() != null && branchChanged;
+    if (pullRequest == null && this.record.workPath != null && !isOtherBranch) {
+      pullRequest = this.record.pullRequest;
     }
     if (!branchChanged && Objects.equals(info.worktree(), this.record.worktree)
       && Objects.equals(pullRequest, this.record.pullRequest)) {
@@ -446,7 +514,66 @@ public final class ChatController implements Disposable {
       this.isDisposed = true;
       this.stateLock.notifyAll();
     }
+    this.stash(false);
+    if (this.setup != null) {
+      this.disposeSetup(this.setup);
+    }
     this.connection.stop();
+  }
+
+  /** Puts the queued prompts in the project's prompt stash now and closes the queue, e.g. as the project closes. */
+  public void stashQueued() {
+    this.stash(true);
+  }
+
+  /** @param now write on this thread, else on a pooled one */
+  private void stash(boolean now) {
+    List<ChatMessage.Submit> prompts = this.queue.drain();
+    if (prompts.isEmpty() || this.project.isDisposed()) {
+      return;
+    }
+    Runnable write = () -> {
+      if (this.project.isDisposed()) {
+        LOG.warn("The project closed before the queued prompts of thread " + this.record.id + " were stashed");
+        return;
+      }
+      try {
+        int kept = PromptStash.getInstance(this.project).pushAll(prompts);
+        this.view.post(new ChatMessage.QueueStashed(kept));
+      } catch (IOException | IllegalStateException e) {
+        LOG.warn("Could not stash the queued prompts of thread " + this.record.id, e);
+      }
+    };
+    if (now) {
+      write.run();
+    } else {
+      Async.inBackground(write);
+    }
+  }
+
+  /** Stops the setup and clears what the chat shows of it: its card, and the turn of a prompt that waited for it. */
+  private void disposeSetup(WorktreeSetup worktreeSetup) {
+    boolean holds = worktreeSetup.holdsPrompts();
+    boolean showsCard = worktreeSetup.showsCard();
+    worktreeSetup.dispose();
+    if (showsCard) {
+      this.view.post(new ChatMessage.Setup(ChatMessage.SetupPhase.DONE, 0, 0, "", "", null, 0, 0));
+    }
+    if (holds) {
+      this.view.post(new ChatMessage.Exit(0, ""));
+    }
+  }
+
+  /** The agent is ready. A prompt sent to it meanwhile already made the thread work, which stays so. */
+  private void idleIfStarting() {
+    synchronized (this.stateLock) {
+      if (this.state != State.STARTING) {
+        return;
+      }
+      this.state = State.IDLE;
+      this.stateLock.notifyAll();
+    }
+    Async.onEdt(this.host::stateChanged);
   }
 
   private void setState(State state) {
@@ -494,61 +621,138 @@ public final class ChatController implements Disposable {
       }
       this.hasTools = launch.toolsUrl() != null && session.takesTools();
       this.canRewind = info.capabilities().rewind() && !this.record.sideChat;
+      this.canSteer = info.capabilities().steer();
       ChatMessage.Submit prompt = this.firstPrompt.getAndSet(null);
       this.view.post(new ChatMessage.Init(info, this.projectPath()));
       this.refreshContext();
       if (prompt != null) {
         this.submit(prompt);
+      } else if (!forPrompt && this.deferredSubmits.get() == 0 && this.setup != null) {
+        this.setup.settle(this::idleIfStarting);
       } else if (!forPrompt && this.deferredSubmits.get() == 0) {
-        this.setState(State.IDLE);
+        this.idleIfStarting();
       }
     });
   }
 
   /**
-   * Sends a prompt, starting the agent if it is not running.
+   * Sends a prompt, starting the agent if it is not running. While a turn runs, the prompt waits in the queue or, if
+   * asked and the agent can, steers that turn. Call on the EDT.
    *
    * @param turn    the chat's number for this prompt's turn, which {@link #showTurnDiff} names later
    * @param prompts how many prompts the session got before this one, which names its file checkpoint
+   * @return what became of it: sent, queued or steering
    */
-  public void send(String text, List<ContextItem> context, List<ImageAttachment> attached, int turn, int prompts) {
+  public QueuedPrompts.Action send(String text, List<ContextItem> context, List<ImageAttachment> images, int turn,
+    int prompts, QueuedPrompts.Delivery delivery) {
+    ChatMessage.Submit prompt = new ChatMessage.Submit(text, context, images);
+    QueuedPrompts.Action action = this.queue.offer(turn, prompt, delivery, this.canSteer);
+    if (action != QueuedPrompts.Action.HOLD && !this.queue.isClosed()) {
+      this.deliver(turn, prompt, action == QueuedPrompts.Action.STEER,
+        action == QueuedPrompts.Action.SEND ? prompts : null);
+    }
+    return action;
+  }
+
+  /** Takes a queued prompt out of the queue, e.g. to edit it. Null once it is on its way. */
+  public ChatMessage.@Nullable Submit unqueue(int turn) {
+    return this.queue.take(turn);
+  }
+
+  /** Swaps a queued prompt with the one queued before it. */
+  public void moveQueuedUp(int turn) {
+    this.queue.moveUp(turn);
+  }
+
+  /**
+   * Sends a queued prompt now: next, after stopping the running turn, or at once when none runs.
+   *
+   * @return what became of it
+   */
+  public QueuedPrompts.SendNow sendQueuedNow(int turn) {
+    ChatMessage.Submit prompt = this.queue.promptOf(turn);
+    QueuedPrompts.SendNow result = this.queue.sendNow(turn);
+    switch (result) {
+      case INTERRUPT -> this.connection.ifLive(AgentSession::interrupt);
+      case SEND -> this.deliver(turn, Objects.requireNonNull(prompt), false, null);
+      case QUEUED, NONE -> {
+      }
+    }
+    return result;
+  }
+
+  /** Hands a queued prompt to the running turn. */
+  public void steerQueued(int turn) {
+    ChatMessage.Submit prompt = this.queue.promptOf(turn);
+    if (prompt != null && this.queue.steer(turn, this.canSteer)) {
+      this.deliver(turn, prompt, true, null);
+    }
+  }
+
+  /**
+   * Composes the prompt and hands it to the agent after the prompts handed before it.
+   *
+   * @param prompts how many prompts the session got before this one, or null to count on from the last one sent
+   */
+  private void deliver(int turn, ChatMessage.Submit prompt, boolean steer, @Nullable Integer prompts) {
     List<ImageAttachment> images = new ArrayList<>();
-    for (ImageAttachment image : attached) {
+    for (ImageAttachment image : prompt.images()) {
       if (image.isValid()) {
         images.add(image);
       }
     }
-    Async.onEdt(() -> {
-      String composed = text.isBlank() && !images.isEmpty()
-        ? ""
-        : PromptComposer.compose(text, context);
-      String folder = this.projectFolder();
-      String prompt = this.record.workPath != null && folder != null
-        ? PromptComposer.rebase(composed, folder, this.record.workPath)
-        : composed;
-      this.sender.execute(() -> this.sendPrompt(text, prompt, images, turn, prompts));
-    });
+    String text = prompt.text();
+    String composed = text.isBlank() && !images.isEmpty()
+      ? ""
+      : PromptComposer.compose(text, prompt.context());
+    String folder = this.projectFolder();
+    String rebased = this.record.workPath != null && folder != null
+      ? PromptComposer.rebase(composed, folder, this.record.workPath)
+      : composed;
+    this.sender.execute(() -> this.sendPrompt(text, rebased, images, turn, steer, prompts));
   }
 
-  /** Runs on {@link #sender}, so a prompt waits for the one before it, and for a rewind. */
-  private void sendPrompt(String typed, String prompt, List<ImageAttachment> images, int turn, int prompts) {
+  /** Runs on {@link #sender}, so a prompt waits for the one before it, for the worktree setup and for a rewind. */
+  private void sendPrompt(String typed, String prompt, List<ImageAttachment> images, int turn, boolean steer,
+    @Nullable Integer prompts) {
     this.opened.join();
+    if (this.setup != null) {
+      this.setup.whenReady(() -> this.sendReady(typed, prompt, images, turn, steer, prompts));
+    } else {
+      this.sendReady(typed, prompt, images, turn, steer, prompts);
+    }
+  }
+
+  /**
+   * Runs on {@link #sender}, or in order on the setup's thread for prompts that waited for it. Starts the agent if
+   * needed, then hands it the prompt, unless the queue took it back meanwhile.
+   */
+  private void sendReady(String typed, String prompt, List<ImageAttachment> images, int turn, boolean steer,
+    @Nullable Integer prompts) {
+    if (this.isDisposed) {
+      return;
+    }
     this.rewinding.join();
+    if (this.isDisposed) {
+      return;
+    }
     AgentSession session = this.connection.live();
     if (session == null) {
       this.launch(this.record.sessionId, true).handle((ready, error) -> null).join();
-      this.promptStarted(typed, prompt, images, turn, prompts);
+      session = this.connection.live();
+      if (session == null || this.state == State.STOPPED || this.isDisposed) {
+        return;
+      }
+    }
+    if (!this.queue.dispatch(turn, steer)) {
+      if (this.state == State.STARTING && !this.queue.isRunning()) {
+        this.setState(State.IDLE);
+      }
       return;
     }
-    this.prompt(session, typed, prompt, images, turn, prompts);
-  }
-
-  /** Sends the prompt to the agent it launched, once that is ready, unless it did not start. */
-  private void promptStarted(String typed, String prompt, List<ImageAttachment> images, int turn, int prompts) {
-    AgentSession session = this.connection.live();
-    if (session != null && this.state != State.STOPPED) {
-      this.prompt(session, typed, prompt, images, turn, prompts);
-    }
+    int before = prompts != null ? prompts : this.promptsSent;
+    this.promptsSent = before + 1;
+    this.prompt(session, typed, prompt, images, turn, steer, before);
   }
 
   /**
@@ -557,13 +761,13 @@ public final class ChatController implements Disposable {
    * Held prompts go out in order, off the calling thread, which may be the agent's own.
    */
   private void prompt(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn,
-    int prompts) {
+    boolean steer, int prompts) {
     boolean holdsNone;
     synchronized (this.heldLock) {
       holdsNone = this.held.isDone();
     }
-    this.checkpoint(prompts, typed, holdsNone && !this.turnRunning && this.untakenTurns.isEmpty());
-    this.setState(State.WORKING);
+    this.checkpoint(prompts, typed, holdsNone && !steer && !this.turnRunning && this.queue.owesOnly(turn));
+    this.queue.refresh();
     String folder = this.gitFolder();
     synchronized (this.heldLock) {
       boolean holds = !this.held.isDone() || folder != null && ThreadGit.hasActions(Path.of(folder));
@@ -573,28 +777,43 @@ public final class ChatController implements Disposable {
             ThreadGit.awaitActions(Path.of(folder));
           }
           if (!this.isDisposed) {
-            this.promptNow(session, typed, prompt, images, turn);
+            this.promptNow(session, typed, prompt, images, turn, steer);
           }
         }, AppExecutorUtil.getAppExecutorService());
         return;
       }
     }
-    this.promptNow(session, typed, prompt, images, turn);
+    this.promptNow(session, typed, prompt, images, turn, steer);
   }
 
-  private void promptNow(AgentSession session, String typed, String prompt, List<ImageAttachment> images,
-    int turn) {
-    this.setState(State.WORKING);
+  private void promptNow(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn,
+    boolean steer) {
     this.error = null;
-    this.untakenTurns.add(turn);
     this.conversation.send(turn, typed);
-    session.prompt(prompt, images, turn);
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
       this.isTitled = true;
       String title = titleOf(typed);
       Async.onEdt(() -> this.host.setTitle(title));
     }
+    if (steer) {
+      session.steer(prompt, images, turn).thenAccept(isTaken -> {
+        if (isTaken || !session.isAlive()) {
+          return;
+        }
+        if (this.queue.steerRefused(turn)) {
+          session.prompt(prompt, images, turn);
+          return;
+        }
+        QueuedPrompts.Entry next = this.queue.settle();
+        if (next != null) {
+          this.deliver(next.turn(), next.prompt(), false, null);
+        }
+      });
+    } else {
+      session.prompt(prompt, images, turn);
+    }
+    this.queue.refresh();
   }
 
   /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
@@ -861,6 +1080,41 @@ public final class ChatController implements Disposable {
     }
   }
 
+  /** What the thread's checkout can show a diff of, or null without a folder. Reads git, so call off the EDT. */
+  public @Nullable GitDiffs.Sources gitDiffSources() throws Worktrees.GitException {
+    String directory = this.gitFolder();
+    return directory == null ? null : GitDiffs.sources(Path.of(directory), EnvironmentUtil.getEnvironmentMap());
+  }
+
+  /** Shows what the source changed in the thread's checkout. Works in any state, since it only reads git. */
+  public void showGitDiff(GitDiffs.Source source) {
+    Async.inBackground(() -> {
+      String directory = this.gitFolder();
+      if (directory == null) {
+        return;
+      }
+      Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+      GitDiffs.Changes changes;
+      try {
+        changes = GitDiffs.changes(Path.of(directory), source, environment);
+      } catch (Worktrees.GitException e) {
+        this.postError(TakoBundle.message("error.git.diff", e.getMessage()));
+        return;
+      }
+      if (changes.files().isEmpty()) {
+        this.postError(switch (source) {
+          case GitDiffs.Uncommitted uncommitted -> TakoBundle.message("error.git.diff.empty.uncommitted");
+          case GitDiffs.Branch branch -> TakoBundle.message("error.git.diff.empty.branch");
+          case GitDiffs.Commit commit -> TakoBundle.message("error.git.diff.empty.commit");
+        });
+        return;
+      }
+      String before = changes.beforeName() != null ? changes.beforeName() : TakoBundle.message("diff.git.empty");
+      String after = changes.afterName() != null ? changes.afterName() : TakoBundle.message("diff.git.working.tree");
+      Async.onEdt(() -> IdeFiles.showGitDiffs(this.project, changes, before, after, environment));
+    });
+  }
+
   /** Attaches the clipboard's image, if it holds one. Must run on the EDT. */
   public void pasteImage() {
     Image image;
@@ -970,7 +1224,9 @@ public final class ChatController implements Disposable {
     this.view.post(new ChatMessage.Replay(events));
   }
 
+  /** Sends the next queued prompt only after the event was posted, so the chat hears of its turn after this one. */
   private void onEvent(AgentEvent event) {
+    QueuedPrompts.Entry next = null;
     switch (event) {
       case AgentEvent.SessionStarted started -> {
         if (started.sessionId() != null && !started.sessionId().equals(this.record.sessionId)) {
@@ -984,8 +1240,10 @@ public final class ChatController implements Disposable {
       }
       case AgentEvent.Busy busy -> {
         this.turnRunning = true;
+        this.queue.busy();
         this.setState(State.WORKING);
       }
+      case AgentEvent.Interrupted interrupted -> this.queue.interrupted();
       case AgentEvent.PermissionCancelled cancelled -> this.setState(State.WORKING);
       case AgentEvent.Text text -> {
         if (text.parentId() == null && !text.text().isBlank()) {
@@ -997,20 +1255,27 @@ public final class ChatController implements Disposable {
       }
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
-      case AgentEvent.TurnEnded ended -> this.onTurnEnded(ended);
-      case AgentEvent.PromptTaken taken -> this.onPromptTaken(taken);
+      case AgentEvent.TurnEnded ended -> next = this.onTurnEnded(ended);
+      case AgentEvent.PromptTaken taken -> next = this.onPromptTaken(taken);
       default -> {
       }
     }
     this.view.post(new ChatMessage.Event(event));
+    if (next != null) {
+      this.deliver(next.turn(), next.prompt(), false, null);
+    }
   }
 
-  /** A prompt that joins the running turn keeps its changes and answer under that turn. */
-  private void onPromptTaken(AgentEvent.PromptTaken taken) {
+  /**
+   * A prompt that joins the running turn keeps its changes and answer under that turn.
+   *
+   * @return the queued prompt to send next, when a steered prompt joined a turn that had already ended
+   */
+  private QueuedPrompts.@Nullable Entry onPromptTaken(AgentEvent.PromptTaken taken) {
     if (taken.startsTurn()) {
       this.turnRunning = true;
     }
-    this.untakenTurns.remove(taken.key());
+    boolean isLate = this.queue.taken(taken.key(), taken.startsTurn());
     this.conversation.take(taken.key());
     if (taken.startsTurn()) {
       this.changes.startTurn(taken.key());
@@ -1018,14 +1283,16 @@ public final class ChatController implements Disposable {
         this.answer.setLength(0);
       }
     }
+    return isLate ? this.queue.settle() : null;
   }
 
-  /** The thread stays working while prompts wait. */
-  private void onTurnEnded(AgentEvent.TurnEnded ended) {
+  /**
+   * The thread stays working while prompts wait, unless the turn was stopped or failed.
+   *
+   * @return the queued prompt to send next
+   */
+  private QueuedPrompts.@Nullable Entry onTurnEnded(AgentEvent.TurnEnded ended) {
     this.turnRunning = false;
-    if (this.untakenTurns.isEmpty()) {
-      this.setState(State.IDLE);
-    }
     this.error = ended.error();
     this.refreshContext();
     if (ended.cost() != null) {
@@ -1038,6 +1305,22 @@ public final class ChatController implements Disposable {
     }
     this.lastPullRequestCheck = 0;
     Async.inBackground(this::refreshGit);
+    return this.queue.turnEnded(ended.error() != null);
+  }
+
+  /**
+   * Under the queue's lock: the state follows whether a turn runs or a prompt is on its way. A thread done working
+   * needs a look.
+   */
+  private void queueChanged(ChatMessage.Queue snapshot) {
+    State current = this.state;
+    if (snapshot.running() && (current == State.IDLE || current == State.STOPPED || current == State.STARTING)) {
+      this.setState(State.WORKING);
+    } else if (!snapshot.running() && (current == State.WORKING || current == State.WAITING)) {
+      this.setState(State.IDLE);
+      Async.onEdt(() -> this.host.needsLook(false));
+    }
+    this.view.post(snapshot);
   }
 
   private void onPermission(String requestId, PermissionPrompt prompt) {
@@ -1047,14 +1330,21 @@ public final class ChatController implements Disposable {
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
       ? TakoBundle.message("notification.question", agent)
       : TakoBundle.message("notification.tool", agent, prompt.toolName());
-    Async.onEdt(() -> this.host.requestAttention(reason));
+    Async.onEdt(() -> {
+      this.host.needsLook(true);
+      this.host.requestAttention(reason);
+    });
   }
 
+  /** The queued prompts wait for the next prompt sent, which starts the agent again. */
   private void stopped(@Nullable String error) {
     this.turnRunning = false;
-    this.untakenTurns.clear();
-    this.setState(State.STOPPED);
+    if (this.setup != null) {
+      this.setup.dropHeld();
+    }
     this.error = error;
+    this.setState(State.STOPPED);
+    this.queue.stopped();
   }
 
   private void recordChanged() {
@@ -1083,6 +1373,40 @@ public final class ChatController implements Disposable {
     /** Works on a turn or waits for an answer in one, so the files may change any moment. */
     public boolean isInTurn() {
       return this == WORKING || this == WAITING;
+    }
+  }
+
+  /** Shows the setup in the chat and keeps the thread working, or waiting for the person, while prompts wait for it. */
+  private final class SetupListener implements WorktreeSetup.Listener {
+    /** The thread's error this setup set, which goes once the setup is through. */
+    private @Nullable String error;
+
+    @Override
+    public void changed(ChatMessage.Setup setup) {
+      ChatController.this.view.post(setup);
+    }
+
+    @Override
+    public void held(@Nullable String failure) {
+      this.error = failure != null ? TakoBundle.message("setup.failed", failure) : null;
+      ChatController.this.error = this.error;
+      ChatController.this.setState(failure != null ? State.WAITING : State.WORKING);
+    }
+
+    @Override
+    public void finished() {
+      if (this.error != null && this.error.equals(ChatController.this.error)) {
+        ChatController.this.error = null;
+      }
+      this.error = null;
+      ChatController.this.record.pendingSetup = null;
+      ChatController.this.recordChanged();
+    }
+
+    @Override
+    public void failed(String reason) {
+      String text = TakoBundle.message("setup.failed", reason);
+      Async.onEdt(() -> ChatController.this.host.requestAttention(text));
     }
   }
 

@@ -8,8 +8,11 @@ import com.intellij.diff.requests.DiffRequest;
 import com.intellij.diff.requests.SimpleDiffRequest;
 import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.application.ReadAction;
+import com.intellij.openapi.application.WriteAction;
 import com.intellij.openapi.command.WriteCommandAction;
+import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
+import com.intellij.openapi.fileEditor.FileDocumentManager;
 import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.fileEditor.OpenFileDescriptor;
 import com.intellij.openapi.fileTypes.FileType;
@@ -24,6 +27,7 @@ import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.EditPreview;
 import io.firebite.tako.ide.context.ReviewTarget;
+import io.firebite.tako.ide.project.GitDiffs;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
@@ -36,6 +40,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
 import java.util.Locale;
+import java.util.Map;
 import java.util.function.Function;
 import org.jetbrains.annotations.Nullable;
 
@@ -163,6 +168,18 @@ public final class IdeFiles {
     DiffManager.getInstance().showDiff(project, new SimpleDiffRequestChain(requests), DiffDialogHints.DEFAULT);
   }
 
+  /** One diff window stepping through the files, each read when the window gets to it. Must run on the EDT. */
+  public static void showGitDiffs(Project project, GitDiffs.Changes changes, String beforeTitle, String afterTitle,
+    Map<String, String> environment) {
+    List<GitDiffProducer> producers = new ArrayList<>();
+    for (GitDiffs.Change change : changes.files()) {
+      producers.add(new GitDiffProducer(project, changes, change, beforeTitle, afterTitle, environment,
+        GitDiffs.MAX_FILE_BYTES));
+    }
+    DiffManager.getInstance().showDiff(project, SimpleDiffRequestChain.fromProducers(producers),
+      DiffDialogHints.DEFAULT);
+  }
+
   private static SimpleDiffRequest request(Project project, EditPreview preview, String title, String beforeTitle,
     String afterTitle, ReviewTarget target) {
     String fileName = Path.of(preview.filePath()).getFileName().toString();
@@ -203,6 +220,38 @@ public final class IdeFiles {
     if (resolved != null && resolved.getParent() != null) {
       VfsUtil.markDirtyAndRefresh(true, false, true, resolved.getParent().toFile(), resolved.toFile());
     }
+  }
+
+  /**
+   * Writes the text as UTF-8 into the file, creating it and its folder if needed, and replacing what it held. An open
+   * editor's unsaved edits are saved first, so its document takes the new text without a conflict. Must run on the EDT.
+   */
+  public static VirtualFile writeText(Path path, String text) throws IOException {
+    Path parent = path.toAbsolutePath().getParent();
+    if (parent == null) {
+      throw new IOException("No folder for " + path);
+    }
+    VirtualFile existing = LocalFileSystem.getInstance().refreshAndFindFileByNioFile(path);
+    if (existing != null && existing.isDirectory()) {
+      throw new IOException(path + " is a folder");
+    }
+    String name = path.getFileName().toString();
+    Document open = existing == null ? null : FileDocumentManager.getInstance().getCachedDocument(existing);
+    if (open != null) {
+      FileDocumentManager.getInstance().saveDocument(open);
+    }
+    return WriteAction.compute(() -> {
+      VirtualFile file = existing;
+      if (file == null) {
+        VirtualFile folder = VfsUtil.createDirectoryIfMissing(parent.toString());
+        if (folder == null) {
+          throw new IOException("Could not create " + parent);
+        }
+        file = folder.createChildData(IdeFiles.class, name);
+      }
+      file.setBinaryContent(text.getBytes(StandardCharsets.UTF_8));
+      return file;
+    });
   }
 
   /** Replaces the selection, or inserts at the caret, of the editor in front. Must run on the EDT. */

@@ -6,6 +6,7 @@ import io.firebite.tako.agent.AgentEvent
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.chat.BenchRequest
+import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ide.context.ContextItem
@@ -30,25 +31,24 @@ private val STASH_IO = Dispatchers.IO.limitedParallelism(1)
 val ThreadState.typed: String
   get() = this.input.text.toString().trim()
 
+/** The typed text as the agent gets it: with one `/` less when `//` escapes a Tako command. */
+private val ThreadState.forAgent: String
+  get() = escapedTakoCommand(this.typed) ?: this.typed
+
 /** Takes the typed text, e.g. as feedback for a declined approval, and clears the box. */
 fun ThreadState.takeFeedback(): String {
-  val text = this.typed
+  val text = this.forAgent
   this.input.clearText()
   return text
 }
 
-/** Sends what is typed; with the agent waiting, it answers the question or declines the approval instead. */
-fun ThreadState.submit() {
-  if (this.rewinding != null) {
-    return
-  }
-  val sideQuestion = sideCommand(this.typed)
-  if (sideQuestion != null) {
-    if (this.startSideChat(sideQuestion, this.contexts.toList(), this.images.map { it.image })) {
-      this.contexts.clear()
-      this.images.clear()
-      this.input.clearText()
-    }
+/**
+ * Sends what is typed; with the agent waiting, it answers the question or declines the approval instead. While a turn
+ * runs, the prompt queues or steers as the settings say, or the other way with [opposite]. A Tako command runs before
+ * either, and `//` before one sends, answers or declines with it as typed with one `/` less.
+ */
+fun ThreadState.submit(opposite: Boolean = false) {
+  if (this.rewinding != null || this.runTakoCommand(this.typed)) {
     return
   }
   if (this.question != null) {
@@ -60,7 +60,7 @@ fun ThreadState.submit() {
     this.declineWithFeedback(approval)
     return
   }
-  val typed = this.typed
+  val typed = this.forAgent
   val images = this.images.map { it.image }
   val hasReviews = hasReviews(this.contexts)
   if (typed.isEmpty() && images.isEmpty() && !hasReviews) {
@@ -75,16 +75,16 @@ fun ThreadState.submit() {
       return
     }
   } else {
-    this.startPrompt(text, this.contexts.toList(), images)
+    this.startPrompt(text, this.contexts.toList(), images, this.followUpDelivery(opposite))
   }
   this.contexts.clear()
   this.images.clear()
   this.input.clearText()
 }
 
-/** Sends, then opens a new thread in the same folder. */
+/** Sends, then opens a new thread in the same folder. A Tako command only runs. */
 fun ThreadState.submitAndBranch() {
-  if (sideCommand(this.typed) != null) {
+  if (parseTakoCommand(this.typed) != null) {
     this.submit()
     return
   }
@@ -275,7 +275,7 @@ fun ThreadState.addImage(image: ImageAttachment) {
 fun ThreadState.addPermission(requestId: String, prompt: PermissionPrompt) {
   this.approvals.add(Approval(requestId, prompt))
   if (prompt.kind == PermissionPrompt.Kind.PLAN) {
-    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: ""))
+    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: "", requestId))
   }
   this.scrollToEnd++
 }
@@ -292,9 +292,16 @@ fun ThreadState.cancelAllApprovals() {
   this.question = null
 }
 
-/** Answers the waiting prompt. @param suggestion the index of the suggestion approved with */
+/**
+ * Answers the waiting prompt. A plan is not approved while a new thread for it starts, so two threads don't carry it out.
+ *
+ * @param suggestion the index of the suggestion approved with
+ */
 fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = null, interrupt: Boolean = false,
   answers: Map<String, String>? = null, suggestion: Int? = null) {
+  if (allow && this.implementing && approval.prompt.kind == PermissionPrompt.Kind.PLAN) {
+    return
+  }
   this.controller?.answer(approval.requestId, allow, message, interrupt, answers, suggestion)
   val prompt = approval.prompt
   val toolUseId = prompt.toolUseId
@@ -316,7 +323,8 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
   val readsReason = this.info?.capabilities?.declineReason != false
   val foldsReviews = foldsReviews(approval.prompt, interrupt, readsReason, this.contexts)
-  val feedback = if (foldsReviews) withReviews(this.typed, this.contexts, approval.prompt) else this.typed
+  val typed = this.forAgent
+  val feedback = if (foldsReviews) withReviews(typed, this.contexts, approval.prompt) else typed
   val decline = decline(approval.prompt, feedback, fallback, interrupt, readsReason)
   if (!decline.keepsFeedback) {
     this.input.clearText()
@@ -326,7 +334,7 @@ fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = 
   }
   this.answer(approval, false, decline.message, decline.interrupt)
   val followUp = decline.followUp ?: return
-  this.startPrompt(followUp, this.contexts.toList(), this.images.map { it.image })
+  this.startPrompt(followUp, this.contexts.toList(), this.images.map { it.image }, QueuedPrompts.Delivery.NEXT)
   this.contexts.clear()
   this.images.clear()
 }

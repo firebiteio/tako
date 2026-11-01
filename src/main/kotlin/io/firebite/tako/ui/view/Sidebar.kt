@@ -55,16 +55,24 @@ import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.samePath
+import io.firebite.tako.ui.state.SnoozePreset
+import io.firebite.tako.ui.state.ThreadAction
 import io.firebite.tako.ui.state.ThreadNode
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.state.hasAskingSideChat
+import io.firebite.tako.ui.state.isHidden
 import io.firebite.tako.ui.state.isSideChat
+import io.firebite.tako.ui.state.pinnedFirst
 import io.firebite.tako.ui.state.runName
 import io.firebite.tako.ui.state.sideChatsOf
 import io.firebite.tako.ui.state.waitingSideChats
 import io.firebite.tako.ui.state.runningTasks
+import io.firebite.tako.ui.state.snoozeTime
+import io.firebite.tako.ui.state.snoozeUntil
+import io.firebite.tako.ui.state.threadActions
 import io.firebite.tako.ui.state.threadTree
+import io.firebite.tako.ui.state.waitsForAnswer
 import io.firebite.tako.ui.t
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -72,6 +80,7 @@ import kotlinx.coroutines.withContext
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.TextField
 import org.jetbrains.jewel.ui.component.VerticallyScrollableContainer
+import java.time.ZonedDateTime
 
 private const val SEARCH_DELAY_MILLIS = 300L
 
@@ -88,6 +97,9 @@ fun threadStatus(thread: ThreadState, now: Long): ThreadStatus {
       else -> t("sidebar.status.approval")
     })
   }
+  if (thread.setupFailed) {
+    return ThreadStatus(StatusKind.INPUT, t("sidebar.status.setup.failed"))
+  }
   if (thread.workspace.hasAskingSideChat(thread)) {
     return ThreadStatus(StatusKind.INPUT, t("sidebar.status.side.chat"))
   }
@@ -101,7 +113,7 @@ fun threadStatus(thread: ThreadState, now: Long): ThreadStatus {
   if (thread.failed) {
     return ThreadStatus(StatusKind.ERROR, t("sidebar.status.failed"))
   }
-  if (thread.finished) {
+  if (thread.finished || thread.unread) {
     return ThreadStatus(StatusKind.DONE, if (thread.unread) t("sidebar.status.done.new") else t("sidebar.status.done"))
   }
   return ThreadStatus(StatusKind.IDLE,
@@ -115,10 +127,11 @@ private fun rememberStatus(workspace: Workspace, thread: ThreadState): ThreadSta
   return status
 }
 
-/** Threads needing a look that are not shown, for the sidebar toggle's badge. */
+/** Threads needing a look that are not shown, for the sidebar toggle's badge. A snooze keeps them out of it. */
 fun waitingThreads(workspace: Workspace): Int = workspace.threads.values.count {
   !it.archived && it !== workspace.active && !workspace.isSideChat(it) &&
-    (it.approvals.isNotEmpty() || it.unread || workspace.waitingSideChats(it) > 0)
+    (it.approvals.isNotEmpty() || it.setupFailed || it.unread || workspace.waitingSideChats(it) > 0) &&
+    !workspace.isHidden(it)
 }
 
 /** The thread list: threads grouped by project folder, archived ones apart, each with its live status. */
@@ -159,10 +172,12 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         if (query.isNotEmpty()) {
           SearchResults(workspace, sorted, query, narrow)
         } else {
+          val (hidden, listed) = sorted.partition { workspace.isHidden(it) }
           val projects = workspace.projectList()
           for (project in projects) {
-            ProjectGroup(workspace, project, sorted, runIds, narrow)
+            ProjectGroup(workspace, project, listed, runIds, narrow)
           }
+          SnoozedFold(workspace, hidden, narrow)
         }
       }
     }
@@ -204,6 +219,35 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
         Text(t("sidebar.usage"), color = color, style = smallStyle)
         Spacer(Modifier.weight(1f))
         workspace.usage?.let { Text(money(it.totalCost), color = color, style = smallStyle) }
+      }
+    }
+  }
+}
+
+/**
+ * The threads a snooze hides, folded at the end of the list: snoozed ones soonest wake first, with the sub threads
+ * hidden with them nested under them.
+ */
+@Composable
+private fun SnoozedFold(workspace: Workspace, hidden: List<ThreadState>, narrow: Boolean) {
+  if (hidden.isEmpty()) {
+    return
+  }
+  val (interaction, hovered) = rememberHover()
+  Column(verticalArrangement = Arrangement.spacedBy(1.dp)) {
+    Row(Modifier.fillMaxWidth().height(28.dp).hoverClick(alpha = 0.6f, interaction = interaction) {
+      workspace.showSnoozed = !workspace.showSnoozed
+    }.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically,
+      horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+      val color = if (hovered) colors.fg else colors.muted
+      Chevron(workspace.showSnoozed, tint = color)
+      Ico(Icons.snooze, size = 14.dp, tint = color)
+      Text(t("sidebar.snoozed.count", hidden.size), color = color, style = smallStyle)
+    }
+    if (workspace.showSnoozed) {
+      val bySnooze = hidden.sortedBy { if (it.snoozedUntil > 0) it.snoozedUntil else Long.MAX_VALUE }
+      for (node in threadTree(bySnooze, { it.id }, { it.parentId })) {
+        ThreadBranch(workspace, node, narrow)
       }
     }
   }
@@ -261,7 +305,8 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     Rule()
-    val sorted = workspace.threads.values.filter { !workspace.isSideChat(it) }.sortedByDescending { it.updatedAt }
+    val listed = workspace.threads.values.sortedByDescending { it.updatedAt }
+      .filter { !workspace.isHidden(it) && !workspace.isSideChat(it) }
     val runIds = workspace.benches.flatMap { it.threads }.toSet()
     val projects = workspace.projectList()
     VerticallyScrollableContainer(Modifier.weight(1f)) {
@@ -276,7 +321,7 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
               RailThread(workspace, run)
             }
           }
-          for (node in projectThreads(workspace, project, sorted, runIds)) {
+          for (node in projectThreads(workspace, project, listed, runIds)) {
             RailBranch(workspace, node)
           }
         }
@@ -316,10 +361,12 @@ private fun RailBranch(workspace: Workspace, node: ThreadNode<ThreadState>) {
 private fun projectBenches(workspace: Workspace, project: ChatMessage.ProjectItem): List<ChatMessage.BenchItem> =
   workspace.benches.reversed().filter { workspace.projectAt(it.projectPath).path == project.path }
 
-private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectItem, sorted: List<ThreadState>,
+/** The project's threads as the list nests them, pinned first. [listed] leaves out the threads a snooze hides. */
+private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectItem, listed: List<ThreadState>,
   runIds: Set<String>): List<ThreadNode<ThreadState>> =
-  threadTree(sorted.filter { !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path },
-    { it.id }, { it.parentId })
+  threadTree(pinnedFirst(listed.filter {
+    !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path
+  }) { it.pinned }, { it.id }, { it.parentId })
 
 /** The agents' sessions no thread holds, to resume. */
 @Composable
@@ -466,12 +513,14 @@ private fun SubThreadRow(workspace: Workspace, thread: ThreadState, narrow: Bool
   }
   val isActive = thread === workspace.active
   val (interaction, hovered) = rememberHover()
-  Box(Modifier.fillMaxWidth().hoverClick(RoundedCornerShape(8.dp), 0.7f, isActive, interaction = interaction) {
-    workspace.open(thread)
-    if (narrow) {
-      workspace.setSidebar(false)
-    }
-  }) {
+  var menu by remember(thread) { mutableStateOf<MenuPage?>(null) }
+  Box(Modifier.fillMaxWidth().openMenuOnRightClick { menu = MenuPage.MAIN }
+    .hoverClick(RoundedCornerShape(8.dp), 0.7f, isActive, interaction = interaction) {
+      workspace.open(thread)
+      if (narrow) {
+        workspace.setSidebar(false)
+      }
+    }) {
     Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 6.dp),
       verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
       Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
@@ -486,12 +535,83 @@ private fun SubThreadRow(workspace: Workspace, thread: ThreadState, narrow: Bool
         }
         extra()
       }
+      PinMark(thread)
       Text(updated, Modifier.alpha(if (hovered) 0f else 1f), color = colors.faint, style = tinyStyle)
     }
     if (hovered) {
-      RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 4.dp))
+      RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 4.dp)) { menu = MenuPage.MAIN }
+    }
+    menu?.let { page -> ThreadMenu(workspace, thread, page) { menu = it } }
+  }
+}
+
+/** Which of the thread menu's popups is open: its actions or the snooze times. */
+private enum class MenuPage { MAIN, SNOOZE }
+
+private fun Modifier.openMenuOnRightClick(open: () -> Unit): Modifier = this.onPointerEvent(PointerEventType.Press) {
+  if (it.buttons.isSecondaryPressed) {
+    open()
+  }
+}
+
+@Composable
+private fun PinMark(thread: ThreadState) {
+  if (thread.pinned && !thread.archived) {
+    Tip(t("sidebar.pinned")) {
+      Ico(Icons.pin, size = 12.dp, tint = colors.faint)
     }
   }
+}
+
+/**
+ * The thread's menu, or the snooze times it leads to. An entry's click dismisses the popup before it runs, so the
+ * snooze entry switches the page after the dismiss closed it.
+ */
+@Composable
+private fun ThreadMenu(workspace: Workspace, thread: ThreadState, page: MenuPage, onPage: (MenuPage?) -> Unit) {
+  if (page == MenuPage.SNOOZE) {
+    val now = ZonedDateTime.now()
+    val entries = SnoozePreset.entries.map { preset ->
+      MenuEntry(snoozeLabel(preset), snoozeTime(snoozeUntil(preset, now).toInstant().toEpochMilli(), now),
+        Icons.snooze) { workspace.snooze(thread, preset) }
+    }
+    MenuPopup(entries, t("sidebar.snooze.title")) { onPage(null) }
+    return
+  }
+  var canTitle by remember(thread) { mutableStateOf(false) }
+  LaunchedEffect(thread) {
+    val shown = thread.turns.isNotEmpty()
+    canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(thread.id, shown) }
+  }
+  val service = workspace.service
+  val entries = workspace.threadActions(thread).map { action ->
+    when (action) {
+      ThreadAction.PIN -> MenuEntry(t("sidebar.pin"), icon = Icons.pin) { service.setPinned(thread.id, true) }
+      ThreadAction.UNPIN -> MenuEntry(t("sidebar.unpin"), icon = Icons.pin) { service.setPinned(thread.id, false) }
+      ThreadAction.SNOOZE -> {
+        val waits = workspace.waitsForAnswer(thread)
+        MenuEntry(t("sidebar.snooze"), if (waits) t("sidebar.snooze.answer.first") else null, Icons.snooze,
+          enabled = !waits) { onPage(MenuPage.SNOOZE) }
+      }
+      ThreadAction.WAKE -> MenuEntry(t("sidebar.wake"), thread.snoozedUntil.takeIf { it > 0 }?.let {
+        t("sidebar.snoozed.until", snoozeTime(it, ZonedDateTime.now()))
+      }, Icons.snooze) { service.wake(thread.id) }
+      ThreadAction.MARK_UNREAD -> MenuEntry(t("sidebar.mark.unread"), icon = Icons.unread) {
+        service.markUnread(thread.id)
+      }
+      ThreadAction.RENAME -> MenuEntry(t("sidebar.rename"), icon = Icons.rename) { workspace.rename(thread) }
+      ThreadAction.REGENERATE_TITLE -> MenuEntry(t("sidebar.regenerate.title"),
+        if (thread.titling) t("sidebar.regenerate.title.running") else null, Icons.refresh,
+        enabled = canTitle && !thread.titling) { workspace.regenerateTitle(thread) }
+    }
+  }
+  MenuPopup(entries) { onPage(null) }
+}
+
+private fun snoozeLabel(preset: SnoozePreset): String = when (preset) {
+  SnoozePreset.HOUR -> t("sidebar.snooze.hour")
+  SnoozePreset.TOMORROW -> t("sidebar.snooze.tomorrow")
+  SnoozePreset.NEXT_WEEK -> t("sidebar.snooze.next.week")
 }
 
 @Composable
@@ -551,7 +671,12 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
   } else {
     ""
   }
-  val sub = (if (thread.archived) t("sidebar.archived") else status.label) + otherAgent +
+  val state = when {
+    thread.archived -> t("sidebar.archived")
+    thread.snoozedUntil > 0 -> t("sidebar.snoozed.until", snoozeTime(thread.snoozedUntil, ZonedDateTime.now()))
+    else -> status.label
+  }
+  val sub = state + otherAgent +
     (if (run != null && thread.firstTurnMillis > 0) " · " + duration(thread.firstTurnMillis) else "") +
     (if (thread.costUsd > 0) " · " + money(thread.costUsd) else "")
   val statusColor = statusColor(status.kind)
@@ -561,20 +686,9 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     StatusKind.ERROR -> colors.del
     else -> colors.muted
   }
-  var menuOpen by remember(thread) { mutableStateOf(false) }
-  var canTitle by remember(thread) { mutableStateOf(false) }
-  LaunchedEffect(menuOpen) {
-    if (menuOpen) {
-      canTitle = false
-      val shown = thread.turns.isNotEmpty()
-      canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(thread.id, shown) }
-    }
-  }
-  Box(Modifier.fillMaxWidth().onPointerEvent(PointerEventType.Press) {
-    if (it.buttons.isSecondaryPressed) {
-      menuOpen = true
-    }
-  }.hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
+  var menu by remember(thread) { mutableStateOf<MenuPage?>(null) }
+  Box(Modifier.fillMaxWidth().openMenuOnRightClick { menu = MenuPage.MAIN }
+    .hoverClick(RoundedCornerShape(10.dp), 0.7f, isActive, interaction = interaction) {
     if (thread.archived) {
       workspace.service.setArchived(thread.id, false)
     } else {
@@ -596,6 +710,7 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
             Text(title, color = if (emphasized) colors.fg else colors.body,
               fontWeight = if (emphasized) FontWeight.Medium else null, maxLines = 1, overflow = TextOverflow.Ellipsis)
           }
+          PinMark(thread)
           Text(updated, Modifier.alpha(if (hovered) 0f else 1f), color = colors.faint,
             style = tinyStyle)
         }
@@ -612,21 +727,18 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
       }
     }
     if (hovered) {
-      RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 6.dp))
+      RowActions(workspace, thread, Modifier.align(Alignment.CenterEnd).padding(end = 6.dp)) { menu = MenuPage.MAIN }
     }
-    if (menuOpen) {
-      MenuPopup(listOf(MenuEntry(t("sidebar.regenerate.title"),
-        if (thread.titling) t("sidebar.regenerate.title.running") else null, Icons.refresh,
-        enabled = canTitle && !thread.titling) { workspace.regenerateTitle(thread) })) { menuOpen = false }
-    }
+    menu?.let { page -> ThreadMenu(workspace, thread, page) { menu = it } }
   }
 }
 
-/** Archive or restore, and close, shown over a row's end while the mouse is on it. */
+/** The thread menu, archive or restore, and close, shown over a row's end while the mouse is on it. */
 @Composable
-private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modifier) {
+private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modifier, openMenu: () -> Unit) {
   Row(modifier.clip(RoundedCornerShape(8.dp)).background(colors.hover),
     horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+    IconBtn(Icons.more, t("sidebar.more"), iconSize = 14.dp, onClick = openMenu)
     if (thread.archived) {
       IconBtn(Icons.restore, t("sidebar.restore"), iconSize = 14.dp) {
         workspace.service.setArchived(thread.id, false)

@@ -12,13 +12,18 @@ import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.fileChooser.FileChooser;
 import com.intellij.openapi.fileChooser.FileChooserDescriptor;
 import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
+import com.intellij.openapi.fileChooser.FileChooserFactory;
+import com.intellij.openapi.fileChooser.FileSaverDescriptor;
+import com.intellij.openapi.fileEditor.FileEditorManager;
 import com.intellij.openapi.project.Project;
 import com.intellij.openapi.project.ProjectManager;
 import com.intellij.openapi.util.Disposer;
 import com.intellij.openapi.util.SystemInfo;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.openapi.vfs.VirtualFileWrapper;
 import com.intellij.openapi.wm.ToolWindow;
 import com.intellij.openapi.wm.ToolWindowManager;
+import com.intellij.openapi.wm.ex.ToolWindowManagerListener;
 import com.intellij.ui.content.Content;
 import com.intellij.ui.content.ContentFactory;
 import com.intellij.util.EnvironmentUtil;
@@ -32,6 +37,7 @@ import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
 import io.firebite.tako.agent.ImageAttachment;
+import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
 import io.firebite.tako.chat.store.ThreadStore;
@@ -46,10 +52,13 @@ import io.firebite.tako.chat.watch.WatchException;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
+import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitInfo;
+import io.firebite.tako.ide.project.GitWorktree;
 import io.firebite.tako.ide.project.ProjectIcons;
+import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
@@ -63,6 +72,7 @@ import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -70,6 +80,7 @@ import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -83,6 +94,8 @@ public final class ChatService implements Disposable {
   private static final Logger LOG = Logger.getInstance(ChatService.class);
   private static final int SESSION_LIST_LIMIT = 50;
   private static final long GIT_REFRESH_SECONDS = 15;
+  private static final long UPKEEP_SECONDS = 60;
+  private static final long PULL_REQUEST_REFRESH_MINUTES = 10;
   /** How often due pull request watches are polled; a thread that settles hears its news within this. */
   private static final long WATCH_TICK_SECONDS = 30;
 
@@ -90,6 +103,7 @@ public final class ChatService implements Disposable {
   private final ThreadStore store;
   private final Map<String, ChatController> controllers = new ConcurrentHashMap<>();
   private final Benches benches;
+  private final ThreadUpkeep upkeep;
   private final PullRequestWatcher watcher;
   private final List<Runnable> activityListeners = new CopyOnWriteArrayList<>();
   /** The side chat each main thread's pane shows, by main thread id. */
@@ -106,6 +120,7 @@ public final class ChatService implements Disposable {
     this.project = project;
     this.store = ThreadStore.getInstance(project);
     this.benches = new Benches(project, this, this.store);
+    this.upkeep = new ThreadUpkeep(this, this.store);
     this.watcher = new PullRequestWatcher(this.store, ChatService::runGh, new WatchHost(),
       System::currentTimeMillis);
   }
@@ -133,13 +148,29 @@ public final class ChatService implements Disposable {
     this.panel = chatPanel;
     Async.inBackground(this::warmUsage);
     Async.inBackground(ChatService::deleteOldPastes);
-    ScheduledFuture<?> gitRefresh = AppExecutorUtil.getAppScheduledExecutorService()
-      .scheduleWithFixedDelay(this::refreshActiveGit, GIT_REFRESH_SECONDS, GIT_REFRESH_SECONDS, TimeUnit.SECONDS);
-    ScheduledFuture<?> watchTicks = AppExecutorUtil.getAppScheduledExecutorService()
-      .scheduleWithFixedDelay(this.watcher::tick, WATCH_TICK_SECONDS, WATCH_TICK_SECONDS, TimeUnit.SECONDS);
+    ScheduledExecutorService scheduler = AppExecutorUtil.getAppScheduledExecutorService();
+    ScheduledFuture<?> gitRefresh = scheduler.scheduleWithFixedDelay(this::refreshActiveGit, GIT_REFRESH_SECONDS,
+      GIT_REFRESH_SECONDS, TimeUnit.SECONDS);
+    ScheduledFuture<?> watchTicks = scheduler.scheduleWithFixedDelay(this.watcher::tick, WATCH_TICK_SECONDS,
+      WATCH_TICK_SECONDS, TimeUnit.SECONDS);
+    ScheduledFuture<?> upkeepTick = scheduler.scheduleWithFixedDelay(() -> Async.onEdt(this::tickUpkeep),
+      UPKEEP_SECONDS, UPKEEP_SECONDS, TimeUnit.SECONDS);
+    ScheduledFuture<?> pullRequestRefresh = scheduler.scheduleWithFixedDelay(
+      () -> Async.onEdt(this::refreshPullRequests), 1, PULL_REQUEST_REFRESH_MINUTES, TimeUnit.MINUTES);
+    this.project.getMessageBus().connect(content).subscribe(ToolWindowManagerListener.TOPIC,
+      new ToolWindowManagerListener() {
+        @Override
+        public void toolWindowShown(ToolWindow shown) {
+          if (TOOL_WINDOW_ID.equals(shown.getId())) {
+            ChatService.this.markActiveRead();
+          }
+        }
+      });
     Disposer.register(content, () -> {
       gitRefresh.cancel(false);
       watchTicks.cancel(false);
+      upkeepTick.cancel(false);
+      pullRequestRefresh.cancel(false);
       for (ChatController controller : this.controllers.values()) {
         Disposer.dispose(controller);
       }
@@ -147,6 +178,33 @@ public final class ChatService implements Disposable {
       this.panel = null;
     });
     this.showInitialState();
+    this.tickUpkeep();
+  }
+
+  /** Wakes due snoozes and archives done threads, while the chat is attached. Must run on the EDT. */
+  private void tickUpkeep() {
+    if (this.panel != null) {
+      this.upkeep.tick(System.currentTimeMillis());
+    }
+  }
+
+  private void refreshPullRequests() {
+    if (this.panel != null) {
+      this.upkeep.refreshPullRequests();
+    }
+  }
+
+  ThreadUpkeep upkeep() {
+    return this.upkeep;
+  }
+
+  private void markActiveRead() {
+    ThreadStore.Record active = this.store.find(this.store.activeId());
+    if (active != null && active.unread) {
+      active.unread = false;
+      active.seenAt = System.currentTimeMillis();
+      this.postUpdate(active);
+    }
   }
 
   /** Must run on the EDT. */
@@ -213,7 +271,8 @@ public final class ChatService implements Disposable {
 
   /** Tells the chat what the settings let it offer. */
   public void postSettings() {
-    this.post(new ChatMessage.Settings(ChatSettings.state().parallelRuns));
+    ChatSettings.Data settings = ChatSettings.state();
+    this.post(new ChatMessage.Settings(settings.parallelRuns, settings.steerWhileWorking));
   }
 
   /**
@@ -241,7 +300,7 @@ public final class ChatService implements Disposable {
     this.post(new ChatMessage.Threads(items));
 
     ThreadStore.Record active = this.store.find(this.store.activeId());
-    if (active == null || active.archived) {
+    if (active == null || active.archived || this.store.isSnoozeHidden(active)) {
       active = this.firstOpenThread(null);
     }
     if (active == null || this.isNewChatOnShow) {
@@ -267,7 +326,7 @@ public final class ChatService implements Disposable {
   }
 
   /** @param projectPath a project folder, or null for the IDE project */
-  private String folderOf(@Nullable String projectPath) {
+  String folderOf(@Nullable String projectPath) {
     String basePath = this.project.getBasePath();
     return projectPath != null ? projectPath : basePath != null ? basePath : "";
   }
@@ -333,11 +392,23 @@ public final class ChatService implements Disposable {
    * @param agent       the agent to run, or the default one when null
    */
   public void newThread(@Nullable String projectPath, @Nullable String agent) {
-    this.newThread(null, null, this.threadPath(projectPath), agent);
+    this.newThread(projectPath, agent, null);
+  }
+
+  /**
+   * Like {@link #newThread(String, String)}, then sends {@code prompt} there as if typed.
+   *
+   * @param prompt the text, context and images to send, or null to send nothing
+   */
+  public void newThread(@Nullable String projectPath, @Nullable String agent, @Nullable ChatMessage.Submit prompt) {
+    ThreadStore.Record record = this.newThread(null, null, this.threadPath(projectPath), agent);
+    if (prompt != null) {
+      this.post(prompt, record.id);
+    }
   }
 
   /** @param agent the agent to run, or the default one when null */
-  private void newThread(@Nullable String sessionId, @Nullable String title, @Nullable String projectPath,
+  private ThreadStore.Record newThread(@Nullable String sessionId, @Nullable String title, @Nullable String projectPath,
     @Nullable String agent) {
     if (projectPath != null && this.store.findProject(projectPath) == null) {
       this.store.addProject(projectPath, Path.of(projectPath).getFileName().toString());
@@ -348,6 +419,7 @@ public final class ChatService implements Disposable {
     ThreadStore.Record record = this.store.create(sessionId, title, projectPath, agentId);
     this.post(new ChatMessage.ThreadAdded(record.toItem()));
     this.select(record.id);
+    return record;
   }
 
   /** Selects the thread; for a side chat, its main thread with the side chat in the pane. */
@@ -362,8 +434,10 @@ public final class ChatService implements Disposable {
       this.post(new ChatMessage.ShowSideChat(record.id, false));
       return;
     }
-    this.unarchive(record);
     this.store.setActiveId(record.id);
+    List<ThreadStore.Record> changed = this.unarchived(record);
+    changed.addAll(this.seen(record));
+    this.postUpdates(changed);
     this.post(new ChatMessage.Select(record.id));
     ChatController existing = this.controllers.get(record.id);
     if (existing != null) {
@@ -394,6 +468,7 @@ public final class ChatService implements Disposable {
     record.mode = spec.mode();
     record.effort = spec.effort();
     record.workPath = spec.workPath();
+    record.pendingSetup = spec.setup();
     this.store.save();
     this.post(new ChatMessage.ThreadAdded(record.toItem()));
     this.newController(record).open(spec.prompt());
@@ -415,17 +490,85 @@ public final class ChatService implements Disposable {
     this.newController(record).open(prompt);
   }
 
-  /** Lists the thread again, with the side chats its archiving stopped; their agents start once shown. */
   private void unarchive(ThreadStore.Record record) {
+    this.postUpdates(this.unarchived(record));
+  }
+
+  /**
+   * Lists an archived thread again, with its idle time starting anew. A snooze that ended while it was archived ends
+   * now, as unread. A snoozed parent restored this way would hide the active thread, so that one's parents wake. The
+   * side chats its archiving stopped come back too; their agents start once shown.
+   *
+   * @return the threads it changed, to post
+   */
+  private List<ThreadStore.Record> unarchived(ThreadStore.Record record) {
+    List<ThreadStore.Record> changed = new ArrayList<>();
     if (!record.archived) {
-      return;
+      return changed;
     }
+    long now = System.currentTimeMillis();
     record.archived = false;
-    this.postUpdate(record);
+    record.seenAt = now;
+    if (ThreadUpkeep.isDue(record, now)) {
+      record.snoozedUntil = 0;
+      record.unread = true;
+    }
+    changed.add(record);
     if (!record.sideChat) {
       for (ThreadStore.Record sideChat : SideChats.of(this.store, record.id)) {
-        this.unarchive(sideChat);
+        changed.addAll(this.unarchived(sideChat));
       }
+    }
+    ThreadStore.Record active = this.store.find(this.store.activeId());
+    if (active != null && this.store.isSnoozeHidden(active)) {
+      changed.addAll(this.store.wakeWithAncestors(active));
+    }
+    return changed;
+  }
+
+  /**
+   * The person opened the thread: it is read, a snooze over it ends and its idle time starts again.
+   *
+   * @return the threads it changed, to post
+   */
+  private List<ThreadStore.Record> seen(ThreadStore.Record record) {
+    record.unread = false;
+    record.seenAt = System.currentTimeMillis();
+    List<ThreadStore.Record> changed = new ArrayList<>(this.store.wakeWithAncestors(record));
+    changed.add(record);
+    return changed;
+  }
+
+  /** Saves the threads once and tells the chat about each of them once. */
+  void postUpdates(List<ThreadStore.Record> records) {
+    if (records.isEmpty()) {
+      return;
+    }
+    this.store.save();
+    for (ThreadStore.Record record : new LinkedHashSet<>(records)) {
+      this.post(new ChatMessage.ThreadUpdated(record.toItem()));
+    }
+  }
+
+  /** Archives threads that are not the active one, with their side chats, and stops their agents, saving once. */
+  void archiveAll(List<ThreadStore.Record> records) {
+    List<ThreadStore.Record> archived = new ArrayList<>();
+    for (ThreadStore.Record record : records) {
+      archived.add(record);
+      archived.addAll(SideChats.of(this.store, record.id));
+    }
+    for (ThreadStore.Record record : archived) {
+      record.archived = true;
+      this.disposeController(record.id);
+    }
+    this.postUpdates(archived);
+  }
+
+  public void setPinned(String id, boolean pinned) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record != null && record.pinned != pinned && !this.store.isRun(id)) {
+      record.pinned = pinned;
+      this.postUpdate(record);
     }
   }
 
@@ -438,8 +581,13 @@ public final class ChatService implements Disposable {
   public void showsSideChat(String mainId, @Nullable String sideChatId) {
     if (sideChatId == null) {
       this.shownSideChats.remove(mainId);
-    } else {
-      this.shownSideChats.put(mainId, sideChatId);
+      return;
+    }
+    this.shownSideChats.put(mainId, sideChatId);
+    ThreadStore.Record sideChat = this.store.find(sideChatId);
+    if (sideChat != null && sideChat.unread) {
+      sideChat.unread = false;
+      this.postUpdate(sideChat);
     }
   }
 
@@ -569,6 +717,56 @@ public final class ChatService implements Disposable {
     this.newController(record).open();
   }
 
+  /** Gives the thread the title the person typed. Ignores a blank one. */
+  public void rename(String id, String typed) {
+    ThreadStore.Record record = this.store.find(id);
+    String title = ThreadTitles.manual(typed);
+    if (record != null && title != null && !title.equals(record.title)) {
+      record.title = title;
+      this.postUpdate(record);
+    }
+  }
+
+  public void markUnread(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record != null && !record.archived && !record.unread) {
+      record.unread = true;
+      this.postUpdate(record);
+    }
+  }
+
+  /**
+   * Hides the thread and its sub threads until {@code until}, in epoch millis; its agent keeps working. Selects another
+   * thread if that hides the active one. Not for archived threads or runs.
+   */
+  public void snooze(String id, long until) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null || record.archived || this.store.isRun(id) || until <= System.currentTimeMillis()) {
+      return;
+    }
+    record.snoozedUntil = until;
+    this.postUpdate(record);
+    ThreadStore.Record active = this.store.find(this.store.activeId());
+    if (active != null && this.store.isSnoozeHidden(active)) {
+      this.selectAnotherIfActive(active.id);
+    }
+  }
+
+  /** Ends the snooze that hides the thread, its own or its parents'. */
+  public void wake(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null) {
+      return;
+    }
+    List<ThreadStore.Record> woken = this.store.wakeWithAncestors(record);
+    if (!woken.isEmpty()) {
+      record.seenAt = System.currentTimeMillis();
+      List<ThreadStore.Record> changed = new ArrayList<>(woken);
+      changed.add(record);
+      this.postUpdates(changed);
+    }
+  }
+
   /** Copies the thread's first {@code prompts} turns into a new thread, which it selects. */
   public void fork(String id, int prompts) {
     ThreadStore.Record source = this.store.find(id);
@@ -598,6 +796,151 @@ public final class ChatService implements Disposable {
         this.select(record.id);
       });
     });
+  }
+
+  /**
+   * Starts a thread that implements the plan the thread's agent proposed, and selects it. It runs the same agent, model
+   * and effort, not in plan mode. Shows failures.
+   *
+   * @param worktree work in a new git worktree on a new branch, else in the planning thread's folder
+   * @return completes on the EDT with the new thread's id, or null when none started
+   */
+  public CompletableFuture<@Nullable String> implementPlan(String id, String plan, boolean worktree) {
+    CompletableFuture<@Nullable String> done = new CompletableFuture<>();
+    ThreadStore.Record source = this.store.find(id);
+    if (source == null) {
+      this.failPlan(done, TakoBundle.message("error.plan.thread.gone"));
+      return done;
+    }
+    String folder = this.workFolder(source);
+    Async.inBackground(() -> {
+      try {
+        if (folder.isEmpty() || !Files.isDirectory(Path.of(folder))) {
+          Async.onEdt(() -> this.failPlan(done, TakoBundle.message("error.plan.folder", folder)));
+          return;
+        }
+        GitWorktree.Worktree created = null;
+        if (worktree) {
+          String title = Plans.title(plan);
+          created = GitWorktree.create(Path.of(folder), title != null ? title : Plans.UNTITLED,
+            EnvironmentUtil.getEnvironmentMap());
+          if (created == null) {
+            Async.onEdt(() -> this.failPlan(done, TakoBundle.message("error.plan.worktree", folder)));
+            return;
+          }
+        }
+        GitWorktree.Worktree made = created;
+        Async.onEdt(() -> this.startPlanThread(done, source, plan, folder, made));
+      } catch (RuntimeException e) {
+        LOG.warn("Could not start a thread implementing the plan of thread " + id, e);
+        Async.onEdt(() -> this.failPlan(done, Objects.toString(e.getMessage(), e.toString())));
+      }
+    });
+    return done;
+  }
+
+  /**
+   * Completes with null when the thread did not start, even if it was stored, so the plan's approval stays.
+   *
+   * @param folder   the planning thread's folder
+   * @param worktree the worktree made for the new thread, removed again when no thread got it
+   */
+  private void startPlanThread(CompletableFuture<@Nullable String> done, ThreadStore.Record source, String plan,
+    String folder, @Nullable GitWorktree.Worktree worktree) {
+    if (this.store.find(source.id) != source) {
+      this.dropWorktree(folder, worktree);
+      this.failPlan(done, TakoBundle.message("error.plan.thread.gone"));
+      return;
+    }
+    ThreadStore.Record record;
+    try {
+      record = this.planThread(source, plan, worktree);
+    } catch (RuntimeException e) {
+      LOG.warn("Could not store a thread implementing the plan of thread " + source.id, e);
+      this.dropWorktree(folder, worktree);
+      this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
+      return;
+    }
+    try {
+      this.post(new ChatMessage.ThreadAdded(record.toItem()));
+      this.store.setActiveId(record.id);
+      this.post(new ChatMessage.Select(record.id));
+      this.newController(record).open(Plans.implementPrompt(plan));
+    } catch (RuntimeException e) {
+      LOG.warn("Could not open the thread implementing the plan of thread " + source.id, e);
+      this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
+      return;
+    }
+    done.complete(record.id);
+  }
+
+  private void dropWorktree(String repository, @Nullable GitWorktree.Worktree worktree) {
+    if (worktree != null) {
+      Async.inBackground(() -> removeWorktree(Path.of(repository), worktree));
+    }
+  }
+
+  private static void removeWorktree(Path repository, GitWorktree.Worktree worktree) {
+    try {
+      Worktrees.remove(repository, worktree.folder(), worktree.branch(), EnvironmentUtil.getEnvironmentMap());
+    } catch (Worktrees.GitException e) {
+      LOG.warn("Could not remove the worktree " + worktree.folder(), e);
+    }
+  }
+
+  private void failPlan(CompletableFuture<@Nullable String> done, String error) {
+    this.post(new ChatMessage.Error(error));
+    done.complete(null);
+  }
+
+  /** Stores a thread for implementing the plan, beside the planning thread and like it but not in plan mode. */
+  /** @param worktree the worktree made for it, whose {@code .worktreesetup} runs first; null to work where the source does */
+  ThreadStore.Record planThread(ThreadStore.Record source, String plan, @Nullable GitWorktree.Worktree worktree) {
+    String projectPath = source.projectPath;
+    if (projectPath != null && this.store.findProject(projectPath) == null) {
+      this.store.addProject(projectPath, Path.of(projectPath).getFileName().toString());
+      this.postProjects();
+    }
+    String agent = source.agent();
+    String title = Plans.title(plan);
+    ThreadStore.Record record = this.store.create(null, ChatController.titleOf(title != null
+      ? TakoBundle.message("thread.implement.title", title)
+      : TakoBundle.message("thread.implement.title.default")), projectPath, agent);
+    String defaultMode = ClaudeBackend.ID.equals(agent) ? ChatSettings.state().claudeDefaults().mode() : "";
+    record.model = source.model;
+    record.mode = Plans.implementMode(agent, source.mode, defaultMode);
+    record.effort = source.effort;
+    record.workPath = worktree != null ? worktree.folder().toString() : source.workPath;
+    record.pendingSetup = worktree != null
+      ? ThreadStore.PendingSetup.of(worktree.repository(), worktree.folder())
+      : null;
+    this.store.save();
+    return record;
+  }
+
+  /** Asks where to save the plan as Markdown, in the thread's folder by default, then opens the file. */
+  public void savePlan(String id, String plan) {
+    Async.onEdt(() -> this.choosePlanFile(id, plan));
+  }
+
+  private void choosePlanFile(String id, String plan) {
+    ThreadStore.Record record = this.store.find(id);
+    String folder = record != null ? this.workFolder(record) : this.folderOf((String) null);
+    Path directory = folder.isEmpty() || !Files.isDirectory(Path.of(folder)) ? null : Path.of(folder);
+    FileSaverDescriptor descriptor = new FileSaverDescriptor(TakoBundle.message("dialog.save.plan.title"),
+      TakoBundle.message("dialog.save.plan.description"));
+    descriptor.withExtensionFilter("md");
+    VirtualFileWrapper target = FileChooserFactory.getInstance().createSaveFileDialog(descriptor, this.project)
+      .save(directory, Plans.fileName(plan));
+    if (target == null) {
+      return;
+    }
+    try {
+      VirtualFile file = IdeFiles.writeText(target.getFile().toPath(), Plans.fileText(plan));
+      FileEditorManager.getInstance(this.project).openFile(file, true);
+    } catch (IOException e) {
+      this.post(new ChatMessage.Error(TakoBundle.message("error.plan.save", Objects.toString(e.getMessage(), ""))));
+    }
   }
 
   /**
@@ -775,6 +1118,13 @@ public final class ChatService implements Disposable {
     }
   }
 
+  /** Puts every open thread's queued prompts in the prompt stash, as the project closes. */
+  void stashQueued() {
+    for (ChatController controller : this.controllers.values()) {
+      controller.stashQueued();
+    }
+  }
+
   @Override
   public synchronized void dispose() {
     if (this.toolServer != null) {
@@ -934,7 +1284,8 @@ public final class ChatService implements Disposable {
 
   private @Nullable ThreadStore.Record firstOpenThread(@Nullable String except) {
     for (ThreadStore.Record record : this.store.all()) {
-      if (!record.archived && !record.id.equals(except) && SideChats.mainOf(this.store, record) == record) {
+      if (!record.archived && !record.id.equals(except) && !this.store.isSnoozeHidden(record)
+        && SideChats.mainOf(this.store, record) == record) {
         return record;
       }
     }
@@ -1089,7 +1440,31 @@ public final class ChatService implements Disposable {
     }
   }
 
-  private void postUpdate(ThreadStore.Record record) {
+  /**
+   * Whether the person sees the thread: the tool window shows it as the active one, unless a side chat pane covers it,
+   * or as the side chat beside the active one.
+   */
+  boolean isShown(String id) {
+    ToolWindow window = this.toolWindow;
+    ThreadStore.Record record = this.store.find(id);
+    if (window == null || !window.isVisible() || record == null) {
+      return false;
+    }
+    ThreadStore.Record main = SideChats.mainOf(this.store, record);
+    boolean isOnScreen = main == record
+      ? !this.isSidePaneCovering || !this.shownSideChats.containsKey(main.id)
+      : record.id.equals(this.shownSideChats.get(main.id));
+    return main.id.equals(this.store.activeId()) && isOnScreen;
+  }
+
+  /** What the thread's controller tells the service, for tests; null for an unknown thread. */
+  @Nullable
+  ChatHost host(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    return record == null ? null : new Host(record);
+  }
+
+  void postUpdate(ThreadStore.Record record) {
     this.store.save();
     this.post(new ChatMessage.ThreadUpdated(record.toItem()));
   }
@@ -1114,13 +1489,7 @@ public final class ChatService implements Disposable {
 
   /** Shows a balloon about the thread unless the person sees it already. Must run on the EDT. */
   private void requestAttention(ThreadStore.Record record, String reason) {
-    ToolWindow window = this.toolWindow;
-    ThreadStore.Record main = SideChats.mainOf(this.store, record);
-    boolean isOnScreen = main == record
-      ? !this.isSidePaneCovering || !this.shownSideChats.containsKey(main.id)
-      : record.id.equals(this.shownSideChats.get(main.id));
-    boolean isShown = window != null && window.isVisible() && main.id.equals(this.store.activeId()) && isOnScreen;
-    if (isShown) {
+    if (this.isShown(record.id)) {
       return;
     }
     Notification notification = NotificationGroupManager.getInstance()
@@ -1171,10 +1540,35 @@ public final class ChatService implements Disposable {
       this.record = record;
     }
 
+    /** The first prompt's title, unless the thread is gone or already has a name, e.g. one the person gave it. */
     @Override
     public void setTitle(String title) {
-      this.record.title = title;
-      ChatService.this.postUpdate(this.record);
+      if (this.isListed() && ThreadStore.Record.DEFAULT_TITLE.equals(this.record.title)) {
+        this.record.title = title;
+        ChatService.this.postUpdate(this.record);
+      }
+    }
+
+    /** Leaves an archived thread alone: its agent was stopped, a report still queued for the EDT comes too late. */
+    @Override
+    public void needsLook(boolean asks) {
+      if (!this.isListed() || this.record.archived) {
+        return;
+      }
+      List<ThreadStore.Record> changed = new ArrayList<>();
+      if (asks) {
+        changed.addAll(ChatService.this.store.wakeWithAncestors(this.record));
+      }
+      if (!this.record.unread && !ChatService.this.isShown(this.record.id)) {
+        this.record.unread = true;
+        changed.add(this.record);
+      }
+      ChatService.this.postUpdates(changed);
+    }
+
+    /** Whether the record is still the thread's, so an update does not bring a closed thread back to the list. */
+    private boolean isListed() {
+      return ChatService.this.store.find(this.record.id) == this.record;
     }
 
     @Override

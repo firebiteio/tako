@@ -35,6 +35,10 @@
     <postStartupActivity implementation="io.firebite.tako.chat.WatchStartup"/>
   </extensions>
 
+  <applicationListeners>
+    <listener class="io.firebite.tako.chat.QueueStashOnClose" topic="com.intellij.openapi.project.ProjectCloseListener"/>
+  </applicationListeners>
+
   <actions>
     <action id="Tako.NewChat" class="io.firebite.tako.ide.actions.NewChatAction" icon="AllIcons.General.Add">
       <add-to-group group-id="ToolsMenu" anchor="last"/>

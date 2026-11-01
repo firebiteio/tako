@@ -7,8 +7,8 @@ import java.nio.charset.StandardCharsets;
 
 /**
  * Stands in for {@code claude -p} in stream-json mode, with one prompt, one permission prompt and one result. A prompt
- * saying "fail" ends its turn with an error instead. A new session is named after the process, a resumed one keeps its
- * id.
+ * saying "fail" ends its turn with an error instead, one saying "exit now" ends the process, and an interrupt ends the
+ * turn as interrupted. A new session is named after the process, a resumed one keeps its id.
  */
 public final class FakeClaude {
   private FakeClaude() {
@@ -35,6 +35,14 @@ public final class FakeClaude {
         || line.contains("\"subtype\":\"apply_flag_settings\"")) {
         emit("{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"" + requestId(line)
           + "\",\"response\":{\"applied\":{\"effort\":\"medium\"}}}}");
+      } else if (line.contains("\"subtype\":\"interrupt\"")) {
+        emit("{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"" + requestId(line)
+          + "\",\"response\":{}}}");
+        emit("{\"type\":\"user\",\"message\":{\"role\":\"user\",\"content\":[{\"type\":\"text\",\"text\":"
+          + "\"[Request interrupted by user]\"}]}}");
+        emit("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"session_id\":\"" + session + "\"}");
+      } else if (line.startsWith("{\"type\":\"user\"") && line.contains("exit now")) {
+        System.exit(3);
       } else if (line.startsWith("{\"type\":\"user\"") && line.contains("fail")) {
         emit("{\"type\":\"system\",\"subtype\":\"init\",\"session_id\":\"" + session + "\"}");
         emit("{\"type\":\"result\",\"subtype\":\"error_during_execution\",\"session_id\":\"" + session + "\"}");

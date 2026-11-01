@@ -18,7 +18,9 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 import org.jetbrains.annotations.Nullable;
 
@@ -79,6 +81,55 @@ public final class ThreadStore {
       }
     }
     return null;
+  }
+
+  /**
+   * Whether a snooze hides the thread from the list: its own or one of its parents'. A parent that is archived or
+   * missing ends the walk, as the list no longer nests the thread under it. An archived thread is never hidden.
+   */
+  public synchronized boolean isSnoozeHidden(Record record) {
+    for (Record listed : this.listedLineage(record)) {
+      if (listed.snoozedUntil > 0) {
+        return true;
+      }
+    }
+    return false;
+  }
+
+  /** Ends the snooze of the thread and of its parents, so the list shows it. Returns the threads it changed. */
+  public synchronized List<Record> wakeWithAncestors(Record record) {
+    List<Record> woken = new ArrayList<>();
+    for (Record listed : this.listedLineage(record)) {
+      if (listed.snoozedUntil > 0) {
+        listed.snoozedUntil = 0;
+        woken.add(listed);
+      }
+    }
+    return woken;
+  }
+
+  /** The thread and its parents up to the first archived or missing one, which the list no longer nests under. */
+  private List<Record> listedLineage(Record record) {
+    List<Record> lineage = new ArrayList<>();
+    Set<String> seen = new HashSet<>();
+    Record current = record;
+    while (current != null && !current.archived && seen.add(current.id)) {
+      lineage.add(current);
+      current = this.find(current.parentId);
+    }
+    return lineage;
+  }
+
+  /** Whether the thread is a run of a parallel-run bench. */
+  public synchronized boolean isRun(String id) {
+    for (Bench bench : this.data.benches) {
+      for (Run run : bench.runs) {
+        if (run.thread.equals(id)) {
+          return true;
+        }
+      }
+    }
+    return false;
   }
 
   public synchronized void remove(String id) {
@@ -245,6 +296,18 @@ public final class ThreadStore {
     public int inheritedPrompts;
     /** How long the first turn took, 0 until it ended. */
     public long firstTurnMillis;
+    /** Whether the list keeps the thread above the others of its group. */
+    public boolean pinned;
+    /** The agent finished or asked something while the thread was not shown, or the person marked it unread. */
+    public boolean unread;
+    /** When the thread's snooze ends, in epoch millis; 0 when it is not snoozed. */
+    public long snoozedUntil;
+    /** When the person last opened, restored or woke the thread. Idle time for auto archive counts from here too. */
+    public long seenAt;
+    /** The pull request the thread was archived for automatically, so restoring it does not archive it again. */
+    public @Nullable String settledPullRequest;
+    /** The worktree setup that has to run before the thread's next prompt; null once it ran or was skipped. */
+    public @Nullable PendingSetup pendingSetup;
     /** The pull request the thread watches, see {@link PullRequestWatcher}. Swapped whole, never changed in place. */
     public volatile @Nullable PullRequestWatch watch;
 
@@ -274,7 +337,8 @@ public final class ThreadStore {
       return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
         this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId,
-        watched == null ? null : watched.number, this.sideChat, this.inheritedPrompts);
+        watched == null ? null : watched.number, this.pinned, this.unread, this.snoozedUntil, this.sideChat,
+        this.inheritedPrompts);
     }
   }
 
@@ -313,6 +377,19 @@ public final class ThreadStore {
     public String thread = "";
     public String worktree = "";
     public String branch = "";
+  }
+
+  /** A new worktree whose {@code .worktreesetup} still has to run, with the main checkout it was made from. */
+  public static final class PendingSetup {
+    public String repository = "";
+    public String worktree = "";
+
+    public static PendingSetup of(Path repository, Path worktree) {
+      PendingSetup setup = new PendingSetup();
+      setup.repository = repository.toString();
+      setup.worktree = worktree.toString();
+      return setup;
+    }
   }
 
   static final class Data {
