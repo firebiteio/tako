@@ -906,6 +906,21 @@ public final class ChatService implements Disposable {
     }
 
     @Override
+    public @Nullable String busyThreadIn(String topLevel) {
+      Path top = Path.of(topLevel).toAbsolutePath().normalize();
+      for (Map.Entry<String, ChatController> entry : ChatService.this.controllers.entrySet()) {
+        ChatController other = entry.getValue();
+        String folder = other.gitFolder();
+        boolean isInside = folder != null && Path.of(folder).toAbsolutePath().normalize().startsWith(top);
+        if (!entry.getKey().equals(this.record.id) && other.state().isInTurn() && isInside) {
+          ThreadStore.Record record = ChatService.this.store.find(entry.getKey());
+          return record != null ? record.title : "";
+        }
+      }
+      return null;
+    }
+
+    @Override
     public void requestAttention(String reason) {
       ToolWindow window = ChatService.this.toolWindow;
       boolean isShown = window != null && window.isVisible()

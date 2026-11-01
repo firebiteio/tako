@@ -25,4 +25,11 @@ public interface ChatHost {
   /** Where the thread's agent reaches Tako's tools over MCP, or null without them. */
   @Nullable
   String toolsUrl();
+
+  /**
+   * The title of another open thread whose agent works or waits for an answer in a folder in {@code topLevel}, else
+   * null. May be called off the EDT.
+   */
+  @Nullable
+  String busyThreadIn(String topLevel);
 }

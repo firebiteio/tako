@@ -23,6 +23,10 @@ import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.agent.PermissionAnswer;
 import io.firebite.tako.agent.PermissionPrompt;
 import io.firebite.tako.agent.SessionCost;
+import io.firebite.tako.chat.git.Blocker;
+import io.firebite.tako.chat.git.GitActionFlow;
+import io.firebite.tako.chat.git.GitDrafts;
+import io.firebite.tako.chat.git.ThreadGit;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
@@ -32,6 +36,8 @@ import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.context.PromptComposer;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.FileIndex;
+import io.firebite.tako.ide.project.GitCommands;
+import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.awt.Image;
@@ -72,6 +78,7 @@ public final class ChatController implements Disposable {
   private final AtomicReference<String> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
   private final Conversation conversation = new Conversation();
+  private final ThreadGit git;
   /** The chat's turn numbers of the prompts sent that the agent has not taken yet. */
   private final Set<Integer> untakenTurns = ConcurrentHashMap.newKeySet();
 
@@ -98,6 +105,10 @@ public final class ChatController implements Disposable {
     this.backend = backend;
     this.isTitled = record.sessionId != null || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
+    this.git = new ThreadGit(() -> {
+      String folder = this.gitFolder();
+      return folder == null ? null : Path.of(folder);
+    }, EnvironmentUtil.getEnvironmentMap(), this::busyIn, GitHubCli.GH);
   }
 
   /** Replays the thread's past, if it has one, and starts its agent. */
@@ -212,8 +223,8 @@ public final class ChatController implements Disposable {
    * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. Call off the EDT.
    */
   public void refreshGit() {
-    String directory = this.workingDirectory != null ? this.workingDirectory : this.projectPath();
-    if (directory == null) {
+    String directory = this.gitFolder();
+    if (directory == null || this.isDisposed) {
       return;
     }
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
@@ -235,6 +246,42 @@ public final class ChatController implements Disposable {
     this.record.worktree = info.worktree();
     this.record.pullRequest = pullRequest;
     this.recordChanged();
+  }
+
+  /** Like {@link #refreshGit}, and asks for the pull request whenever it last did. Call off the EDT. */
+  public void refreshGitNow() {
+    this.lastPullRequestCheck = 0;
+    this.refreshGit();
+  }
+
+  /** The folder git actions work on: where the agent says it works, else the thread's folder. */
+  public @Nullable String gitFolder() {
+    return this.workingDirectory != null ? this.workingDirectory : this.projectPath();
+  }
+
+  /** The thread's git actions and the state they act on. Runs git and may ask GitHub, so call off the EDT. */
+  public ThreadGit.Menu gitMenu() {
+    return this.git.menu(this.record.pullRequest);
+  }
+
+  /**
+   * Asks for the action's texts while the thread's agent writes them, then runs it. Must run on the EDT.
+   *
+   * @param status the state the menu showed
+   * @return completes on the EDT once it ran or the person cancelled it
+   */
+  public CompletableFuture<Void> runGitAction(ThreadGit.Option option, GitCommands.Status status) {
+    return GitActionFlow.start(this.project, this.git, option, status,
+      this.conversation(GitDrafts.MAX_CONVERSATION), this.backend, this::refreshGitNow);
+  }
+
+  /** This thread's agent, or another thread's, working in the repository. */
+  private @Nullable ThreadGit.Busy busyIn(String topLevel) {
+    if (this.state.isInTurn()) {
+      return new ThreadGit.Busy(Blocker.AGENT_BUSY, this.backend.displayName());
+    }
+    String other = this.host.busyThreadIn(topLevel);
+    return other == null ? null : new ThreadGit.Busy(Blocker.OTHER_THREAD_BUSY, other);
   }
 
   /** The folder this thread works in: its worktree, its project folder or else the IDE project. */
@@ -693,6 +740,11 @@ public final class ChatController implements Disposable {
     /** Starting or working, so a prompt or a wait for its answer is premature. */
     public boolean isBusy() {
       return this == STARTING || this == WORKING;
+    }
+
+    /** Works on a turn or waits for an answer in one, so the files may change any moment. */
+    public boolean isInTurn() {
+      return this == WORKING || this == WAITING;
     }
   }
 
