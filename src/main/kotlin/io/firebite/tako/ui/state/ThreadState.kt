@@ -98,6 +98,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val runs = mutableStateListOf<RunPlan>()
   /** Whether a bench started from this thread waits for its worktrees. */
   var startingBench = false
+  /** Whether a thread implementing one of this thread's plans is being started. */
+  var implementing by mutableStateOf(false)
   /** What the agent offers, once it started. */
   var info by mutableStateOf<AgentInfo?>(null)
   /** The agent's process ended or was stopped. The next prompt starts it again. */

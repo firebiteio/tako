@@ -17,6 +17,7 @@ object Tool {
   const val LS = "LS"
   const val WEB_SEARCH = "WebSearch"
   const val WORKFLOW = "Workflow"
+  const val EXIT_PLAN_MODE = "ExitPlanMode"
 }
 
 /** A label is text with monospace runs, e.g. Ran `npm test`. */

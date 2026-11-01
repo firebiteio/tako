@@ -262,7 +262,7 @@ fun ThreadState.addImage(image: ImageAttachment) {
 fun ThreadState.addPermission(requestId: String, prompt: PermissionPrompt) {
   this.approvals.add(Approval(requestId, prompt))
   if (prompt.kind == PermissionPrompt.Kind.PLAN) {
-    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: ""))
+    this.currentTurn().items.add(TurnItem.Plan(prompt.plan ?: "", requestId))
   }
   this.scrollToEnd++
 }
