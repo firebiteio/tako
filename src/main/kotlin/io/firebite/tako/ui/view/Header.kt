@@ -14,6 +14,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -30,6 +31,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.intellij.ide.actions.RevealFileAction
+import com.intellij.openapi.diagnostic.Logger
 import io.firebite.tako.chat.git.Blocker
 import io.firebite.tako.chat.git.GitAction
 import io.firebite.tako.chat.git.ThreadGit
@@ -39,6 +41,7 @@ import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.tokens
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -164,35 +167,66 @@ private fun RestartButton(thread: ThreadState) {
   IconBtn(Icons.refresh, tip, enabled = canResume && isIdle && !thread.stopped) { thread.controller?.restartSession() }
 }
 
-/** Commit, push and pull request for the thread's folder. Reads git when clicked, then offers what is possible. */
+/**
+ * Commit, push and pull request for the thread's folder. The menu opens with what was last read and updates as git
+ * and the GitHub CLI answer again. It is read ahead whenever the thread shows, a turn starts or ends, the branch
+ * changes or a git action ends.
+ */
 @Composable
 private fun GitActionsButton(workspace: Workspace, thread: ThreadState) {
   Box {
     val scope = rememberCoroutineScope()
-    var menu by remember(thread) { mutableStateOf<ThreadGit.Menu?>(null) }
-    var loading by remember(thread) { mutableStateOf(false) }
+    var isOpen by remember(thread) { mutableStateOf(false) }
     val running = thread.gitRunning
-    IconBtn(if (running || loading) Icons.loader else Icons.commit, if (running) t("git.running") else t("git.actions"),
-      enabled = !running && !loading) {
-      val controller = thread.controller ?: return@IconBtn
-      loading = true
-      scope.launch {
-        try {
-          menu = withContext(Dispatchers.IO) { controller.gitMenu() }
-        } finally {
-          loading = false
-        }
+    LaunchedEffect(thread, thread.busy, thread.branch, running) {
+      if (!running) {
+        readGitMenu(thread)
       }
     }
-    menu?.let { shown ->
-      val entries = shown.options.map { option ->
+    IconBtn(if (running) Icons.loader else Icons.commit, if (running) t("git.running") else t("git.actions"),
+      enabled = !running) {
+      isOpen = true
+      scope.launch { readGitMenu(thread) }
+    }
+    if (isOpen) {
+      val shown = thread.gitMenu
+      val entries = shown?.options?.map { option ->
         MenuEntry(gitLabel(option), gitDescription(option, shown, thread), gitIcon(option.action),
           enabled = option.blocker == null) {
           workspace.runGitAction(thread, option, shown.status)
         }
-      }
-      MenuPopup(entries, t("git.menu"), Alignment.End) { menu = null }
+      } ?: listOf(MenuEntry(t("git.loading"), icon = Icons.loader, enabled = false) {})
+      MenuPopup(entries, t("git.menu"), Alignment.End) { isOpen = false }
     }
+  }
+}
+
+/**
+ * Reads the thread's git menu, then again once the GitHub CLI answered, if it has to. A read that started after this
+ * one wins, so an older, slower answer never replaces a newer one. A failed read keeps the menu as it was.
+ */
+private suspend fun readGitMenu(thread: ThreadState) {
+  val controller = thread.controller ?: return
+  val read = ++thread.gitMenuReads
+  try {
+    val local = withContext(Dispatchers.IO) { controller.gitMenu() }
+    if (read != thread.gitMenuReads) {
+      return
+    }
+    thread.gitMenu = local
+    if (local.waitsForGitHub()) {
+      val checked = withContext(Dispatchers.IO) {
+        controller.checkGitHub(local)
+        controller.gitMenu()
+      }
+      if (read == thread.gitMenuReads) {
+        thread.gitMenu = checked
+      }
+    }
+  } catch (e: CancellationException) {
+    throw e
+  } catch (e: RuntimeException) {
+    Logger.getInstance(ThreadGit::class.java).warn("Could not read the git state of thread " + thread.id, e)
   }
 }
 
@@ -227,6 +261,7 @@ private fun gitDescription(option: ThreadGit.Option, menu: ThreadGit.Menu, threa
     Blocker.NO_REMOTE -> t("git.blocked.no.remote")
     Blocker.NOTHING_TO_PUSH -> t("git.blocked.nothing.to.push")
     Blocker.NOT_GITHUB -> t("git.blocked.not.github")
+    Blocker.GH_CHECKING -> t("git.blocked.gh.checking")
     Blocker.GH_MISSING -> t("git.blocked.gh.missing")
     Blocker.GH_LOGGED_OUT -> t("git.blocked.gh.logged.out", status.gitHub?.host ?: "github.com")
     Blocker.PULL_REQUEST_OPEN -> t("git.blocked.pull.request.open", thread.pullRequest?.number ?: "")

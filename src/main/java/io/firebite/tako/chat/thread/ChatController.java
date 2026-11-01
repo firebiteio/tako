@@ -260,12 +260,24 @@ public final class ChatController implements Disposable {
   }
 
   /**
-   * The thread's git actions and the state they act on. Reads the branch's pull request again first when the branch
-   * changed, so the menu does not judge by another branch's. Runs git and may ask GitHub, so call off the EDT.
+   * The thread's git actions and the state they act on. Asks GitHub nothing, except for the pull request of a branch
+   * checked out since the last {@link #refreshGit}. Runs git, so call off the EDT.
+   *
+   * @see #checkGitHub
    */
   public ThreadGit.Menu gitMenu() {
+    ThreadGit.Menu menu = this.git.menu(this.record.pullRequest, this.record.branch);
+    String branch = menu.status().branch();
+    if (branch == null || branch.equals(this.record.branch)) {
+      return menu;
+    }
     this.refreshGit();
-    return this.git.menu(this.record.pullRequest);
+    return this.git.menu(this.record.pullRequest, this.record.branch);
+  }
+
+  /** Learns whether the GitHub CLI can create the menu's pull request. Asks GitHub, so call off the EDT. */
+  public void checkGitHub(ThreadGit.Menu menu) {
+    this.git.checkGitHub(menu);
   }
 
   /**

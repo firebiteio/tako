@@ -112,10 +112,16 @@ public final class GitActionFlow {
         }
       }
 
+      /** Reads the git state again before telling it ended, so whoever waits sees the new pull request. */
       @Override
       public void onFinished() {
-        Async.inBackground(refresh);
-        done.complete(null);
+        Async.inBackground(() -> {
+          try {
+            refresh.run();
+          } finally {
+            Async.onEdt(() -> done.complete(null));
+          }
+        });
       }
     }.queue();
   }

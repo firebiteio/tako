@@ -12,6 +12,7 @@ import static org.junit.Assert.fail;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.Map;
 import java.util.function.BooleanSupplier;
 import org.junit.Test;
 
@@ -22,7 +23,7 @@ public class GitCommandsTest {
   public void missingFolderIsNoRepository() {
     assertEquals(GitCommands.Status.NONE, GitCommands.status(Path.of("does-not-exist-" + System.nanoTime()),
       ENVIRONMENT));
-    assertNull(GitCommands.branch(Path.of("does-not-exist-" + System.nanoTime()), ENVIRONMENT));
+    assertNull(GitCommands.topLevel(Path.of("does-not-exist-" + System.nanoTime()), ENVIRONMENT));
   }
 
   @Test
@@ -230,6 +231,53 @@ public class GitCommandsTest {
 
     assertEquals(new GitCommands.GitHubRepo("github.com", "firebite", "tako"), status.gitHub());
     assertEquals("repos/firebite/tako", status.gitHub().apiPath());
+  }
+
+  @Test
+  public void configKeepsTheLastValueAndTheFirstOrder() {
+    Map<String, String> config = GitCommands.parseConfig("remote.fork.url\nhttps://a\0core.bare\nfalse\0"
+      + "remote.my.dotted.url\n../x\0remote.fork.url\nhttps://b\0core.flag\0");
+
+    assertEquals(List.of("remote.fork.url", "core.bare", "remote.my.dotted.url", "core.flag"),
+      List.copyOf(config.keySet()));
+    assertEquals("https://b", config.get("remote.fork.url"));
+    assertEquals("true", config.get("core.flag"));
+  }
+
+  @Test
+  public void statusIsReadFromGitsAnswers() {
+    Map<String, String> config = GitCommands.parseConfig("remote.upstream.url\n../u\0remote.my.fork.url\n../f\0"
+      + "remote.pushdefault\nmy.fork\0branch.Feat.remote\nmy.fork\0branch.Feat.merge\nrefs/heads/Feat\0");
+    String porcelain = "# branch.oid 1234\n# branch.head Feat\n# branch.upstream my.fork/Feat\n# branch.ab +3 -1\n"
+      + "1 .M N... 100644 100644 100644 a a a.txt\n? new file.txt\n";
+
+    GitCommands.Status status = GitCommands.parseStatus("/r", false, porcelain, false, config,
+      "refs/remotes/my.fork/HEAD refs/remotes/my.fork/develop\nrefs/remotes/upstream/HEAD refs/remotes/upstream/main\n",
+      null);
+
+    assertEquals("Feat", status.branch());
+    assertEquals(2, status.changedFiles());
+    assertTrue(status.hasCommits());
+    assertEquals("my.fork", status.remote());
+    assertTrue(status.tracksBranch());
+    assertEquals(3, status.ahead());
+    assertEquals("develop", status.defaultBranch());
+    assertNull(status.gitHub());
+  }
+
+  @Test
+  public void statusBeforeTheFirstCommitAndDetached() {
+    GitCommands.Status unborn = GitCommands.parseStatus("/r", false, "# branch.oid (initial)\n# branch.head main\n",
+      false, Map.of(), "", null);
+    GitCommands.Status detached = GitCommands.parseStatus("/r", false, "# branch.oid 12\n# branch.head (detached)\n",
+      false, GitCommands.parseConfig("remote.origin.url\nhttps://github.com/o/r\0"), "", "https://github.com/o/r");
+
+    assertEquals("main", unborn.branch());
+    assertFalse(unborn.hasCommits());
+    assertNull(unborn.remote());
+    assertNull(detached.branch());
+    assertNull(detached.remote());
+    assertNull(detached.gitHub());
   }
 
   @Test

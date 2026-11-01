@@ -8,10 +8,17 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
@@ -31,57 +38,112 @@ public final class GitCommands {
   private static final int MAX_OUTPUT_BYTES = 256 * 1024;
   private static final int MAX_DETAIL_CHARS = 4000;
   private static final long STOP_WAIT_SECONDS = 10;
+  private static final ExecutorService READERS = Executors.newCachedThreadPool(
+    Thread.ofPlatform().daemon().name("tako-git-read-", 0).factory());
 
   private GitCommands() {
   }
 
-  /** The checkout's branch, changes and remote. Not a repository when the folder is gone or not in git. */
+  /**
+   * The checkout's branch, changes and remote. Not a repository when the folder is gone or not in git. Runs its few
+   * reads at once, so it takes about as long as one git call.
+   */
   public static Status status(Path directory, Map<String, String> environment) {
-    String topLevel = topLevel(directory, environment);
-    if (topLevel == null) {
+    if (!Files.isDirectory(directory)) {
       return Status.NONE;
     }
+    CompletableFuture<Output> top = readLater(directory, environment, "rev-parse", "--show-toplevel", "--git-path",
+      "MERGE_HEAD");
+    CompletableFuture<Output> status = readLater(directory, environment, "status", "--porcelain=v2", "--branch",
+      "--untracked-files=all");
+    CompletableFuture<Output> unmerged = readLater(directory, environment, "ls-files", "--unmerged");
+    CompletableFuture<Output> config = readLater(directory, environment, "config", "--list", "-z");
+    CompletableFuture<Output> remoteHeads = readLater(directory, environment, "for-each-ref",
+      "--format=%(refname) %(symref)", "refs/remotes/*/HEAD");
+    CompletableFuture<Output> originUrl = readLater(directory, environment, "remote", "get-url", "origin");
     try {
-      String branch = branch(directory, environment);
-      boolean hasCommits = read(directory, environment, "rev-parse", "-q", "--verify", "HEAD").exitCode() == 0;
-      boolean isMerging = read(directory, environment, "rev-parse", "-q", "--verify", "MERGE_HEAD").exitCode() == 0;
-      int changedFiles = 0;
-      for (String line : success(read(directory, environment, "status", "--porcelain", "--untracked-files=all"))
-        .split("\\R")) {
-        if (line.length() >= 2) {
-          changedFiles++;
-        }
+      String[] locations = success(top.get()).strip().split("\\R");
+      if (locations.length != 2) {
+        return Status.NONE;
       }
-      boolean hasConflicts = hasConflicts(directory, environment);
-      List<String> remotes = lines(read(directory, environment, "remote").stdout());
-      String remote = branch == null ? null : pushRemote(directory, environment, branch, remotes);
-      boolean tracksBranch = false;
-      int ahead = 0;
-      if (remote != null) {
-        String merge = config(directory, environment, "branch." + branch + ".merge");
-        boolean tracks = ("refs/heads/" + branch).equals(merge)
-          && remote.equals(config(directory, environment, "branch." + branch + ".remote"));
-        Output counts = tracks
-          ? read(directory, environment, "rev-list", "--left-right", "--count", "@{u}...HEAD")
-          : null;
-        String[] behindAhead = counts == null || counts.exitCode() != 0
-          ? new String[0]
-          : counts.stdout().strip()
-            .split("\\s+");
-        if (behindAhead.length == 2) {
-          tracksBranch = true;
-          ahead = Integer.parseInt(behindAhead[1]);
-        }
-      }
-      String defaultBranch = remote == null ? null : defaultBranch(directory, environment, remote);
-      GitHubRepo gitHub = "origin".equals(remote)
-        ? parseGitHub(read(directory, environment, "remote", "get-url", "origin").stdout())
-        : null;
-      return new Status(true, topLevel, branch, changedFiles, hasConflicts, isMerging, hasCommits, remote,
-        tracksBranch, ahead, defaultBranch, gitHub);
-    } catch (CommandException | NumberFormatException e) {
+      String topLevel = Path.of(locations[0].strip()).toAbsolutePath().normalize().toString();
+      boolean isMerging = Files.exists(directory.resolve(locations[1].strip()));
+      Output origin = originUrl.get();
+      return parseStatus(topLevel, isMerging, success(status.get()), !success(unmerged.get()).isBlank(),
+        parseConfig(config.get().stdout()), remoteHeads.get().stdout(), origin.exitCode() == 0
+          ? origin.stdout()
+          : null);
+    } catch (CommandException | ExecutionException | NumberFormatException e) {
+      return Status.NONE;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
       return Status.NONE;
     }
+  }
+
+  /**
+   * The status from git's answers.
+   *
+   * @param porcelain   {@code status --porcelain=v2 --branch}
+   * @param config      every config value by its key, as {@link #parseConfig} reads them
+   * @param remoteHeads {@code for-each-ref --format="%(refname) %(symref)" refs/remotes/*}{@code /HEAD}
+   * @param originUrl   {@code remote get-url origin}, null without origin
+   */
+  static Status parseStatus(String topLevel, boolean isMerging, String porcelain, boolean hasConflicts,
+    Map<String, String> config, String remoteHeads, @Nullable String originUrl) {
+    String branch = null;
+    boolean hasCommits = false;
+    int ahead = -1;
+    int changedFiles = 0;
+    for (String line : porcelain.split("\\R")) {
+      if (line.startsWith("# branch.oid ")) {
+        hasCommits = !line.endsWith("(initial)");
+      } else if (line.startsWith("# branch.head ")) {
+        String head = line.substring("# branch.head ".length()).strip();
+        branch = head.equals("(detached)") ? null : head;
+      } else if (line.startsWith("# branch.ab +")) {
+        String[] counts = line.substring("# branch.ab +".length()).split(" ");
+        ahead = Integer.parseInt(counts[0]);
+      } else if (!line.isBlank() && !line.startsWith("#")) {
+        changedFiles++;
+      }
+    }
+    String remote = branch == null ? null : pushRemote(config, branch);
+    boolean tracksBranch = remote != null && ahead >= 0
+      && ("refs/heads/" + branch).equals(config.get("branch." + branch + ".merge"))
+      && remote.equals(config.get("branch." + branch + ".remote"));
+    String defaultBranch = null;
+    if (remote != null) {
+      String prefix = "refs/remotes/" + remote + "/";
+      for (String line : remoteHeads.split("\\R")) {
+        String[] parts = line.strip().split(" ");
+        if (parts.length == 2 && parts[0].equals(prefix + "HEAD") && parts[1].startsWith(prefix)) {
+          defaultBranch = parts[1].substring(prefix.length());
+        }
+      }
+    }
+    GitHubRepo gitHub = "origin".equals(remote) ? parseGitHub(originUrl) : null;
+    return new Status(true, topLevel, branch, changedFiles, hasConflicts, isMerging, hasCommits, remote,
+      tracksBranch, tracksBranch ? ahead : 0, defaultBranch, gitHub);
+  }
+
+  /**
+   * {@code config --list -z}: one entry per NUL, key and value split by a line break, a later value overriding an
+   * earlier one. Section and variable names come lower case.
+   */
+  static Map<String, String> parseConfig(String output) {
+    Map<String, String> config = new LinkedHashMap<>();
+    for (String entry : output.split("\0")) {
+      int newline = entry.indexOf('\n');
+      if (newline < 0) {
+        if (!entry.isBlank()) {
+          config.put(entry, "true");
+        }
+      } else {
+        config.put(entry.substring(0, newline), entry.substring(newline + 1));
+      }
+    }
+    return config;
   }
 
   /** The top folder of the repository the folder is in, normalized, or null when it is gone or not in git. */
@@ -94,19 +156,6 @@ public final class GitCommands {
       return top.exitCode() != 0 || top.stdout().isBlank()
         ? null
         : Path.of(top.stdout().strip()).toAbsolutePath().normalize().toString();
-    } catch (CommandException e) {
-      return null;
-    }
-  }
-
-  /** The checked-out branch, null when HEAD is detached or the folder is not in git. */
-  public static @Nullable String branch(Path directory, Map<String, String> environment) {
-    if (!Files.isDirectory(directory)) {
-      return null;
-    }
-    try {
-      Output branch = read(directory, environment, "symbolic-ref", "-q", "--short", "HEAD");
-      return branch.exitCode() == 0 && !branch.stdout().isBlank() ? branch.stdout().strip() : null;
     } catch (CommandException e) {
       return null;
     }
@@ -308,11 +357,16 @@ public final class GitCommands {
    * The remote a plain {@code git push} would use: the branch's push remote, the default push remote, the branch's
    * remote, {@code origin} or the first one. Only configured remotes count.
    */
-  private static @Nullable String pushRemote(Path directory, Map<String, String> environment, String branch,
-    List<String> remotes) throws CommandException {
-    for (String key : List.of("branch." + branch + ".pushRemote", "remote.pushDefault",
+  private static @Nullable String pushRemote(Map<String, String> config, String branch) {
+    Set<String> remotes = new LinkedHashSet<>();
+    for (String key : config.keySet()) {
+      if (key.startsWith("remote.") && key.endsWith(".url") && key.length() > "remote..url".length()) {
+        remotes.add(key.substring("remote.".length(), key.length() - ".url".length()));
+      }
+    }
+    for (String key : List.of("branch." + branch + ".pushremote", "remote.pushdefault",
       "branch." + branch + ".remote")) {
-      String remote = config(directory, environment, key);
+      String remote = config.get(key);
       if (remote != null && remotes.contains(remote)) {
         return remote;
       }
@@ -320,15 +374,18 @@ public final class GitCommands {
     if (remotes.contains("origin")) {
       return "origin";
     }
-    return remotes.isEmpty() ? null : remotes.getFirst();
+    return remotes.isEmpty() ? null : remotes.iterator().next();
   }
 
-  /** The remote's default branch as the last fetch or clone recorded it, else null. */
-  private static @Nullable String defaultBranch(Path directory, Map<String, String> environment, String remote)
-    throws CommandException {
-    Output head = read(directory, environment, "symbolic-ref", "-q", "--short", "refs/remotes/" + remote + "/HEAD");
-    String name = head.stdout().strip();
-    return head.exitCode() == 0 && name.startsWith(remote + "/") ? name.substring(remote.length() + 1) : null;
+  private static CompletableFuture<Output> readLater(Path directory, Map<String, String> environment,
+    String... arguments) {
+    return CompletableFuture.supplyAsync(() -> {
+      try {
+        return read(directory, environment, arguments);
+      } catch (CommandException e) {
+        throw new CompletionException(e);
+      }
+    }, READERS);
   }
 
   /** Whether the index has unmerged paths, which {@code add -A} would mark resolved with their conflict markers. */

@@ -4,6 +4,7 @@ import static io.firebite.tako.ide.project.TestRepos.ENVIRONMENT;
 import static io.firebite.tako.ide.project.TestRepos.git;
 import static io.firebite.tako.ide.project.TestRepos.write;
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -103,7 +104,7 @@ public class ThreadGitTest {
 
     assertEquals(Blocker.NOT_GITHUB, blocker(pr, with(changed, "feat", "origin", null, false, true), null, null));
     assertEquals(Blocker.GH_MISSING, blocker(pr, changed, GitHubCli.State.MISSING, null));
-    assertEquals(Blocker.GH_MISSING, blocker(pr, changed, null, null));
+    assertEquals(Blocker.GH_CHECKING, blocker(pr, changed, null, null));
     assertEquals(Blocker.GH_LOGGED_OUT, blocker(pr, changed, GitHubCli.State.LOGGED_OUT, null));
     assertEquals(Blocker.PULL_REQUEST_OPEN, blocker(pr, changed, GitHubCli.State.READY, OPEN));
     assertNull("push still updates an open pull request",
@@ -128,7 +129,7 @@ public class ThreadGitTest {
     git(repository, "checkout", "-q", "-b", "feat");
     write(repository, "new ü.txt", "neu\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     ThreadGit.Option option = menu.options().get(GitAction.COMMIT_AND_PULL_REQUEST.ordinal());
     assertNull(option.blocker());
     List<ThreadGit.Step> steps = new ArrayList<>();
@@ -151,14 +152,14 @@ public class ThreadGitTest {
     git(repository, "checkout", "-q", "-b", "feat");
     git(repository, "commit", "-q", "--allow-empty", "-m", "work");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     ThreadGit.Option push = menu.options().get(GitAction.COMMIT_AND_PUSH.ordinal());
 
     ThreadGit.Result result = git.run(push, menu.status(), Draft.EMPTY, step -> {
     }, NEVER);
 
     assertEquals(new ThreadGit.Result(null, "origin/feat", null), result);
-    assertEquals(Blocker.NOTHING_TO_PUSH, git.menu(null).options().get(GitAction.COMMIT_AND_PUSH.ordinal())
+    assertEquals(Blocker.NOTHING_TO_PUSH, menu(git).options().get(GitAction.COMMIT_AND_PUSH.ordinal())
       .blocker());
   }
 
@@ -168,7 +169,7 @@ public class ThreadGitTest {
     String head = git(repository, "rev-parse", "HEAD");
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(
       menu.options().get(GitAction.COMMIT_AND_PULL_REQUEST.ordinal()), menu.status(), new Draft("m", "t", ""), s -> {
@@ -187,7 +188,7 @@ public class ThreadGitTest {
     write(repository, "a.txt", "changed\n");
     this.gitHub.createError = "A pull request already exists for o:feat.";
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(
       menu.options().get(GitAction.COMMIT_AND_PULL_REQUEST.ordinal()), menu.status(), new Draft("m", "t", ""), s -> {
@@ -210,7 +211,7 @@ public class ThreadGitTest {
     git(other, "push", "-q");
     write(repository, "a.txt", "mine\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(
       menu.options().get(GitAction.COMMIT_AND_PUSH.ordinal()), menu.status(), new Draft("mine", "", ""), s -> {
@@ -228,7 +229,7 @@ public class ThreadGitTest {
     TestRepos.hook(repository, "commit-msg", "echo 'subject too long' >&2\nexit 1");
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(
       menu.options().get(GitAction.COMMIT_AND_PUSH.ordinal()), menu.status(), new Draft("m", "", ""), s -> {
@@ -246,7 +247,7 @@ public class ThreadGitTest {
     Path repository = TestRepos.committed();
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     this.busy.set(new ThreadGit.Busy(Blocker.AGENT_BUSY, "Claude Code"));
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(menu.options().getFirst(), menu.status(),
@@ -255,8 +256,8 @@ public class ThreadGitTest {
 
     assertEquals(ThreadGit.Failure.BUSY, error.failure());
     assertEquals("Claude Code", error.detail());
-    assertEquals(Blocker.AGENT_BUSY, git.menu(null).options().getFirst().blocker());
-    assertEquals("Claude Code", git.menu(null).busyName());
+    assertEquals(Blocker.AGENT_BUSY, menu(git).options().getFirst().blocker());
+    assertEquals("Claude Code", menu(git).busyName());
     assertTrue(git(repository, "status", "--porcelain").contains("a.txt"));
   }
 
@@ -265,7 +266,7 @@ public class ThreadGitTest {
     Path repository = TestRepos.committed();
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     git(repository, "checkout", "-q", "-b", "elsewhere");
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(menu.options().getFirst(), menu.status(),
@@ -281,7 +282,7 @@ public class ThreadGitTest {
     Path repository = TestRepos.committed();
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     write(repository, "a.txt", "one\n");
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(menu.options().getFirst(), menu.status(),
@@ -298,10 +299,10 @@ public class ThreadGitTest {
     Path gone = repository.resolve("gone");
     Files.createDirectories(gone);
     ThreadGit git = this.threadGit(gone);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     Files.delete(gone);
 
-    assertEquals(Blocker.NOT_REPOSITORY, git.menu(null).options().getFirst().blocker());
+    assertEquals(Blocker.NOT_REPOSITORY, menu(git).options().getFirst().blocker());
     ThreadGit.ActionException error = expectFailure(() -> git.run(menu.options().getFirst(), menu.status(),
       new Draft("m", "", ""), s -> {
       }, NEVER));
@@ -318,7 +319,7 @@ public class ThreadGitTest {
     write(repository, "a.txt", "changed\n");
     ThreadGit first = this.threadGit(repository);
     ThreadGit second = this.threadGit(repository);
-    ThreadGit.Menu menu = first.menu(null);
+    ThreadGit.Menu menu = menu(first);
     CompletableFuture<ThreadGit.Result> running = CompletableFuture.supplyAsync(() -> {
       try {
         return first.run(menu.options().getFirst(), menu.status(), new Draft("slow", "", ""), s -> {
@@ -328,7 +329,7 @@ public class ThreadGitTest {
       }
     });
     long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(20);
-    while (second.menu(null).options().getFirst().blocker() != Blocker.RUNNING) {
+    while (menu(second).options().getFirst().blocker() != Blocker.RUNNING) {
       if (System.nanoTime() > deadline) {
         fail("The first run never showed as running");
       }
@@ -341,7 +342,7 @@ public class ThreadGitTest {
 
     assertEquals(ThreadGit.Failure.ALREADY_RUNNING, error.failure());
     assertNotNull(running.get(30, TimeUnit.SECONDS).commit());
-    assertEquals(Blocker.NOTHING_TO_COMMIT, second.menu(null).options().getFirst().blocker());
+    assertEquals(Blocker.NOTHING_TO_COMMIT, menu(second).options().getFirst().blocker());
   }
 
   @Test
@@ -350,7 +351,7 @@ public class ThreadGitTest {
     TestRepos.hook(repository, "pre-commit", "sleep 60");
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     long start = System.nanoTime();
 
     ThreadGit.ActionException error = expectFailure(() -> git.run(menu.options().getFirst(), menu.status(),
@@ -359,26 +360,101 @@ public class ThreadGitTest {
 
     assertEquals(ThreadGit.Failure.CANCELLED, error.failure());
     assertEquals(ThreadGit.Result.NONE, error.done());
-    assertNull("the guard is released", git.menu(null).options().getFirst().blocker());
+    assertNull("the guard is released", menu(git).options().getFirst().blocker());
   }
 
   @Test
-  public void ghStateIsAskedOnlyForGitHubAndCachedWhenReady() throws Exception {
+  public void menuAsksGitHubNothingUntilChecked() throws Exception {
     Path repository = TestRepos.committed();
     write(repository, "a.txt", "changed\n");
-    git(repository, "remote", "add", "origin", "https://github.cache-test-" + System.nanoTime() + ".com/o/r.git");
+    git(repository, "remote", "add", "origin", "https://github.logged-out-" + System.nanoTime() + ".com/o/r.git");
+    ThreadGit git = this.threadGit(repository);
+    this.gitHub.state = GitHubCli.State.LOGGED_OUT;
+
+    ThreadGit.Menu local = git.menu(null, null);
+    assertEquals(Blocker.GH_CHECKING, local.options().getLast().blocker());
+    assertTrue(local.waitsForGitHub());
+    assertNull("commit and push do not wait", local.options().get(GitAction.COMMIT_AND_PUSH.ordinal()).blocker());
+    assertEquals(0, this.gitHub.stateCalls.get());
+
+    git.checkGitHub(local);
+    assertEquals(Blocker.GH_LOGGED_OUT, git.menu(null, null).options().getLast().blocker());
+    this.gitHub.state = GitHubCli.State.READY;
+    git.checkGitHub(git.menu(null, null));
+    assertEquals("a recent answer is reused", 1, this.gitHub.stateCalls.get());
+  }
+
+  @Test
+  public void readyGitHubCliIsAskedOnce() throws Exception {
+    Path repository = TestRepos.committed();
+    write(repository, "a.txt", "changed\n");
+    git(repository, "remote", "add", "origin", "https://github.ready-" + System.nanoTime() + ".com/o/r.git");
     ThreadGit git = this.threadGit(repository);
 
-    this.gitHub.state = GitHubCli.State.LOGGED_OUT;
-    assertEquals(Blocker.GH_LOGGED_OUT, git.menu(null).options().getLast().blocker());
-    this.gitHub.state = GitHubCli.State.READY;
-    assertNull(git.menu(null).options().getLast().blocker());
-    assertNull(git.menu(null).options().getLast().blocker());
-    assertEquals(2, this.gitHub.stateCalls.get());
+    assertNull(menu(git).options().getLast().blocker());
+    assertNull(menu(git).options().getLast().blocker());
+    assertFalse(git.menu(null, null).waitsForGitHub());
+    assertEquals(1, this.gitHub.stateCalls.get());
 
-    Path plain = TestRepos.committed();
-    this.threadGit(plain).menu(null);
-    assertEquals(2, this.gitHub.stateCalls.get());
+    ThreadGit.Menu plain = this.threadGit(TestRepos.committed()).menu(null, null);
+    assertFalse(plain.waitsForGitHub());
+    this.threadGit(TestRepos.committed()).checkGitHub(plain);
+    assertEquals(1, this.gitHub.stateCalls.get());
+  }
+
+  @Test
+  public void runActsOnTheCheckoutAsItIsNotAsTheMenuShowedIt() throws Exception {
+    Path repository = TestRepos.committed();
+    git(repository, "commit", "-q", "--allow-empty", "-m", "work");
+    Path bare = TestRepos.addRemote(repository, "origin");
+    git(repository, "push", "-q", "-u", "origin", "main");
+    ThreadGit git = this.threadGit(repository);
+    ThreadGit.Menu shown = menu(git);
+    git(repository, "remote", "remove", "origin");
+    Path other = TestRepos.addRemote(repository, "fork");
+    git(repository, "commit", "-q", "--allow-empty", "-m", "more");
+    ThreadGit.Option push = new ThreadGit.Option(GitAction.COMMIT_AND_PUSH, false, null);
+
+    ThreadGit.Result result = git.run(push, shown.status(), Draft.EMPTY, step -> {
+    }, NEVER);
+
+    assertEquals("fork/main", result.pushedTo());
+    assertEquals(git(repository, "rev-parse", "HEAD"), git(other, "rev-parse", "refs/heads/main"));
+    assertTrue(Files.exists(bare));
+  }
+
+  @Test
+  public void parallelChecksAskTheGitHubCliOnce() throws Exception {
+    Path repository = TestRepos.committed();
+    write(repository, "a.txt", "changed\n");
+    git(repository, "remote", "add", "origin", "https://github.parallel-" + System.nanoTime() + ".com/o/r.git");
+    ThreadGit git = this.threadGit(repository);
+    ThreadGit.Menu local = git.menu(null, null);
+    this.gitHub.delayMillis = 500;
+
+    List<CompletableFuture<Void>> checks = new ArrayList<>();
+    for (int i = 0; i < 4; i++) {
+      checks.add(CompletableFuture.runAsync(() -> git.checkGitHub(local)));
+    }
+    for (CompletableFuture<Void> check : checks) {
+      check.get(10, TimeUnit.SECONDS);
+    }
+
+    assertEquals(1, this.gitHub.stateCalls.get());
+    assertNull(git.menu(null, null).options().getLast().blocker());
+  }
+
+  @Test
+  public void anotherBranchsPullRequestDoesNotBlock() throws Exception {
+    Path repository = this.githubRepository();
+    git(repository, "checkout", "-q", "-b", "feat");
+    write(repository, "a.txt", "changed\n");
+    ThreadGit git = this.threadGit(repository);
+    git.checkGitHub(git.menu(null, null));
+
+    assertEquals(Blocker.PULL_REQUEST_OPEN, git.menu(OPEN, "feat").options().getLast().blocker());
+    assertNull(git.menu(OPEN, "main").options().getLast().blocker());
+    assertNull(git.menu(OPEN, null).options().getLast().blocker());
   }
 
   @Test
@@ -387,7 +463,7 @@ public class ThreadGitTest {
     git(repository, "commit", "-q", "--allow-empty", "-m", "chore(build): bump gradle");
     write(repository, "login.txt", "secret sauce\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
     AtomicReference<String> asked = new AtomicReference<>();
 
     Draft draft = git.draft(menu.options().getFirst(), menu.status(), "Person: add login", (directory, prompt) -> {
@@ -406,7 +482,7 @@ public class ThreadGitTest {
     Path repository = TestRepos.committed();
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    ThreadGit.Menu menu = git.menu(null);
+    ThreadGit.Menu menu = menu(git);
 
     try {
       git.draft(menu.options().getFirst(), menu.status(), "", (directory, prompt) -> {
@@ -425,6 +501,16 @@ public class ThreadGitTest {
     git(repository, "remote", "set-url", "origin", "https://github.com/o/r.git");
     git(repository, "remote", "set-url", "--push", "origin", bare.toString());
     return repository;
+  }
+
+  /** The menu as the header ends up showing it: after the GitHub CLI was asked, when it had to be. */
+  private static ThreadGit.Menu menu(ThreadGit git) {
+    ThreadGit.Menu menu = git.menu(null, null);
+    if (!menu.waitsForGitHub()) {
+      return menu;
+    }
+    git.checkGitHub(menu);
+    return git.menu(null, null);
   }
 
   private ThreadGit threadGit(Path folder) {
@@ -468,10 +554,16 @@ public class ThreadGitTest {
     private final AtomicInteger stateCalls = new AtomicInteger();
     private volatile State state = State.READY;
     private volatile String createError;
+    private volatile long delayMillis;
 
     @Override
     public State state(String host, Map<String, String> environment) {
       this.stateCalls.incrementAndGet();
+      try {
+        Thread.sleep(this.delayMillis);
+      } catch (InterruptedException e) {
+        Thread.currentThread().interrupt();
+      }
       return this.state;
     }
 

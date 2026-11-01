@@ -10,6 +10,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
@@ -25,7 +26,14 @@ public final class ThreadGit {
   private static final Set<String> RUNNING = ConcurrentHashMap.newKeySet();
   /** How long a logged-in {@code gh} is trusted without asking again. */
   private static final long GH_READY_MILLIS = 300_000;
-  private static final Map<String, Long> GH_READY_AT = new ConcurrentHashMap<>();
+  /**
+   * How long a missing or logged-out {@code gh} is trusted without asking again: short, so a login soon shows, and
+   * long enough that turns ending one after another do not ask each time.
+   */
+  private static final long GH_NOT_READY_MILLIS = 30_000;
+  private static final Map<String, KnownState> GH_STATES = new ConcurrentHashMap<>();
+  /** The hosts whose GitHub CLI state is being asked for, done once it answered. */
+  private static final Map<String, CompletableFuture<Void>> GH_ASKING = new ConcurrentHashMap<>();
 
   private final Supplier<Path> folder;
   private final Map<String, String> environment;
@@ -45,11 +53,14 @@ public final class ThreadGit {
   }
 
   /**
-   * The checkout's state and the actions possible on it. Runs git and may ask GitHub, so call off the EDT.
+   * The checkout's state and the actions possible on it. Reads git locally and asks GitHub nothing: until
+   * {@link #checkGitHub} learned the GitHub CLI's state, creating a pull request waits on
+   * {@link Blocker#GH_CHECKING}. Call off the EDT.
    *
-   * @param stored the pull request the thread knows for its branch
+   * @param stored       the pull request the thread last found
+   * @param storedBranch the branch it was found for, so another branch's pull request does not count
    */
-  public Menu menu(@Nullable GitInfo.PullRequest stored) {
+  public Menu menu(@Nullable GitInfo.PullRequest stored, @Nullable String storedBranch) {
     Path directory = this.folder.get();
     GitCommands.Status status = directory == null
       ? GitCommands.Status.NONE
@@ -57,10 +68,36 @@ public final class ThreadGit {
     String topLevel = status.topLevel();
     Busy working = topLevel == null ? null : this.busy.apply(topLevel);
     GitCommands.GitHubRepo repository = status.gitHub();
-    GitHubCli.State gh = repository == null ? null : this.ghState(repository.host());
+    GitHubCli.State gh = repository == null ? null : knownState(repository.host());
     boolean running = topLevel != null && RUNNING.contains(topLevel);
-    return new Menu(status, options(status, gh, running, working == null ? null : working.blocker(), stored),
-      working == null ? null : working.name());
+    boolean isSameBranch = status.branch() != null && status.branch().equals(storedBranch);
+    return new Menu(status, options(status, gh, running, working == null ? null : working.blocker(),
+      isSameBranch ? stored : null), working == null ? null : working.name());
+  }
+
+  /**
+   * Asks the GitHub CLI whether it is installed and logged in, unless it answered lately, so the next {@link #menu}
+   * knows. Callers asking for the same host meanwhile wait for that one answer. Asks GitHub over the network, so call
+   * off the EDT.
+   */
+  public void checkGitHub(Menu menu) {
+    GitCommands.GitHubRepo repository = menu.status().gitHub();
+    if (repository == null || knownState(repository.host()) != null) {
+      return;
+    }
+    String host = repository.host();
+    CompletableFuture<Void> asking = new CompletableFuture<>();
+    CompletableFuture<Void> other = GH_ASKING.putIfAbsent(host, asking);
+    if (other != null) {
+      other.exceptionally(error -> null).join();
+      return;
+    }
+    try {
+      GH_STATES.put(host, new KnownState(this.gitHub.state(host, this.environment), System.currentTimeMillis()));
+    } finally {
+      GH_ASKING.remove(host, asking);
+      asking.complete(null);
+    }
   }
 
   /** Has the agent write the action's texts from the changes, the repository's style and the conversation. */
@@ -115,17 +152,19 @@ public final class ThreadGit {
     }
   }
 
-  private Result runSteps(Option option, GitCommands.Status status, Draft draft, Path directory,
+  /** Reads the status again, since the menu may show one read a while ago, and acts on that. */
+  private Result runSteps(Option option, GitCommands.Status shown, Draft draft, Path directory,
     Consumer<Step> progress, BooleanSupplier cancelled) throws ActionException {
-    String branch = GitCommands.branch(directory, this.environment);
-    if (branch == null && GitCommands.topLevel(directory, this.environment) == null) {
+    GitCommands.Status status = GitCommands.status(directory, this.environment);
+    if (!status.isRepository()) {
       throw new ActionException(Failure.NOT_REPOSITORY, "", Result.NONE);
     }
     Busy working = this.busy.apply(Objects.requireNonNull(status.topLevel()));
     if (working != null) {
       throw new ActionException(Failure.BUSY, working.name(), Result.NONE);
     }
-    if (branch == null || !branch.equals(status.branch())) {
+    String branch = status.branch();
+    if (branch == null || !branch.equals(shown.branch())) {
       throw new ActionException(Failure.BRANCH_CHANGED, branch == null ? "" : branch, Result.NONE);
     }
     GitCommands.GitHubRepo repository = status.gitHub();
@@ -180,24 +219,20 @@ public final class ThreadGit {
     }
   }
 
-  private GitHubCli.State ghState(String host) {
-    Long readyAt = GH_READY_AT.get(host);
-    if (readyAt != null && System.currentTimeMillis() - readyAt < GH_READY_MILLIS) {
-      return GitHubCli.State.READY;
+  /** What the GitHub CLI answered for the host lately, null when it was not asked or too long ago. */
+  private static @Nullable GitHubCli.State knownState(String host) {
+    KnownState known = GH_STATES.get(host);
+    if (known == null) {
+      return null;
     }
-    GitHubCli.State state = this.gitHub.state(host, this.environment);
-    if (state == GitHubCli.State.READY) {
-      GH_READY_AT.put(host, System.currentTimeMillis());
-    } else {
-      GH_READY_AT.remove(host);
-    }
-    return state;
+    long maxAge = known.state() == GitHubCli.State.READY ? GH_READY_MILLIS : GH_NOT_READY_MILLIS;
+    return System.currentTimeMillis() - known.at() < maxAge ? known.state() : null;
   }
 
   /**
    * One entry per action, in menu order, each with what blocks it.
    *
-   * @param gh      the GitHub CLI's state, null when the push remote is not on GitHub
+   * @param gh      the GitHub CLI's state, null when it is not known yet or the push remote is not on GitHub
    * @param running a git action runs in the repository
    * @param busy    why an agent blocks every action, if one does
    * @param stored  the pull request the thread knows for its branch
@@ -245,6 +280,9 @@ public final class ThreadGit {
     if (status.gitHub() == null) {
       return Blocker.NOT_GITHUB;
     }
+    if (gh == null) {
+      return Blocker.GH_CHECKING;
+    }
     if (gh != GitHubCli.State.READY) {
       return gh == GitHubCli.State.LOGGED_OUT ? Blocker.GH_LOGGED_OUT : Blocker.GH_MISSING;
     }
@@ -284,6 +322,21 @@ public final class ThreadGit {
     GitCommands.Status status,
     List<Option> options,
     @Nullable String busyName
+  ) {
+    /** Whether an entry waits for {@link #checkGitHub}. */
+    public boolean waitsForGitHub() {
+      for (Option option : this.options) {
+        if (option.blocker() == Blocker.GH_CHECKING) {
+          return true;
+        }
+      }
+      return false;
+    }
+  }
+
+  private record KnownState(
+    GitHubCli.State state,
+    long at
   ) {
   }
 
