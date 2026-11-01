@@ -5,23 +5,24 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 
 /** A prompt's text compared the way the chat shows it and the agent's session keeps it. */
 public final class PromptText {
+  private static final Pattern COMMAND = Pattern.compile("/[A-Za-z0-9:_-]+(?= |$)");
+
   private PromptText() {
   }
 
   /**
    * The text stripped, with runs of whitespace as one space. A slash command keeps only its name, since sessions keep
-   * only that.
+   * only that; a text that starts with a path stays whole.
    */
   public static String normalize(String text) {
     String normalized = text.strip().replaceAll("\\s+", " ");
-    if (normalized.startsWith("/")) {
-      int space = normalized.indexOf(' ');
-      return space < 0 ? normalized : normalized.substring(0, space);
-    }
-    return normalized;
+    Matcher command = COMMAND.matcher(normalized);
+    return command.lookingAt() ? command.group() : normalized;
   }
 
   public static boolean same(String one, String other) {

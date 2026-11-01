@@ -54,6 +54,23 @@ public class CheckpointsTest {
   }
 
   @Test
+  public void aFileThatOnlyLookedAddedBecauseTheIgnoreRulesChangedStays() throws Exception {
+    Path repository = repository();
+    write(repository, ".gitignore", ".env\n");
+    commit(repository);
+    write(repository, ".env", "SECRET=1");
+    Checkpoints.capture(repository, THREAD, 0, "p", ENVIRONMENT);
+    write(repository, ".gitignore", "");
+    write(repository, "made.txt", "by the agent");
+
+    Checkpoints.restore(repository, THREAD, Checkpoints.find(repository, THREAD, 0, "p", ENVIRONMENT), ENVIRONMENT);
+
+    assertEquals(".env\n", read(repository, ".gitignore"));
+    assertEquals("SECRET=1", read(repository, ".env"));
+    assertFalse(Files.exists(repository.resolve("made.txt")));
+  }
+
+  @Test
   public void restoreWithNothingChangedTouchesNothing() throws Exception {
     Path repository = repository();
     write(repository, "a.txt", "a");

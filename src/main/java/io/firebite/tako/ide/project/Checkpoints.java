@@ -9,8 +9,10 @@ import java.nio.file.Path;
 import java.nio.file.StandardCopyOption;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -22,6 +24,7 @@ public final class Checkpoints {
   private static final String PREFIX = "refs/tako/checkpoints/";
   private static final String BACKUP_PREFIX = "refs/tako/backup/";
   private static final String HASH_LINE = "Prompt: ";
+  private static final int IGNORE_CHECK_BATCH = 50;
 
   private Checkpoints() {
   }
@@ -56,7 +59,8 @@ public final class Checkpoints {
 
   /**
    * Puts the folder's files back as the snapshot has them: changed and deleted files are written again, files added
-   * since are deleted with the folders that become empty. The state before is kept under
+   * since are deleted with the folders that become empty, unless the restored ignore rules ignore them. The state
+   * before is kept under
    * {@code refs/tako/backup/<thread>}.
    *
    * @return the files written or deleted
@@ -73,20 +77,14 @@ public final class Checkpoints {
     for (int i = 0; i + 1 < fields.length; i += 2) {
       (fields[i].startsWith("A") ? added : written).add(fields[i + 1]);
     }
+    Map<String, String> literal = new HashMap<>(environment);
+    literal.put("GIT_LITERAL_PATHSPECS", "1");
     List<Path> changed = new ArrayList<>();
     try {
-      for (String path : added) {
-        Path file = folder.resolve(path);
-        Files.deleteIfExists(file);
-        changed.add(file);
-        deleteEmptyParents(folder, file);
-      }
       if (!written.isEmpty()) {
         Path pathspec = Files.createTempFile("tako-pathspec", ".txt");
         try {
           Files.writeString(pathspec, String.join("\0", written), StandardCharsets.UTF_8);
-          Map<String, String> literal = new HashMap<>(environment);
-          literal.put("GIT_LITERAL_PATHSPECS", "1");
           Worktrees.git(folder, literal, "restore", "--source=" + commit, "--worktree",
             "--pathspec-from-file=" + pathspec, "--pathspec-file-nul");
         } finally {
@@ -96,10 +94,40 @@ public final class Checkpoints {
           changed.add(folder.resolve(path));
         }
       }
+      Set<String> ignored = ignored(folder, added, literal);
+      for (String path : added) {
+        if (ignored.contains(path)) {
+          continue;
+        }
+        Path file = folder.resolve(path);
+        Files.deleteIfExists(file);
+        changed.add(file);
+        deleteEmptyParents(folder, file);
+      }
     } catch (IOException e) {
       throw new Worktrees.GitException(e.getMessage());
     }
     return changed;
+  }
+
+  /**
+   * The untracked paths the folder's restored ignore rules ignore. Such a file only looked added because the rules
+   * changed, e.g. a {@code .env} the agent took out of {@code .gitignore}, so it stays.
+   */
+  private static Set<String> ignored(Path folder, List<String> paths, Map<String, String> environment)
+    throws Worktrees.GitException {
+    Set<String> ignored = new HashSet<>();
+    for (int start = 0; start < paths.size(); start += IGNORE_CHECK_BATCH) {
+      List<String> arguments = new ArrayList<>(List.of("ls-files", "-z", "--others", "--ignored",
+        "--exclude-standard", "--"));
+      arguments.addAll(paths.subList(start, Math.min(paths.size(), start + IGNORE_CHECK_BATCH)));
+      for (String path : Worktrees.git(folder, environment, arguments.toArray(new String[0])).split("\0")) {
+        if (!path.isEmpty()) {
+          ignored.add(path);
+        }
+      }
+    }
+    return ignored;
   }
 
   /**

@@ -14,6 +14,10 @@ public class PromptTextTest {
   public void whitespaceAndSlashCommandArgumentsDoNotCount() {
     assertEquals("fix the bug", PromptText.normalize("  fix\tthe\n\n bug \n"));
     assertEquals("/review", PromptText.normalize("/review  src/Main.java"));
+    assertEquals("/plugin:fix", PromptText.normalize("/plugin:fix now"));
+    assertEquals("/compact", PromptText.normalize("/compact"));
+    assertEquals("a path stays whole", "/src/a.ts is broken", PromptText.normalize("/src/a.ts is broken"));
+    assertNotEquals(PromptText.normalize("/src/a.ts is broken"), PromptText.normalize("/src/a.ts looks fine"));
     assertEquals("", PromptText.normalize(" \n "));
     assertEquals("ünï 🐙 日本", PromptText.normalize("ünï  🐙\n日本"));
   }

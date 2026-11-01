@@ -54,8 +54,10 @@ import java.util.Objects;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.ExecutionException;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
 import org.jetbrains.annotations.Nullable;
@@ -69,6 +71,8 @@ public final class ChatController implements Disposable {
   private static final long PULL_REQUEST_INTERVAL_MILLIS = 120_000;
   private static final String PASTED_IMAGE_NAME = "pasted-image.png";
   private static final int SCRATCHPAD_FILES = 50;
+  /** How long a snapshot or restore waits for the editors to be saved, which a modal dialog holds up. */
+  private static final long SAVE_TIMEOUT_SECONDS = 2;
 
   private final Project project;
   private final ChatView view;
@@ -659,7 +663,7 @@ public final class ChatController implements Disposable {
     if (folder != null) {
       Checkpoints.forget(Path.of(folder), this.record.id, kept + 1, environment);
     }
-    rewound = this.replayRewound(rewound, folder, environment);
+    rewound = this.replayRewound(rewound, folder);
     if (this.isDisposed) {
       return new ChatMessage.Rewound(true, filesError);
     }
@@ -676,8 +680,7 @@ public final class ChatController implements Disposable {
    *
    * @return the session to resume, null when it is gone
    */
-  private @Nullable String replayRewound(@Nullable String sessionId, @Nullable String folder,
-    Map<String, String> environment) {
+  private @Nullable String replayRewound(@Nullable String sessionId, @Nullable String folder) {
     if (sessionId == null || folder == null) {
       this.replay(List.of());
       return null;
@@ -689,17 +692,29 @@ public final class ChatController implements Disposable {
         this.replay(List.of());
         this.record.sessionId = null;
         this.recordChanged();
-        Checkpoints.forget(Path.of(folder), this.record.id, 0, environment);
         return null;
       }
     }
     return sessionId;
   }
 
-  /** Writes unsaved editor changes to disk, so a snapshot or restore sees what the person sees. Waits for the EDT. */
+  /**
+   * Writes unsaved editor changes to disk, so a snapshot or restore sees what the person sees. Waits for the EDT at
+   * most {@link #SAVE_TIMEOUT_SECONDS}, then goes on with what is on disk.
+   */
   private void saveDocuments() {
-    ApplicationManager.getApplication().invokeAndWait(() -> FileDocumentManager.getInstance().saveAllDocuments(),
-      ModalityState.defaultModalityState());
+    CompletableFuture<Void> saved = new CompletableFuture<>();
+    ApplicationManager.getApplication().invokeLater(() -> {
+      FileDocumentManager.getInstance().saveAllDocuments();
+      saved.complete(null);
+    }, ModalityState.defaultModalityState());
+    try {
+      saved.get(SAVE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
+    } catch (TimeoutException | ExecutionException e) {
+      LOG.debug("Editors not saved, e.g. while a dialog is open", e);
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+    }
   }
 
   /** Saves the editors, puts the files back and lets the IDE see the changed ones. */
