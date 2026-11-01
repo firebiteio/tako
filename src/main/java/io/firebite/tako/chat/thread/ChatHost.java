@@ -27,8 +27,8 @@ public interface ChatHost {
   String toolsUrl();
 
   /**
-   * The title of another open thread whose agent works or waits for an answer in a folder in {@code topLevel}, else
-   * null. May be called off the EDT.
+   * The title of another open thread whose agent works or waits for an answer in the repository with the top folder
+   * {@code topLevel}, or in a folder holding it, else null. Runs git, so call off the EDT.
    */
   @Nullable
   String busyThreadIn(String topLevel);

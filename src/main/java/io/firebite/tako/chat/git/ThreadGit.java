@@ -118,7 +118,7 @@ public final class ThreadGit {
   private Result runSteps(Option option, GitCommands.Status status, Draft draft, Path directory,
     Consumer<Step> progress, BooleanSupplier cancelled) throws ActionException {
     String branch = GitCommands.branch(directory, this.environment);
-    if (branch == null && !GitCommands.status(directory, this.environment).isRepository()) {
+    if (branch == null && GitCommands.topLevel(directory, this.environment) == null) {
       throw new ActionException(Failure.NOT_REPOSITORY, "", Result.NONE);
     }
     Busy working = this.busy.apply(Objects.requireNonNull(status.topLevel()));

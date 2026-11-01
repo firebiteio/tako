@@ -259,8 +259,12 @@ public final class ChatController implements Disposable {
     return this.workingDirectory != null ? this.workingDirectory : this.projectPath();
   }
 
-  /** The thread's git actions and the state they act on. Runs git and may ask GitHub, so call off the EDT. */
+  /**
+   * The thread's git actions and the state they act on. Reads the branch's pull request again first when the branch
+   * changed, so the menu does not judge by another branch's. Runs git and may ask GitHub, so call off the EDT.
+   */
   public ThreadGit.Menu gitMenu() {
+    this.refreshGit();
     return this.git.menu(this.record.pullRequest);
   }
 
