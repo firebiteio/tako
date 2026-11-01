@@ -2,6 +2,7 @@ package io.firebite.tako.ide.project;
 
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertThrows;
 import static org.junit.Assert.assertTrue;
 
 import io.firebite.tako.agent.EditPreview;
@@ -120,6 +121,27 @@ public class WorktreesTest {
     assertTrue(Files.isRegularFile(worktree.resolve(".gitignore")));
     assertFalse(Files.exists(worktree.resolve(".env")));
     Worktrees.remove(repository, worktree, "plain-1", ENVIRONMENT);
+  }
+
+  @Test
+  public void theMainCheckoutOfALinkedWorktreeIsTheRepository() throws Exception {
+    Path repository = repository();
+    git(repository, "commit", "-q", "--allow-empty", "-m", "base");
+    Path worktree = Worktrees.benchFolder(repository, "main").resolve("1");
+    Worktrees.add(repository, worktree, "main-1", Worktrees.head(repository, ENVIRONMENT), ENVIRONMENT);
+    Files.createDirectories(worktree.resolve("sub"));
+
+    assertEquals(repository, Worktrees.mainCheckout(repository, ENVIRONMENT).toRealPath());
+    assertEquals(repository, Worktrees.mainCheckout(worktree.resolve("sub"), ENVIRONMENT).toRealPath());
+    assertEquals(worktree.toRealPath(), Worktrees.topLevel(worktree, ENVIRONMENT).toRealPath());
+    Worktrees.remove(repository, worktree, "main-1", ENVIRONMENT);
+  }
+
+  @Test
+  public void noMainCheckoutOutsideARepository() throws Exception {
+    Path folder = Files.createTempDirectory("tako-no-git");
+
+    assertThrows(Worktrees.GitException.class, () -> Worktrees.mainCheckout(folder, ENVIRONMENT));
   }
 
   private static Path repository() throws Exception {

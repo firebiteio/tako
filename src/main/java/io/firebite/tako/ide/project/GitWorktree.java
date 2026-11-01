@@ -42,7 +42,7 @@ public final class GitWorktree {
           return null;
         }
         WorktreeInclude.copy(folder, environment);
-        return new Worktree(folder, candidate);
+        return new Worktree(folder, candidate, repository);
       }
     }
   }
@@ -56,9 +56,11 @@ public final class GitWorktree {
     return slug.isEmpty() ? "thread" : slug;
   }
 
+  /** @param repository the main checkout's top folder */
   public record Worktree(
     Path folder,
-    String branch
+    String branch,
+    Path repository
   ) {
   }
 }

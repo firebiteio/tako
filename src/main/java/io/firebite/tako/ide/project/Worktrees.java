@@ -29,6 +29,12 @@ public final class Worktrees {
     return Path.of(git(directory, environment, "rev-parse", "--show-toplevel").trim());
   }
 
+  /** The main checkout's top folder, also when {@code directory} is in a linked worktree. */
+  public static Path mainCheckout(Path directory, Map<String, String> environment) throws GitException {
+    String commonDir = git(directory, environment, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    return Path.of(commonDir.trim()).getParent();
+  }
+
   public static String head(Path repository, Map<String, String> environment) throws GitException {
     return git(repository, environment, "rev-parse", "HEAD").trim();
   }
