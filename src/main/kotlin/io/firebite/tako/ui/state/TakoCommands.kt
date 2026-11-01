@@ -18,22 +18,22 @@ private const val NO_MATCH = Int.MAX_VALUE
 private val SLASH_QUERY = Regex("""/(\S*)""")
 private val ARGUMENT_QUERY = Regex("""/(\S+)[ \t]+(.*)""")
 
-/** A command Tako runs itself instead of sending it to the agent. Its name is [id], typed after a `/`. */
-enum class TakoCommand(val id: String) {
-  MODEL("model"),
-  EFFORT("effort"),
-  MODE("mode"),
-  AGENT("agent"),
-  NEW("new"),
-  FORK("fork"),
-  ARCHIVE("archive"),
-  TITLE("title"),
-  RESTART("restart"),
-  USAGE("usage");
-
-  /** Whether it reads an argument: a choice, or the new thread's prompt. */
-  val takesArgument: Boolean
-    get() = this == MODEL || this == EFFORT || this == MODE || this == AGENT || this == NEW
+/**
+ * A command Tako runs itself instead of sending it to the agent. Its name is [id], typed after a `/`.
+ *
+ * @param takesArgument it reads an argument: a choice, or the new thread's prompt
+ */
+enum class TakoCommand(val id: String, val takesArgument: Boolean) {
+  MODEL("model", true),
+  EFFORT("effort", true),
+  MODE("mode", true),
+  AGENT("agent", true),
+  NEW("new", true),
+  FORK("fork", false),
+  ARCHIVE("archive", false),
+  TITLE("title", false),
+  RESTART("restart", false),
+  USAGE("usage", false);
 
   val hint: String
     get() = when (this) {
@@ -118,8 +118,9 @@ private fun rank(choice: Choice, query: String): Int = when {
 
 /** The choices of the best fit [rank] that any has; several mean the argument is ambiguous. */
 fun matchChoices(choices: List<Choice>, argument: String): List<Choice> {
-  val best = choices.minOfOrNull { rank(it, argument) } ?: return emptyList()
-  return if (best == NO_MATCH) emptyList() else choices.filter { rank(it, argument) == best }
+  val ranks = choices.map { rank(it, argument) }
+  val best = ranks.minOrNull() ?: return emptyList()
+  return if (best == NO_MATCH) emptyList() else choices.filterIndexed { index, _ -> ranks[index] == best }
 }
 
 /** What a Tako command does once checked against the thread. */
@@ -206,9 +207,12 @@ private fun ThreadState.resolveFork(): TakoAction {
 
 private fun ThreadState.resolveRestart(): TakoAction {
   val info = this.info ?: return TakoAction.Fail(t("slash.error.not.started", this.agentName))
+  val state = this.controller?.state()
+  val isIdle = !this.busy && this.approvals.isEmpty() && (state == null || state == ChatController.State.IDLE ||
+    state == ChatController.State.STOPPED)
   return when {
     !info.capabilities.resume -> TakoAction.Fail(t("slash.error.restart.unsupported", this.agentName))
-    this.busy || this.approvals.isNotEmpty() -> TakoAction.Fail(t("slash.error.restart.busy", this.agentName))
+    !isIdle -> TakoAction.Fail(t("slash.error.restart.busy", this.agentName))
     this.stopped -> TakoAction.Fail(t("slash.error.restart.stopped", this.agentName))
     else -> TakoAction.Restart
   }
@@ -281,12 +285,23 @@ private fun ThreadState.openNewThread(prompt: String) {
   this.workspace.service.newThread(this.projectPath, null, submit)
 }
 
-/** Has the agent write a title if it can; asking whether it can looks for its CLI, so off the EDT. */
+/**
+ * Has the agent write a title if it can; asking whether it can looks for its CLI, so off the EDT. Counts as writing
+ * from the start, so a second `/title` meanwhile is turned down.
+ */
 private fun ThreadState.regenerateTitle() {
   val shown = this.turns.isNotEmpty()
+  this.titling = true
   this.workspace.scope.launch {
     val workspace = this@regenerateTitle.workspace
-    val canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(this@regenerateTitle.id, shown) }
+    var canTitle = false
+    try {
+      canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(this@regenerateTitle.id, shown) }
+    } finally {
+      if (!canTitle) {
+        this@regenerateTitle.titling = false
+      }
+    }
     if (canTitle) {
       workspace.regenerateTitle(this@regenerateTitle)
     } else {
@@ -338,7 +353,8 @@ fun ThreadState.slashMenu(text: String): SlashMenu {
   }
   val choices = this.choices(command) ?: return NO_MENU
   val query = match.groupValues[2].trim()
-  val ranked = choices.filter { rank(it, query) != NO_MATCH }.sortedBy { rank(it, query) }.take(MAX_SLASH_ITEMS)
+  val ranked = choices.map { it to rank(it, query) }.filter { it.second != NO_MATCH }.sortedBy { it.second }
+    .take(MAX_SLASH_ITEMS).map { it.first }
   val items = ranked.map {
     SlashItem(it.label, "", it.description ?: (if (it.label != it.value) it.value else ""), true,
       "/" + command.id + " " + it.value, runs = true, argument = true)

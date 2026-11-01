@@ -208,6 +208,16 @@ class TakoCommandsTest : BasePlatformTestCase() {
     assertEquals(t("sidebar.regenerate.title.running"), this.fail("/title"))
   }
 
+  fun testASecondTitleIsTurnedDownWhileTheFirstIsChecked() {
+    this.answeredTurn("hi")
+    this.workspace.scope.cancel()
+
+    this.thread.perform(TakoAction.Title)
+
+    assertTrue(this.thread.titling)
+    assertEquals(t("sidebar.regenerate.title.running"), this.fail("/title"))
+  }
+
   fun testArchiveArchivesTheThread() {
     this.type("/archive")
 
