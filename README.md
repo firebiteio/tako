@@ -17,6 +17,7 @@ It works with:
 - After each turn you get a diff of every file the agent touched
 - Comment on lines in those diffs, or in any file, and send the comments to the agent together
 - Rewind a thread to before one of your prompts and edit it, with or without putting the files back (Claude Code and Codex)
+- The diff button in the thread header opens the thread folder's uncommitted changes, its branch against the default branch, or one of its commits in the diff viewer
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
