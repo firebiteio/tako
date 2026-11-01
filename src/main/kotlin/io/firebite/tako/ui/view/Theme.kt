@@ -186,6 +186,10 @@ object Icons {
   val todoDone: IconKey = lucide("square-check-big")
   val todoActive: IconKey = lucide("circle-dot")
   val todoPending: IconKey = lucide("circle")
+  val sideChats: IconKey = lucide("messages-square")
+  val hidePane: IconKey = lucide("panel-right")
+  val bringBack: IconKey = lucide("reply")
+  val delete: IconKey = lucide("trash-2")
 
   fun category(kind: ToolKind): IconKey = when (kind) {
     ToolKind.READ -> lucide("eye")

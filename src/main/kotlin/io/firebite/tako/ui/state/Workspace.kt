@@ -75,6 +75,10 @@ class Workspace(val service: ChatService, val project: Project) {
   var benchLoads by mutableIntStateOf(0)
   var taskPanel by mutableStateOf<TaskCard?>(null)
   var contextPanelOpen by mutableStateOf(false)
+  /** Whether the side chat pane covers the main thread, as the chat is too narrow for both. */
+  var sidePaneCovers by mutableStateOf(false)
+  /** The thread whose composer the context panel opened from. */
+  var contextPanelFor by mutableStateOf<String?>(null)
   /** The run whose agent and model are being picked. */
   var runMenu by mutableStateOf<Int?>(null)
   var lightbox by mutableStateOf<io.firebite.tako.agent.ImageAttachment?>(null)
@@ -117,6 +121,12 @@ class Workspace(val service: ChatService, val project: Project) {
     if (thread == null || this.active === thread) {
       return
     }
+    val main = this.mainOf(thread)
+    if (main !== thread) {
+      this.activate(main)
+      this.showSideChat(thread.id, false)
+      return
+    }
     this.taskPanel = null
     this.contextPanelOpen = false
     this.active = thread
@@ -140,7 +150,8 @@ class Workspace(val service: ChatService, val project: Project) {
    * as archiving stops it and undoing would not bring that work back.
    */
   fun archive(thread: ThreadState) {
-    val isWorking = thread.busy || thread.runningTasks().isNotEmpty()
+    val isWorking = (listOf(thread) + this.sideChatsOf(thread)).any { it.busy || it.runningTasks().isNotEmpty() }
+    thread.sideChatShown = null
     val archived = this.service.archive(thread.id)
     val toast = if (isWorking) null else archived
     this.archivedToast = toast
@@ -236,6 +247,7 @@ class Workspace(val service: ChatService, val project: Project) {
         .update(message.item)
       is ChatMessage.ThreadRemoved -> this.removeThread(message.thread)
       is ChatMessage.Select -> this.activate(this.threads[message.thread])
+      is ChatMessage.ShowSideChat -> this.showSideChat(message.thread, message.started)
       is ChatMessage.Settings -> this.parallelRuns = message.parallelRuns
       is ChatMessage.Benches -> {
         this.benches = message.items
@@ -267,7 +279,13 @@ class Workspace(val service: ChatService, val project: Project) {
   }
 
   private fun removeThread(id: String) {
-    val thread = this.threads.remove(id) ?: return
+    val thread = this.threads[id] ?: return
+    val main = this.mainOf(thread)
+    this.threads.remove(id)
+    if (main !== thread && main.sideChatShown == id) {
+      main.sideChatShown = null
+      this.sideChatsOf(main).firstOrNull()?.let { this.showSideChat(it.id, false) }
+    }
     if (this.active === thread) {
       this.active = null
     }

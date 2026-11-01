@@ -36,9 +36,12 @@ fun ThreadState.promptCount(): Int {
   return count
 }
 
-/** Whether the thread can go back to before [turn]'s prompt now: the agent can rewind and waits for nothing. */
+/**
+ * Whether the thread can go back to before [turn]'s prompt now: the agent can rewind and waits for nothing. Not side
+ * chats: their files are their main thread's.
+ */
 fun ThreadState.canRewind(turn: Turn): Boolean =
-  this.info?.capabilities?.rewind == true && turn.prompt != null && turn.done && turn in this.turns && !this.busy &&
+  !this.sideChat && this.info?.capabilities?.rewind == true && turn.prompt != null && turn.done && turn in this.turns && !this.busy &&
     this.approvals.isEmpty() && this.question == null && this.queued.isEmpty() && this.rewinding == null
 
 /** Has the agent forget [turn]'s prompt and all after it, and with [files] puts the files back to then. */

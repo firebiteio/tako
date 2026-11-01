@@ -42,6 +42,13 @@ fun ThreadState.submit() {
   if (this.rewinding != null) {
     return
   }
+  val sideQuestion = sideCommand(this.typed)
+  if (sideQuestion != null) {
+    if (this.startSideChat(sideQuestion)) {
+      this.input.clearText()
+    }
+    return
+  }
   if (this.question != null) {
     this.advanceQuestion()
     return
@@ -75,6 +82,10 @@ fun ThreadState.submit() {
 
 /** Sends, then opens a new thread in the same folder. */
 fun ThreadState.submitAndBranch() {
+  if (sideCommand(this.typed) != null) {
+    this.submit()
+    return
+  }
   if (this.question != null || this.approvals.isNotEmpty()
     || (this.typed.isEmpty() && this.images.isEmpty() && !hasReviews(this.contexts)) || this.rewinding != null) {
     return
@@ -139,7 +150,7 @@ private suspend fun ThreadState.restore(entry: PromptStash.Entry) {
     return
   }
   this.putBack(taken.prompt)
-  this.workspace.focusComposer++
+  this.requestFocus()
 }
 
 /** Runs a stash call on [STASH_IO]. Says once that an unreadable stash file was moved aside. */
@@ -174,13 +185,13 @@ fun ThreadState.addContext(item: ContextItem, prefill: String?) {
   if (item.kind != ContextItem.Kind.REVIEW || this.contexts.none { it.kind == item.kind && it.text == item.text }) {
     this.contexts.add(item)
   }
-  if (!this.isActive) {
+  if (!this.isShown) {
     return
   }
   if (prefill != null && this.typed.isEmpty()) {
     this.input.setTextAndPlaceCursorAtEnd(prefill)
   }
-  this.workspace.focusComposer++
+  this.requestFocus()
 }
 
 fun hasReviews(contexts: List<ContextItem>): Boolean = contexts.any { it.kind == ContextItem.Kind.REVIEW }
@@ -212,7 +223,7 @@ fun ThreadState.quote(text: String) {
     return
   }
   this.input.setTextAndPlaceCursorAtEnd(withQuote(this.input.text.toString(), text))
-  this.workspace.focusComposer++
+  this.requestFocus()
 }
 
 /**
@@ -254,8 +265,8 @@ private fun openFence(text: String): String? {
 
 fun ThreadState.addImage(image: ImageAttachment) {
   this.images.add(PendingImage(image))
-  if (this.isActive) {
-    this.workspace.focusComposer++
+  if (this.isShown) {
+    this.requestFocus()
   }
 }
 

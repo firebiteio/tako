@@ -25,6 +25,7 @@ import com.intellij.util.EnvironmentUtil;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentBackend;
+import io.firebite.tako.agent.AgentEvent;
 import io.firebite.tako.agent.AgentException;
 import io.firebite.tako.agent.AgentHistory;
 import io.firebite.tako.agent.AgentRegistry;
@@ -340,9 +341,16 @@ public final class ChatService implements Disposable {
     this.select(record.id);
   }
 
+  /** Selects the thread; for a side chat, its main thread with the side chat in the pane. */
   public void select(@Nullable String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record == null) {
+      return;
+    }
+    ThreadStore.Record main = SideChats.mainOf(this.store, record);
+    if (main != record) {
+      this.select(main.id);
+      this.post(new ChatMessage.ShowSideChat(record.id, false));
       return;
     }
     this.unarchive(record);
@@ -399,6 +407,93 @@ public final class ChatService implements Disposable {
       record.archived = false;
       this.postUpdate(record);
     }
+  }
+
+  /**
+   * Starts a side chat of the thread, or of its main thread for a side chat, and shows it in the pane. Copies the main
+   * thread's session when {@code forkPrompts} is above 0 and it has one, else attaches an excerpt of its conversation.
+   * Must run on the EDT.
+   *
+   * @param forkPrompts how many prompts of the main thread's session to copy, 0 for a new session
+   * @param question    the side chat's first prompt, blank to start it empty
+   * @return false when there is no such thread, so no side chat starts
+   */
+  public boolean startSideChat(String threadId, int forkPrompts, String question) {
+    ThreadStore.Record found = this.store.find(threadId);
+    if (found == null) {
+      return false;
+    }
+    ThreadStore.Record main = SideChats.mainOf(this.store, found);
+    ChatController controller = this.controllers.get(main.id);
+    ContextItem excerpt = SideChats.excerpt(main.title,
+      controller == null ? "" : controller.conversation(SideChats.EXCERPT_CHARS));
+    String sessionId = main.sessionId;
+    if (forkPrompts <= 0 || sessionId == null) {
+      this.createSideChat(main, null, 0, question, excerpt);
+      return true;
+    }
+    String folder = this.workFolder(main);
+    AgentBackend backend = AgentRegistry.find(main.agent(), EnvironmentUtil.getEnvironmentMap());
+    Async.inBackground(() -> {
+      String forkId = null;
+      int inherited = 0;
+      try {
+        forkId = backend.fork(folder, sessionId, forkPrompts);
+        inherited = promptCount(backend.history(folder, forkId));
+      } catch (AgentException | RuntimeException e) {
+        LOG.warn("Could not fork thread " + main.id + " for a side chat, attaching an excerpt instead", e);
+      }
+      String session = forkId;
+      int prompts = inherited;
+      Async.onEdt(() -> this.createSideChat(main, session, prompts, question, session == null ? excerpt : null));
+    });
+    return true;
+  }
+
+  private static int promptCount(AgentHistory history) {
+    int count = 0;
+    if (history instanceof AgentHistory.Loaded loaded) {
+      for (AgentEvent event : loaded.events()) {
+        if (event instanceof AgentEvent.Prompt) {
+          count++;
+        }
+      }
+    }
+    return count;
+  }
+
+  /** Makes the side chat unless the main thread was closed or archived meanwhile, then starts it. */
+  private void createSideChat(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
+    String question, @Nullable ContextItem excerpt) {
+    if (this.store.find(main.id) != main || main.archived) {
+      return;
+    }
+    ThreadStore.Record record = this.store.create(sessionId, SideChats.title(question), main.projectPath,
+      main.agent());
+    record.parentId = main.id;
+    record.sideChat = true;
+    record.inheritedPrompts = inheritedPrompts;
+    record.model = main.model;
+    record.effort = main.effort;
+    record.workPath = main.workPath;
+    this.store.save();
+    this.post(new ChatMessage.ThreadAdded(record.toItem()));
+    String prompt = question.isBlank() ? null : question.strip();
+    this.newController(record).open(prompt, prompt != null && excerpt != null ? List.of(excerpt) : List.of());
+    if (prompt == null && excerpt != null) {
+      this.post(new ChatMessage.Context(excerpt, null), record.id);
+    }
+    this.post(new ChatMessage.ShowSideChat(record.id, true));
+  }
+
+  /** Starts the agent of a side chat the pane shows, unless it runs. Doesn't select it. Must run on the EDT. */
+  public void openSideChat(String id) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null || !record.sideChat || this.controllers.containsKey(id)) {
+      return;
+    }
+    this.unarchive(record);
+    this.newController(record).open();
   }
 
   /** Copies the thread's first {@code prompts} turns into a new thread, which it selects. */
@@ -620,8 +715,16 @@ public final class ChatService implements Disposable {
   }
 
   /** Selects another thread only once all are closed, so none of them starts its agent in between. */
-  void closeAll(List<String> ids) {
+  void closeAll(List<String> closed) {
     String activeId = this.store.activeId();
+    List<String> ids = new ArrayList<>(closed);
+    for (String id : closed) {
+      for (ThreadStore.Record sideChat : SideChats.of(this.store, id)) {
+        if (!ids.contains(sideChat.id)) {
+          ids.add(sideChat.id);
+        }
+      }
+    }
     for (String id : ids) {
       ThreadStore.Record record = this.store.find(id);
       if (record != null) {
@@ -651,8 +754,8 @@ public final class ChatService implements Disposable {
   }
 
   /**
-   * Archives the thread and stops its agent. Selects the first open thread in place of the active one, or a new
-   * thread when none is open.
+   * Archives the thread and its side chats and stops their agents. Selects the first open thread in place of the
+   * active one, or a new thread when none is open.
    * @return what undoing it needs, or null when there is no such thread
    */
   public @Nullable Archived archive(String id) {
@@ -660,10 +763,12 @@ public final class ChatService implements Disposable {
     if (record == null) {
       return null;
     }
-    record.archived = true;
-    this.watcher.stop(record.id);
-    this.disposeController(record.id);
-    this.postUpdate(record);
+    this.stopArchived(record);
+    for (ThreadStore.Record sideChat : SideChats.of(this.store, record.id)) {
+      if (!sideChat.archived) {
+        this.stopArchived(sideChat);
+      }
+    }
     if (!record.id.equals(this.store.activeId())) {
       return new Archived(record.id, null, false);
     }
@@ -674,6 +779,13 @@ public final class ChatService implements Disposable {
     }
     this.newThread(null, null, null, null);
     return new Archived(record.id, this.store.activeId(), true);
+  }
+
+  private void stopArchived(ThreadStore.Record record) {
+    record.archived = true;
+    this.watcher.stop(record.id);
+    this.disposeController(record.id);
+    this.postUpdate(record);
   }
 
   /**
@@ -748,7 +860,7 @@ public final class ChatService implements Disposable {
 
   private @Nullable ThreadStore.Record firstOpenThread(@Nullable String except) {
     for (ThreadStore.Record record : this.store.all()) {
-      if (!record.archived && !record.id.equals(except)) {
+      if (!record.archived && !record.id.equals(except) && SideChats.mainOf(this.store, record) == record) {
         return record;
       }
     }
@@ -929,7 +1041,8 @@ public final class ChatService implements Disposable {
   /** Shows a balloon about the thread unless the person sees it already. Must run on the EDT. */
   private void requestAttention(ThreadStore.Record record, String reason) {
     ToolWindow window = this.toolWindow;
-    boolean isShown = window != null && window.isVisible() && record.id.equals(this.store.activeId());
+    String shownId = SideChats.mainOf(this.store, record).id;
+    boolean isShown = window != null && window.isVisible() && shownId.equals(this.store.activeId());
     if (isShown) {
       return;
     }

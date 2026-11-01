@@ -58,7 +58,10 @@ import io.firebite.tako.ui.samePath
 import io.firebite.tako.ui.state.ThreadNode
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
+import io.firebite.tako.ui.state.isListed
+import io.firebite.tako.ui.state.isShown
 import io.firebite.tako.ui.state.runName
+import io.firebite.tako.ui.state.sideChatsOf
 import io.firebite.tako.ui.state.runningTasks
 import io.firebite.tako.ui.state.threadTree
 import io.firebite.tako.ui.t
@@ -110,7 +113,7 @@ private fun rememberStatus(workspace: Workspace, thread: ThreadState): ThreadSta
 
 /** Threads needing a look that are not shown, for the sidebar toggle's badge. */
 fun waitingThreads(workspace: Workspace): Int = workspace.threads.values.count {
-  !it.archived && it !== workspace.active && (it.approvals.isNotEmpty() || it.unread)
+  !it.archived && !it.isShown && (it.approvals.isNotEmpty() || it.unread && workspace.isListed(it))
 }
 
 /** The thread list: threads grouped by project folder, archived ones apart, each with its live status. */
@@ -137,7 +140,7 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
       SearchField(workspace)
     }
     Rule()
-    val sorted = workspace.threads.values.sortedByDescending { it.updatedAt }
+    val sorted = workspace.threads.values.filter { workspace.isListed(it) }.sortedByDescending { it.updatedAt }
     val runIds = workspace.benches.flatMap { it.threads }.toSet()
     val query = if (workspace.searching) workspace.searchInput.text.toString().trim() else ""
     LaunchedEffect(query) {
@@ -253,7 +256,7 @@ fun SidebarRail(workspace: Workspace, modifier: Modifier) {
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     Rule()
-    val sorted = workspace.threads.values.sortedByDescending { it.updatedAt }
+    val sorted = workspace.threads.values.filter { workspace.isListed(it) }.sortedByDescending { it.updatedAt }
     val runIds = workspace.benches.flatMap { it.threads }.toSet()
     val projects = workspace.projectList()
     VerticallyScrollableContainer(Modifier.weight(1f)) {
@@ -629,7 +632,8 @@ private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modi
       }
     }
     IconBtn(Icons.closeSmall, t("sidebar.close"), iconSize = 14.dp) {
-      val confirmed = !thread.busy || MessageDialogBuilder.yesNo(t("sidebar.close"),
+      val isWorking = thread.busy || workspace.sideChatsOf(thread).any { it.busy }
+      val confirmed = !isWorking || MessageDialogBuilder.yesNo(t("sidebar.close"),
         t("sidebar.close.confirm", thread.agentName)).guessWindowAndAsk()
       if (confirmed) {
         workspace.service.close(thread.id)

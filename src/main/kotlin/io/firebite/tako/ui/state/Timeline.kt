@@ -111,7 +111,7 @@ private fun ThreadState.onTurnEnded(event: AgentEvent.TurnEnded) {
   }
   this.setBusy(false)
   this.finished = true
-  if (!this.isActive) {
+  if (!this.isShown) {
     this.unread = true
   }
 }

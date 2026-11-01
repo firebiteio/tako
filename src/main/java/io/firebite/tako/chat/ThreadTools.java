@@ -368,7 +368,7 @@ final class ThreadTools implements McpTools {
     if (record.id.equals(this.threadId)) {
       thread.addProperty("isYou", true);
     }
-    if (this.threadId.equals(record.parentId)) {
+    if (this.threadId.equals(record.parentId) && !record.sideChat) {
       thread.addProperty("createdByYou", true);
     }
     return thread;

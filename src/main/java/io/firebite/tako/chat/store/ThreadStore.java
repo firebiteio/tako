@@ -237,8 +237,12 @@ public final class ThreadStore {
     public @Nullable String agent;
     /** The folder the thread works in instead of its project folder, e.g. a git worktree made for it. */
     public @Nullable String workPath;
-    /** The thread whose agent created this one. */
+    /** The thread whose agent created this one, or the main thread of a {@link #sideChat}. */
     public @Nullable String parentId;
+    /** A side question to the {@link #parentId} thread, shown in that thread's pane instead of the thread list. */
+    public boolean sideChat;
+    /** How many prompts a side chat's session copied from its main thread's. */
+    public int inheritedPrompts;
     /** How long the first turn took, 0 until it ended. */
     public long firstTurnMillis;
     /** The pull request the thread watches, see {@link PullRequestWatcher}. Swapped whole, never changed in place. */
@@ -270,7 +274,7 @@ public final class ThreadStore {
       return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
         this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId,
-        watched == null ? null : watched.number);
+        watched == null ? null : watched.number, this.sideChat, this.inheritedPrompts);
     }
   }
 

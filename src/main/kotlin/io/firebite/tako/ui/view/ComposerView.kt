@@ -121,6 +121,9 @@ import io.firebite.tako.ui.state.contextNumbers
 import io.firebite.tako.ui.state.declinesWithReviews
 import io.firebite.tako.ui.state.hasReviews
 import io.firebite.tako.ui.state.RunPlan
+import io.firebite.tako.ui.state.SIDE_COMMANDS
+import io.firebite.tako.ui.state.isListed
+import io.firebite.tako.ui.state.requestFocus
 import io.firebite.tako.ui.state.runLabel
 import io.firebite.tako.ui.state.sentPrompts
 import io.firebite.tako.ui.state.specOf
@@ -310,7 +313,14 @@ private fun Composer(thread: ThreadState) {
   var top by remember { mutableFloatStateOf(0f) }
   var cacheIconOnly by remember { mutableStateOf(false) }
   val paste = remember(thread) { ComposerPaste(thread) }
-  LaunchedEffect(workspace.focusComposer, thread) {
+  val focusKey = if (thread.sideChat) thread.focusRequests else workspace.focusComposer
+  LaunchedEffect(focusKey, thread) {
+    if (thread.sideChat) {
+      if (!thread.pendingFocus) {
+        return@LaunchedEffect
+      }
+      thread.pendingFocus = false
+    }
     try {
       focus.requestFocus()
     } catch (ignored: IllegalStateException) {
@@ -424,7 +434,7 @@ private fun Composer(thread: ThreadState) {
     if (suggestions.size > 0) {
       SuggestionPopup(thread, suggestions, with(density) { width.toDp() - 16.dp }, maxHeight)
     }
-    if (workspace.contextPanelOpen) {
+    if (workspace.contextPanelOpen && workspace.contextPanelFor == thread.id) {
       ContextPanel(thread, maxHeight)
     }
     thread.stashMenu?.let { entries ->
@@ -433,7 +443,7 @@ private fun Composer(thread: ThreadState) {
       }
       MenuPopup(items, t("stash.menu")) {
         thread.stashMenu = null
-        workspace.focusComposer++
+        thread.requestFocus()
       }
     }
   }
@@ -450,14 +460,16 @@ private fun placeholder(thread: ThreadState): String {
 
 private fun updateSlash(thread: ThreadState, suggestions: Suggestions, text: String) {
   val match = SLASH.matchEntire(text)
-  if (match == null || thread.commands.isEmpty()) {
+  if (match == null) {
     if (!suggestions.isMention) {
       suggestions.hide()
     }
     return
   }
   val query = match.groupValues[1].lowercase()
-  val items = thread.commands.filter { it.name.lowercase().contains(query) }
+  val sideCommands = SIDE_COMMANDS.map { AgentInfo.Command(it, t("side.command.description"), t("side.command.hint")) }
+  val commands = sideCommands + thread.commands.filter { it.name.lowercase() !in SIDE_COMMANDS }
+  val items = commands.filter { it.name.lowercase().contains(query) }
     .sortedBy { !it.name.lowercase().startsWith(query) }.take(MAX_SLASH_ITEMS)
   suggestions.isMention = false
   suggestions.commands = items
@@ -500,7 +512,8 @@ private fun mentionThreads(thread: ThreadState, query: String): List<ThreadState
   val workspace = thread.workspace
   val project = workspace.projectOf(thread).path
   return workspace.threads.values.filter {
-    it !== thread && !it.archived && it.title.contains(query, true) && workspace.projectOf(it).path == project
+    it !== thread && !it.archived && workspace.isListed(it) && it.title.contains(query, true) &&
+      workspace.projectOf(it).path == project
   }.sortedWith(compareBy<ThreadState> { !it.title.startsWith(query, true) }.thenByDescending { it.updatedAt })
     .take(MAX_THREAD_ITEMS)
 }
@@ -936,7 +949,8 @@ private fun ContextMeter(thread: ThreadState) {
 
 fun toggleContextPanel(thread: ThreadState) {
   val workspace = thread.workspace
-  workspace.contextPanelOpen = !workspace.contextPanelOpen
+  workspace.contextPanelOpen = !workspace.contextPanelOpen || workspace.contextPanelFor != thread.id
+  workspace.contextPanelFor = thread.id
   if (workspace.contextPanelOpen) {
     thread.controller?.refreshContext()
   }

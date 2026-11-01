@@ -25,8 +25,19 @@ private val LOG = logger<ThreadState>()
 
 class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   val id: String = item.id
-  /** The thread whose agent created this one, which the list nests it under. */
+  /** The thread whose agent created this one, which the list nests it under, or a side chat's main thread. */
   val parentId: String? = item.parentId
+  /** A side question to [parentId], shown in that thread's pane. */
+  val sideChat: Boolean = item.sideChat
+  /** How many prompts a side chat's session copied from its main thread's; their turns are not shown. */
+  val inheritedPrompts: Int = item.inheritedPrompts
+  /** On a main thread: the side chat its pane shows, null while the pane is hidden. Only this session remembers. */
+  var sideChatShown by mutableStateOf<String?>(null)
+  /** On a main thread: a side chat of it is being made. */
+  var startingSideChat by mutableStateOf(false)
+  /** On a side chat: bumped to focus its composer while [pendingFocus]. */
+  var focusRequests by mutableIntStateOf(0)
+  var pendingFocus = false
   var title by mutableStateOf(item.title)
   /** Whether the agent writes the thread a new title. */
   var titling by mutableStateOf(false)
@@ -117,6 +128,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   fun update(item: ChatMessage.ThreadItem) {
     this.title = item.title.ifEmpty { this.title }
     this.archived = item.archived
+    if (item.archived) {
+      this.sideChatShown = null
+      this.startingSideChat = false
+    }
     if (item.updatedAt > 0) {
       this.updatedAt = item.updatedAt
     }
@@ -162,9 +177,9 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     return normalized
   }
 
-  /** The agent can only change before the thread has a session. */
+  /** The agent can only change before the thread has a session. A side chat runs its main thread's. */
   val canChangeAgent: Boolean
-    get() = this.turns.isEmpty() && !this.hasSession
+    get() = this.turns.isEmpty() && !this.hasSession && !this.sideChat
 
   val agentName: String
     get() = this.workspace.agentName(this.agent) ?: this.info?.agentName ?: this.agent
