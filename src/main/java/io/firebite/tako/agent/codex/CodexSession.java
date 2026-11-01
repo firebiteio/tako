@@ -47,6 +47,11 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
   private volatile String mode;
   private volatile String effort;
   private int planUpdates;
+  /** The account's rate-limit windows as last reported, which updates name only when they change. */
+  private volatile @Nullable JsonObject primaryWindow;
+  private volatile @Nullable JsonObject secondaryWindow;
+  /** The last turn stopped on a limit whose reset the windows did not name yet. */
+  private volatile boolean awaitsLimitReset;
 
   CodexSession(List<String> command, AgentLaunch launch, AgentListener listener) throws IOException {
     this.launch = launch;
@@ -84,6 +89,7 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
 
   @Override
   public void prompt(String text, List<ImageAttachment> images, int key) {
+    this.awaitsLimitReset = false;
     if (this.prompts.offer(text, images, key)) {
       this.startTurn(text, images, key);
     }
@@ -190,6 +196,7 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
   public void onNotification(String method, JsonObject params) {
     switch (method) {
       case "turn/started" -> {
+        this.awaitsLimitReset = false;
         this.turnId = Json.string(Json.object(params, "turn"), "id");
         this.emit(new AgentEvent.Busy());
       }
@@ -215,8 +222,12 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
         + this.planUpdates++, params).forEach(this::emit);
       case "thread/tokenUsage/updated" -> this.emit(CodexTranslator.usage(params));
       case "thread/compacted" -> this.emit(new AgentEvent.Compacted());
-      case "account/rateLimits/updated" -> this.emit(new AgentEvent.RateLimits(
-        CodexTranslator.rateLimits(Json.object(params, "rateLimits"))));
+      case "account/rateLimits/updated" -> {
+        JsonObject snapshot = Json.object(params, "rateLimits");
+        this.keepWindows(snapshot);
+        this.emit(new AgentEvent.RateLimits(CodexTranslator.rateLimits(snapshot)));
+        this.nameLateReset();
+      }
       case "error" -> {
         if (Json.bool(params, "willRetry")) {
           this.emit(new AgentEvent.Retrying(null, Json.string(Json.object(params, "error"), "message")));
@@ -363,8 +374,46 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
     if ("interrupted".equals(Json.string(turn, "status"))) {
       this.emit(new AgentEvent.Interrupted());
     }
+    AgentEvent.LimitReached limit = CodexTranslator.limitReached(turn, this.primaryWindow, this.secondaryWindow,
+      System.currentTimeMillis());
+    if (limit != null) {
+      this.awaitsLimitReset = limit.resetsAt() == null;
+      this.emit(limit);
+    }
     this.emit(CodexTranslator.turnEnded(turn));
     this.nextPrompt();
+  }
+
+  /**
+   * Names the reset of the limit the last turn stopped on, when the update that used up its window came only after the
+   * turn ended. Not once another turn started.
+   */
+  private void nameLateReset() {
+    if (!this.awaitsLimitReset) {
+      return;
+    }
+    AgentEvent.LimitReached limit = CodexTranslator.usedUp(this.primaryWindow, this.secondaryWindow,
+      System.currentTimeMillis());
+    if (limit.resetsAt() != null) {
+      this.awaitsLimitReset = false;
+      this.emit(new AgentEvent.LimitReached(limit.label(), limit.resetsAt(), true));
+    }
+  }
+
+  /** Keeps the windows an update names, unless it is about another limit than Codex's own. */
+  private void keepWindows(@Nullable JsonObject snapshot) {
+    String limitId = Json.string(snapshot, "limitId");
+    if (snapshot == null || limitId != null && !"codex".equals(limitId)) {
+      return;
+    }
+    JsonObject primary = Json.object(snapshot, "primary");
+    if (primary != null) {
+      this.primaryWindow = primary;
+    }
+    JsonObject secondary = Json.object(snapshot, "secondary");
+    if (secondary != null) {
+      this.secondaryWindow = secondary;
+    }
   }
 
   private void nextPrompt() {

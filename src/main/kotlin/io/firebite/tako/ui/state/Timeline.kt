@@ -59,6 +59,7 @@ fun ThreadState.handleEvent(event: AgentEvent) {
     is AgentEvent.TurnEnded -> this.onTurnEnded(event)
     is AgentEvent.RateLimits -> this.workspace.limits =
       event.limits.joinToString(" · ") { it.label + " " + Math.round(it.usedPercent) + "%" }
+    is AgentEvent.LimitReached -> {}
     is AgentEvent.Retrying -> this.showAlert(retrying(event.attempt, event.message))
     is AgentEvent.Compacted -> this.currentTurn().items.add(TurnItem.Note(t("stream.compacted")))
     is AgentEvent.PermissionCancelled -> this.removeApproval(event.requestId)
