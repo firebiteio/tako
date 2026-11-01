@@ -22,7 +22,7 @@ public class ReviewTargetTest {
   public void runNamesItsStartCommitAndComparesTheNewVersionWithTheDisk() {
     ReviewTarget target = ReviewTarget.run("run-thread", "/repo-tako/run-1/A.java");
 
-    assertEquals("the commit this run started from", target.before().description());
+    assertEquals("the commit the parallel run started from", target.before().description());
     assertFalse(target.before().isOnDisk());
     assertTrue(target.after().isOnDisk());
   }

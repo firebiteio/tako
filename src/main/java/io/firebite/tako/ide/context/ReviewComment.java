@@ -59,7 +59,7 @@ public final class ReviewComment {
     }
     boolean isMixed = range.isMixed();
     if (isMixed) {
-      header.append(", lines only in the old version marked -");
+      header.append(", as a diff: - only in the old version, + only in the new one");
     }
     String code = code(lines, isMixed);
     if (code.length() > IdeContext.MAX_EXCERPT) {
@@ -86,6 +86,17 @@ public final class ReviewComment {
   public static String place(ReviewTarget target, List<Line> lines) {
     String name = target.path().substring(target.path().lastIndexOf('/') + 1);
     return lines.isEmpty() ? name : name + ":" + Range.of(lines);
+  }
+
+  /** The item is a review comment made in the diff of an edit a permission prompt proposes. */
+  public static boolean isOnProposedEdit(ContextItem item) {
+    if (item.kind() != ContextItem.Kind.REVIEW) {
+      return false;
+    }
+    int newline = item.text().indexOf('\n');
+    String header = newline < 0 ? item.text() : item.text().substring(0, newline);
+    return header.contains(" (" + ReviewTarget.PROPOSED_BEFORE + ")")
+      || header.contains(" (" + ReviewTarget.PROPOSED_AFTER + ")");
   }
 
   /** None of the lines is in the new version, so the comment is on the old one. */

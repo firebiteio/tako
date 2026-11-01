@@ -9,6 +9,7 @@ import io.firebite.tako.chat.BenchRequest
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ide.context.ContextItem
+import io.firebite.tako.ide.context.ReviewComment
 import io.firebite.tako.ui.t
 import java.io.IOException
 import kotlin.math.min
@@ -178,14 +179,14 @@ fun ThreadState.addContext(item: ContextItem, prefill: String?) {
 
 fun hasReviews(contexts: List<ContextItem>): Boolean = contexts.any { it.kind == ContextItem.Kind.REVIEW }
 
-/** The typed feedback, then each review comment's text, with an empty line between them. */
+/** The typed feedback, then each review comment on a proposed edit, with an empty line between them. */
 fun withReviews(typed: String, contexts: List<ContextItem>): String {
   val parts = mutableListOf<String>()
   if (typed.isNotEmpty()) {
     parts.add(typed)
   }
   for (item in contexts) {
-    if (item.kind == ContextItem.Kind.REVIEW) {
+    if (ReviewComment.isOnProposedEdit(item)) {
       parts.add(item.text)
     }
   }
@@ -287,7 +288,8 @@ fun ThreadState.answer(approval: Approval, allow: Boolean, message: String? = nu
 
 /**
  * Declines with the typed text as the reason, or the fallback without one. Declining a proposed edit, without stopping,
- * also gives the review comments as the reason, see [foldsReviews]; they then leave the box. See [decline] for agents
+ * also gives the review comments on proposed edits as the reason, see [foldsReviews]; they then leave the box. See
+ * [decline] for agents
  * without a reason.
  */
 fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = false) {
@@ -299,7 +301,7 @@ fun ThreadState.deny(approval: Approval, fallback: String, interrupt: Boolean = 
     this.input.clearText()
   }
   if (foldsReviews) {
-    this.contexts.removeAll { it.kind == ContextItem.Kind.REVIEW }
+    this.contexts.removeAll { ReviewComment.isOnProposedEdit(it) }
   }
   this.answer(approval, false, decline.message, decline.interrupt)
   val followUp = decline.followUp ?: return
@@ -337,13 +339,15 @@ private fun declinedPrompt(prompt: PermissionPrompt, feedback: String): String {
 }
 
 /**
- * Review comments go along as the reason for declining a proposed edit the IDE can show, to an agent that reads a
- * reason. Not when declining stops the turn: the agent would not act on them, so they stay in the box.
+ * Review comments made in a proposed edit's diff go along as the reason for declining a proposed edit, to an agent that
+ * reads a reason. Comments on other diffs or files stay in the box, and so do all when declining stops the turn: the
+ * agent would not act on them.
  */
 fun foldsReviews(prompt: PermissionPrompt, stop: Boolean, readsReason: Boolean, contexts: List<ContextItem>): Boolean =
-  !stop && readsReason && prompt.kind == PermissionPrompt.Kind.TOOL && prompt.canDiff && hasReviews(contexts)
+  !stop && readsReason && prompt.kind == PermissionPrompt.Kind.TOOL && prompt.canDiff
+    && contexts.any { ReviewComment.isOnProposedEdit(it) }
 
-/** Enter declines the waiting approval with the review comments alone, see [foldsReviews]. */
+/** Enter declines the waiting approval with review comments alone, see [foldsReviews]. */
 fun ThreadState.declinesWithReviews(approval: Approval): Boolean =
   foldsReviews(approval.prompt, false, this.info?.capabilities?.declineReason != false, this.contexts)
 

@@ -1,6 +1,7 @@
 package io.firebite.tako.ide.context;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertNotNull;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
@@ -21,7 +22,7 @@ public class ReviewCommentTest {
     assertNotNull(item);
     assertEquals(ContextItem.Kind.REVIEW, item.kind());
     assertEquals("Foo.java:12-13: use one declaration", item.label());
-    assertEquals("Review comment on /repo/src/Foo.java, lines 12-13 (after your change):\n```java\nint a = 1;\n"
+    assertEquals("Review comment on /repo/src/Foo.java, lines 12-13 (after the agent's change):\n```java\nint a = 1;\n"
       + "int b = 2;\n```\nComment: use one declaration", item.text());
   }
 
@@ -31,7 +32,7 @@ public class ReviewCommentTest {
 
     assertNotNull(item);
     assertEquals("Foo.java:7: why?", item.label());
-    assertTrue(item.text().startsWith("Review comment on /repo/src/Foo.java, line 7 (after your change):\n"));
+    assertTrue(item.text().startsWith("Review comment on /repo/src/Foo.java, line 7 (after the agent's change):\n"));
   }
 
   @Test
@@ -43,7 +44,7 @@ public class ReviewCommentTest {
 
     assertNotNull(item);
     assertEquals("Foo.java:4-5: keep these", item.label());
-    assertEquals("Review comment on /repo/src/Foo.java, lines 4-5 (before your change):\n```java\nold();\n"
+    assertEquals("Review comment on /repo/src/Foo.java, lines 4-5 (before the agent's change):\n```java\nold();\n"
       + "older();\n```\nComment: keep these", item.text());
   }
 
@@ -56,8 +57,9 @@ public class ReviewCommentTest {
 
     assertNotNull(item);
     assertEquals("Foo.java:10-11: not like this", item.label());
-    assertEquals("Review comment on /repo/src/Foo.java, lines 10-11 (after your change), lines only in the old "
-      + "version marked -:\n```diff\n same();\n-removed();\n+added();\n```\nComment: not like this", item.text());
+    assertEquals("Review comment on /repo/src/Foo.java, lines 10-11 (after the agent's change), as a diff: - only in "
+      + "the old version, + only in the new one:\n```diff\n same();\n-removed();\n+added();\n```\nComment: not like "
+      + "this", item.text());
   }
 
   @Test
@@ -79,11 +81,24 @@ public class ReviewCommentTest {
 
     assertNotNull(after);
     assertNotNull(before);
-    assertTrue(after.text().startsWith("Review comment on C:/repo/Bar.kt, line 2 (your proposed edit, not applied "
+    assertTrue(after.text().startsWith("Review comment on C:/repo/Bar.kt, line 2 (the proposed edit, not applied "
       + "yet):\n```kt\n"));
-    assertTrue(before.text().startsWith("Review comment on C:/repo/Bar.kt, line 2 (the current file, before your "
+    assertTrue(before.text().startsWith("Review comment on C:/repo/Bar.kt, line 2 (the current file, before the "
       + "proposed edit):\n"));
     assertEquals("Bar.kt:2: no", after.label());
+    assertTrue(ReviewComment.isOnProposedEdit(after));
+    assertTrue(ReviewComment.isOnProposedEdit(before));
+  }
+
+  @Test
+  public void onlyCommentsOnAProposedEditAreOnAProposedEdit() {
+    ContextItem turn = ReviewComment.item(TURN, List.of(new ReviewComment.Line(0, 1, "a")),
+      "like (the proposed edit, not applied yet)", null);
+    ContextItem selection = IdeContext.excerpt("Terminal", "the terminal (the proposed edit, not applied yet)", "x");
+
+    assertNotNull(turn);
+    assertFalse(ReviewComment.isOnProposedEdit(turn));
+    assertFalse(ReviewComment.isOnProposedEdit(selection));
   }
 
   @Test
@@ -154,7 +169,7 @@ public class ReviewCommentTest {
     ContextItem item = ReviewComment.item(TURN, List.of(new ReviewComment.Line(0, 1, line)), "too long", null);
 
     assertNotNull(item);
-    assertTrue(item.text().startsWith("Review comment on /repo/src/Foo.java, line 1 (after your change) (first "
+    assertTrue(item.text().startsWith("Review comment on /repo/src/Foo.java, line 1 (after the agent's change) (first "
       + IdeContext.MAX_EXCERPT + " of " + line.length() + " characters):\n```java\n"
       + "y".repeat(IdeContext.MAX_EXCERPT) + "\n```\n"));
   }

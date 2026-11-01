@@ -4,39 +4,49 @@ import com.google.gson.JsonObject
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.ide.context.ContextItem
+import io.firebite.tako.ide.context.ReviewComment
+import io.firebite.tako.ide.context.ReviewTarget
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ReviewFeedbackTest {
-  private val review = ContextItem.create(ContextItem.Kind.REVIEW, "Foo.java:3: no", "Review comment on Foo.java\nComment: no")
-  private val other = ContextItem.create(ContextItem.Kind.REVIEW, "Bar.kt:1: 😀", "Review comment on Bar.kt\nComment: 😀")
+  private val proposed = ReviewTarget.proposed("thread-1", "/repo/Foo.java")
+  private val review = ReviewComment.item(this.proposed, listOf(ReviewComment.Line(0, 3, "x()")), "no", null)!!
+  private val other = ReviewComment.item(this.proposed, listOf(ReviewComment.Line(2, 0, "y()")), "😀", null)!!
+  private val turnReview = ReviewComment.item(ReviewTarget.turn("thread-1", "/repo/Bar.kt"),
+    listOf(ReviewComment.Line(0, 1, "z")), "later", null)!!
   private val selection = ContextItem.create(ContextItem.Kind.SELECTION, "Foo.java:1-2", "Selected in Foo.java")
   private val edit = PermissionPrompt(PermissionPrompt.Kind.TOOL, "Edit", ToolKind.EDIT,
     JsonObject().apply { this.addProperty("file_path", "/repo/Foo.java") }, "call-1", null, null, true, emptyList(),
     emptyList(), null)
 
   @Test
-  fun typedFeedbackComesFirstThenEachReviewComment() {
-    assertEquals("use a list\n\nReview comment on Foo.java\nComment: no\n\nReview comment on Bar.kt\nComment: 😀",
-      withReviews("use a list", listOf(this.review, this.selection, this.other)))
+  fun typedFeedbackComesFirstThenEachCommentOnTheProposedEdit() {
+    assertEquals("use a list\n\n" + this.review.text + "\n\n" + this.other.text,
+      withReviews("use a list", listOf(this.review, this.selection, this.turnReview, this.other)))
   }
 
   @Test
   fun reviewCommentsAloneAreTheFeedback() {
-    assertEquals("Review comment on Foo.java\nComment: no", withReviews("", listOf(this.review)))
+    assertEquals(this.review.text, withReviews("", listOf(this.review)))
   }
 
   @Test
-  fun otherContextIsNotFeedback() {
-    assertEquals("why", withReviews("why", listOf(this.selection)))
+  fun otherContextAndCommentsOnOtherDiffsAreNotFeedback() {
+    assertEquals("why", withReviews("why", listOf(this.selection, this.turnReview)))
     assertEquals("", withReviews("", emptyList()))
   }
 
   @Test
   fun reviewCommentsGoWithADeclinedProposedEdit() {
     assertTrue(foldsReviews(this.edit, false, true, listOf(this.selection, this.review)))
+  }
+
+  @Test
+  fun commentsOnlyOnOtherDiffsDoNotDecline() {
+    assertFalse(foldsReviews(this.edit, false, true, listOf(this.turnReview)))
   }
 
   @Test
@@ -62,8 +72,8 @@ class ReviewFeedbackTest {
   }
 
   @Test
-  fun onlyReviewCommentsCount() {
-    assertTrue(hasReviews(listOf(this.selection, this.review)))
+  fun anyReviewCommentCountsForSending() {
+    assertTrue(hasReviews(listOf(this.selection, this.turnReview)))
     assertFalse(hasReviews(listOf(this.selection)))
     assertFalse(hasReviews(emptyList()))
   }
