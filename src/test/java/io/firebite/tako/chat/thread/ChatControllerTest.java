@@ -119,6 +119,16 @@ public class ChatControllerTest extends BasePlatformTestCase {
     return script;
   }
 
+  /** The title the thread got, which the controller sets on the EDT after the prompt went out. */
+  private String awaitTitle() throws InterruptedException {
+    long deadline = System.currentTimeMillis() + TIMEOUT_MILLIS;
+    while (this.title == null && System.currentTimeMillis() < deadline) {
+      PlatformTestUtil.dispatchAllInvocationEventsInIdeEventQueue();
+      Thread.sleep(10);
+    }
+    return this.title;
+  }
+
   private <T extends ChatMessage.ThreadMessage> T awaitPost(Class<T> type) throws InterruptedException {
     return type.cast(this.postsUntil(type).getLast());
   }
@@ -155,7 +165,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     ChatMessage.Permission permission = this.awaitPost(ChatMessage.Permission.class);
     assertEquals("Write", permission.prompt().toolName());
     assertEquals(ToolKind.EDIT, permission.prompt().category());
-    assertEquals("write a.txt", this.title);
+    assertEquals("write a.txt", this.awaitTitle());
 
     this.controller.answer(permission.requestId(), false, "no", false, null, null);
     while (true) {
