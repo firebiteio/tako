@@ -68,6 +68,43 @@ public record GitInfo(
       pushed.host() + "/" + pushed.owner() + "/" + pushed.name(), "--json", "number,title,url,state")));
   }
 
+  /**
+   * The pull or merge request as it is now, asked by its url or number, so it is found after its branch was deleted or
+   * switched. Null when {@code gh} or {@code glab} cannot tell. Asks over the network.
+   *
+   * @param directory a folder of the repository, for {@code glab} to know the project
+   */
+  public static @Nullable PullRequest pullRequest(Path directory, Map<String, String> environment,
+    PullRequest known) {
+    List<String> command = viewCommand(known);
+    if (command == null) {
+      return null;
+    }
+    String output = run(directory, environment, command);
+    return known.number().startsWith("!") ? parseGitLab(output) : parseGitHub(output);
+  }
+
+  /** The command that shows the known pull or merge request, or null when its number is not one Tako wrote. */
+  static @Nullable List<String> viewCommand(PullRequest known) {
+    String number = known.number();
+    if (number.length() < 2) {
+      return null;
+    }
+    String id = number.substring(1);
+    for (int i = 0; i < id.length(); i++) {
+      if (!Character.isDigit(id.charAt(i))) {
+        return null;
+      }
+    }
+    return switch (number.charAt(0)) {
+      case '#' -> known.url().startsWith("https://") || known.url().startsWith("http://")
+        ? List.of("gh", "pr", "view", known.url(), "--json", "number,title,url,state")
+        : null;
+      case '!' -> List.of("glab", "mr", "view", id, "-F", "json");
+      default -> null;
+    };
+  }
+
   /** The worktree's folder name when {@code gitDir} is a linked worktree's, else null. */
   static @Nullable String worktreeName(Path directory, String gitDir, String commonDir, String topLevel) {
     Path git = directory.resolve(gitDir.trim()).normalize();

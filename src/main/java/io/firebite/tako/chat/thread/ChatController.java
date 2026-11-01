@@ -323,7 +323,9 @@ public final class ChatController implements Disposable {
 
   /**
    * Re-reads branch and worktree, which is local and cheap. Asks for the pull request only when the branch changed or
-   * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. Call off the EDT.
+   * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. A thread in a folder of its own keeps its pull
+   * request when none is found and it is not on another branch, e.g. once the merge deleted the branch, so auto archive
+   * still sees how it ended. Call off the EDT.
    */
   public void refreshGit() {
     String directory = this.gitFolder();
@@ -340,6 +342,10 @@ public final class ChatController implements Disposable {
     } else if (branchChanged || now - this.lastPullRequestCheck > PULL_REQUEST_INTERVAL_MILLIS) {
       this.lastPullRequestCheck = now;
       pullRequest = GitInfo.pullRequest(Path.of(directory), environment);
+    }
+    boolean isOtherBranch = info.branch() != null && branchChanged;
+    if (pullRequest == null && this.record.workPath != null && !isOtherBranch) {
+      pullRequest = this.record.pullRequest;
     }
     if (!branchChanged && Objects.equals(info.worktree(), this.record.worktree)
       && Objects.equals(pullRequest, this.record.pullRequest)) {
@@ -1107,6 +1113,7 @@ public final class ChatController implements Disposable {
     this.turnRunning = false;
     if (this.untakenTurns.isEmpty()) {
       this.setState(State.IDLE);
+      Async.onEdt(() -> this.host.needsLook(false));
     }
     this.error = ended.error();
     this.refreshContext();
@@ -1129,7 +1136,10 @@ public final class ChatController implements Disposable {
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
       ? TakoBundle.message("notification.question", agent)
       : TakoBundle.message("notification.tool", agent, prompt.toolName());
-    Async.onEdt(() -> this.host.requestAttention(reason));
+    Async.onEdt(() -> {
+      this.host.needsLook(true);
+      this.host.requestAttention(reason);
+    });
   }
 
   private void stopped(@Nullable String error) {

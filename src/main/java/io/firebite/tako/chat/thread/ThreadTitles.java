@@ -4,6 +4,7 @@ import io.firebite.tako.agent.AgentEvent;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.regex.Pattern;
 import org.jetbrains.annotations.Nullable;
 
 /** The prompt that asks an agent to name a thread, and the title read from its answer. */
@@ -11,6 +12,8 @@ public final class ThreadTitles {
   private static final int RECENT_MESSAGES = 6;
   private static final int MESSAGE_LENGTH = 800;
   private static final String LABEL = "title:";
+  private static final int MANUAL_LENGTH = 200;
+  private static final Pattern WHITESPACE = Pattern.compile("[\\s\\p{Z}]+");
 
   private ThreadTitles() {
   }
@@ -53,6 +56,12 @@ public final class ThreadTitles {
       }
     }
     return null;
+  }
+
+  /** A title the person typed on one line, cut to {@link #MANUAL_LENGTH} characters. Null if blank. */
+  public static @Nullable String manual(String typed) {
+    String title = WHITESPACE.matcher(typed).replaceAll(" ").strip();
+    return title.isEmpty() ? null : ChatController.cut(title, MANUAL_LENGTH);
   }
 
   /** The prompts and the agent's own answers, without what its subagents said. */

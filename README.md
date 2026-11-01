@@ -18,6 +18,7 @@ It works with:
 - Comment on lines in those diffs, or in any file, and send the comments to the agent together
 - Rewind a thread to before one of your prompts and edit it, with or without putting the files back (Claude Code and Codex)
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
+- Pin, rename, snooze or mark threads unread from their menu. A thread whose agent finished or asked something while you looked elsewhere gets a dot until you open it. Optionally archive threads automatically once their pull request is merged or after some days without activity (Settings > Tools > Tako)
 - Each thread has its own model, mode and effort
 - Type `@` to mention a file or another thread, paste images, or send the editor selection
 - Fix Problems sends a file's inspection results to the agent

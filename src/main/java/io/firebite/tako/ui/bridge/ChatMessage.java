@@ -91,7 +91,10 @@ public sealed interface ChatMessage {
     String agent,
     long firstTurnMillis,
     @Nullable String parentId,
-    @Nullable String watching
+    @Nullable String watching,
+    boolean pinned,
+    boolean unread,
+    long snoozedUntil
   ) {
   }
 
