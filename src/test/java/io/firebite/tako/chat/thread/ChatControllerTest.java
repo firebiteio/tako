@@ -589,8 +589,8 @@ public class ChatControllerTest extends BasePlatformTestCase {
     assertEquals(ChatController.State.STOPPED, this.controller.state());
     ChatMessage.Queue queue = lastQueue(posts);
     assertTrue(queue.held());
-    assertEquals(List.of(new ChatMessage.QueueItem(2, QueuedPrompts.Status.HELD),
-      new ChatMessage.QueueItem(3, QueuedPrompts.Status.HELD)), queue.items());
+    assertEquals(List.of(new ChatMessage.QueueItem(3, QueuedPrompts.Status.HELD),
+      new ChatMessage.QueueItem(2, QueuedPrompts.Status.HELD)), queue.items());
 
     assertEquals("exit now", this.controller.unqueue(3).text());
     assertEquals(QueuedPrompts.SendNow.SEND, this.controller.sendQueuedNow(2));

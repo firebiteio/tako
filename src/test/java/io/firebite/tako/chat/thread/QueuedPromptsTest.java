@@ -304,13 +304,21 @@ public class QueuedPromptsTest {
   }
 
   @Test
-  public void secondStopSettlesATurnThatNeverEnds() {
+  public void runningTurnSettlesOnlyWhenTheAgentEndsIt() {
     this.runTurn();
     assertFalse(this.queue.stop());
+    assertFalse("a second stop too", this.queue.stop());
     assertTrue(this.queue.isRunning());
-    assertTrue(this.queue.stop());
+    assertNull(this.queue.turnEnded(false));
     assertFalse(this.queue.isRunning());
-    assertNull("the late end changes nothing", this.queue.turnEnded(false));
+  }
+
+  @Test
+  public void steeredPromptIsListedBeforeTheHeldOnes() {
+    this.runTurn();
+    this.queue.offer(2, prompt("held"), Delivery.QUEUE, true);
+    this.queue.offer(3, prompt("steer"), Delivery.STEER, true);
+    assertEquals(List.of(3, 2), this.turns());
   }
 
   @Test

@@ -108,7 +108,8 @@ final class ThreadTools implements McpTools {
         schema(getProperties, THREAD_ID)),
       new Tool(SEND, "Sends a prompt to another thread as if the person typed it, and opens the thread if it is "
         + "closed. While the thread works or waits for the person, the prompt queues and goes once the running turn "
-        + "ends; the result then has queued set, and the person can edit or remove it. Fails while the thread is "
+        + "ends, and the person can edit or remove it. The result has queued set when the thread was busy at the call, "
+        + "a hint since its turn may end meanwhile. Fails while the thread is "
         + "starting. Returns at once; wait_for_thread then gives the answer once the queued prompts ran, but returns "
         + "early while the thread waits for the person.",
         schema(sendProperties, THREAD_ID, "prompt")),

@@ -46,7 +46,7 @@ public final class QueuedPrompts {
       return Action.SEND;
     }
     if (delivery == Delivery.STEER && canSteer && steerable(prompt)) {
-      this.entries.add(new Entry(turn, prompt, Status.STEERING, true));
+      this.entries.add(this.frontEnd(), new Entry(turn, prompt, Status.STEERING, true));
       this.changed();
       return Action.STEER;
     }
@@ -79,9 +79,9 @@ public final class QueuedPrompts {
   }
 
   /**
-   * The person stops the agent: the queue holds, and prompts that were to go next wait too. A second stop before the
-   * turn ended, or a stop between turns while a prompt is on its way, settles at once: prompts on their way are held
-   * again, and the one sent at once is dropped.
+   * The person stops the agent: the queue holds, and prompts that were to go next wait too. A stop between turns while
+   * a prompt is on its way settles at once: prompts on their way are held again, and the one sent at once is dropped.
+   * A running turn settles when the agent ends it.
    *
    * @return true when it settled at once, so no turn's end will tell the chat
    */
@@ -95,7 +95,7 @@ public final class QueuedPrompts {
         entry.status = Status.HELD;
       }
     }
-    if (this.isRunning && (!this.isTurnOpen || this.isStopRequested)) {
+    if (this.isRunning && !this.isTurnOpen) {
       this.endStopped();
       return true;
     }
