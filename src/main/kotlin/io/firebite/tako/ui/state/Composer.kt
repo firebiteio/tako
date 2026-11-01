@@ -40,10 +40,11 @@ fun ThreadState.takeFeedback(): String {
 
 /**
  * Sends what is typed; with the agent waiting, it answers the question or declines the approval instead. While a turn
- * runs, the prompt queues or steers as the settings say, or the other way with [opposite].
+ * runs, the prompt queues or steers as the settings say, or the other way with [opposite]. A Tako command runs before
+ * either, and `//` before one sends it as typed with one `/` less.
  */
 fun ThreadState.submit(opposite: Boolean = false) {
-  if (this.rewinding != null) {
+  if (this.rewinding != null || this.runTakoCommand(this.typed)) {
     return
   }
   if (this.question != null) {
@@ -55,7 +56,7 @@ fun ThreadState.submit(opposite: Boolean = false) {
     this.declineWithFeedback(approval)
     return
   }
-  val typed = this.typed
+  val typed = escapedTakoCommand(this.typed) ?: this.typed
   val images = this.images.map { it.image }
   val hasReviews = hasReviews(this.contexts)
   if (typed.isEmpty() && images.isEmpty() && !hasReviews) {
@@ -77,8 +78,12 @@ fun ThreadState.submit(opposite: Boolean = false) {
   this.input.clearText()
 }
 
-/** Sends, then opens a new thread in the same folder. */
+/** Sends, then opens a new thread in the same folder. A Tako command only runs. */
 fun ThreadState.submitAndBranch() {
+  if (parseTakoCommand(this.typed) != null) {
+    this.submit()
+    return
+  }
   if (this.question != null || this.approvals.isNotEmpty()
     || (this.typed.isEmpty() && this.images.isEmpty() && !hasReviews(this.contexts)) || this.rewinding != null) {
     return

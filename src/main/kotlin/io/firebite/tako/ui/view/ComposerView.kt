@@ -97,7 +97,6 @@ import com.intellij.openapi.actionSystem.DataKey
 import com.intellij.openapi.actionSystem.PlatformDataKeys
 import com.intellij.openapi.ide.CopyPasteManager
 import com.intellij.openapi.project.DumbAwareAction
-import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.PriceRatios
 import io.firebite.tako.ide.context.ContextItem
@@ -122,6 +121,13 @@ import io.firebite.tako.ui.state.contextNumbers
 import io.firebite.tako.ui.state.declinesWithReviews
 import io.firebite.tako.ui.state.hasReviews
 import io.firebite.tako.ui.state.RunPlan
+import io.firebite.tako.ui.state.SlashItem
+import io.firebite.tako.ui.state.effortDescription
+import io.firebite.tako.ui.state.effortLabel
+import io.firebite.tako.ui.state.selectEffort
+import io.firebite.tako.ui.state.selectMode
+import io.firebite.tako.ui.state.selectModel
+import io.firebite.tako.ui.state.slashMenu
 import io.firebite.tako.ui.state.runLabel
 import io.firebite.tako.ui.state.sentPrompts
 import io.firebite.tako.ui.state.specOf
@@ -151,40 +157,21 @@ import java.net.URI
 import java.nio.file.Path
 import kotlin.math.max
 
-private const val MAX_SLASH_ITEMS = 50
 private const val MAX_THREAD_ITEMS = 10
 /** Waits for typing to pause before asking the IDE for files. */
 private const val MENTION_DEBOUNCE_MILLIS = 80L
 private val RUN_COUNTS = listOf(2, 3, 4, 5, 6, 8)
 private val MENTION = Regex("""(^|[\s(])@("[^"]*|[^\s@"]*)$""")
-private val SLASH = Regex("""^/(\S*)$""")
 /** The cold cache timer's icon (Lucide). */
-
-/** Reasoning effort levels by their usual names; other levels show as named. */
-private fun effortLabel(level: String): String = when (level) {
-  "low" -> t("composer.effort.low")
-  "medium" -> t("composer.effort.medium")
-  "high" -> t("composer.effort.high")
-  "xhigh" -> t("composer.effort.xhigh")
-  "max" -> t("composer.effort.max")
-  else -> level
-}
-
-private fun effortDescription(level: String): String? = when (level) {
-  "low" -> t("composer.effort.low.description")
-  "medium" -> t("composer.effort.medium.description")
-  "high" -> t("composer.effort.high.description")
-  "xhigh" -> t("composer.effort.xhigh.description")
-  "max" -> t("composer.effort.max.description")
-  else -> null
-}
 
 /** The `@` mention being typed: where it is and what it asks for. */
 private data class Mention(val start: Int, val end: Int, val query: String)
 
 /** The suggestions over the composer: slash commands, or files and then threads for an `@` mention. */
 private class Suggestions {
-  var commands by mutableStateOf<List<AgentInfo.Command>>(emptyList())
+  var commands by mutableStateOf<List<SlashItem>>(emptyList())
+  /** The text the slash commands were last listed for. */
+  var slashText: String? = null
   var files by mutableStateOf<List<FileIndex.Match>>(emptyList())
   var threads by mutableStateOf<List<ThreadState>>(emptyList())
   var isMention by mutableStateOf(false)
@@ -450,20 +437,21 @@ private fun placeholder(thread: ThreadState): String {
   }
 }
 
+/** Lists the commands, or a Tako command's values; a changed text highlights the menu's first pick again. */
 private fun updateSlash(thread: ThreadState, suggestions: Suggestions, text: String) {
-  val match = SLASH.matchEntire(text)
-  if (match == null || thread.commands.isEmpty()) {
+  val menu = thread.slashMenu(text)
+  if (menu.items.isEmpty()) {
     if (!suggestions.isMention) {
       suggestions.hide()
     }
+    suggestions.slashText = null
     return
   }
-  val query = match.groupValues[1].lowercase()
-  val items = thread.commands.filter { it.name.lowercase().contains(query) }
-    .sortedBy { !it.name.lowercase().startsWith(query) }.take(MAX_SLASH_ITEMS)
   suggestions.isMention = false
-  suggestions.commands = items
-  suggestions.index = suggestions.index.coerceAtMost(max(0, items.size - 1))
+  suggestions.commands = menu.items
+  suggestions.index = if (text != suggestions.slashText) menu.selected else
+    suggestions.index.coerceAtMost(menu.items.size - 1)
+  suggestions.slashText = text
 }
 
 /** An `@` before the caret asks the IDE for matching files and looks for threads by title. */
@@ -507,7 +495,8 @@ private fun mentionThreads(thread: ThreadState, query: String): List<ThreadState
     .take(MAX_THREAD_ITEMS)
 }
 
-private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, index: Int) {
+/** @param run a command that runs on its own is sent too, as with Enter or a click but not Tab */
+private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, index: Int, run: Boolean) {
   if (suggestions.isMention && index >= suggestions.files.size) {
     val mentioned = suggestions.threads.getOrNull(index - suggestions.files.size) ?: return
     val mention = suggestions.mention ?: return
@@ -538,8 +527,11 @@ private fun chooseSuggestion(thread: ThreadState, suggestions: Suggestions, inde
     return
   }
   val command = suggestions.commands.getOrNull(index) ?: return
-  thread.input.setTextAndPlaceCursorAtEnd("/" + command.name + " ")
+  thread.input.setTextAndPlaceCursorAtEnd(command.text)
   suggestions.hide()
+  if (run && command.runs) {
+    thread.submit()
+  }
 }
 
 /** @param layout the composer's text as laid out, for the caret's line */
@@ -564,7 +556,7 @@ private fun onKey(thread: ThreadState, suggestions: Suggestions, recall: PromptR
     return true
   }
   if (count > 0 && (event.key == Key.Tab || (event.key == Key.Enter && !event.isShiftPressed))) {
-    chooseSuggestion(thread, suggestions, suggestions.index)
+    chooseSuggestion(thread, suggestions, suggestions.index, event.key == Key.Enter)
     return true
   }
   val digit = event.key.keyCode.toInt() - Key.One.keyCode.toInt()
@@ -628,7 +620,7 @@ private fun SuggestionPopup(thread: ThreadState, suggestions: Suggestions, width
           Text(t("composer.mention.threads"), Modifier.padding(start = 8.dp, top = 8.dp, bottom = 2.dp),
             color = colors.muted, style = tinyStyle)
         }
-        Row(Modifier.fillMaxWidth().hoverClick(selected = active) { chooseSuggestion(thread, suggestions, index) }
+        Row(Modifier.fillMaxWidth().hoverClick(selected = active) { chooseSuggestion(thread, suggestions, index, true) }
           .padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           if (isThread) {
@@ -655,18 +647,30 @@ private fun SuggestionPopup(thread: ThreadState, suggestions: Suggestions, width
           } else {
             val command = suggestions.commands[index]
             Column(Modifier.weight(1f)) {
-              Text("/" + command.name + if (command.hint.isNotEmpty()) "  " + command.hint else "", color = colors.fg,
-                style = smallStyle, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+              Text((if (command.argument) "" else "/") + command.name +
+                if (command.hint.isNotEmpty()) "  " + command.hint else "", color = colors.fg, style = smallStyle,
+                fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
               if (command.description.isNotEmpty()) {
                 Text(command.description, color = colors.muted, style = tinyStyle, maxLines = 1,
                   overflow = TextOverflow.Ellipsis)
               }
+            }
+            if (command.tako) {
+              TakoPill()
             }
           }
         }
       }
     }
   }
+}
+
+/** Marks a `/` menu row as Tako's own rather than the agent's. */
+@Composable
+private fun TakoPill() {
+  val shape = RoundedCornerShape(50)
+  Text(t("composer.slash.tako"), Modifier.border(1.dp, colors.softBorder, shape).padding(horizontal = 6.dp),
+    color = colors.faint, style = tinyStyle, maxLines = 1)
 }
 
 /** One of the composer's pickers. */
@@ -714,8 +718,7 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
       ?: t("composer.model"), true, menu = {
       thread.models.map { option ->
         MenuEntry(option.displayName.ifEmpty { option.value }, option.description, checked = option.value == thread.model) {
-          thread.model = option.value
-          thread.controller?.setModel(option.value)
+          thread.selectModel(option.value)
         }
       }
     }, menuTitle = t("composer.model")))
@@ -725,8 +728,7 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
       if (effort != null) t("composer.effort.title.level", effort) else t("composer.effort.title"), true, menu = {
         model.efforts.map { level ->
           MenuEntry(effortLabel(level), effortDescription(level), checked = level == thread.effort) {
-            thread.effort = level
-            thread.controller?.setEffort(level)
+            thread.selectEffort(level)
           }
         }
       }, menuTitle = t("composer.effort")))
@@ -738,8 +740,7 @@ private fun Controls(thread: ThreadState, narrow: Boolean, cacheIconOnly: Boolea
       if (mode != null) mode.label + ": " + mode.description else t("composer.mode"), true, menu = {
         modes.map { option ->
           MenuEntry(option.label, option.description, Icons.mode(option.value), option.value == thread.mode) {
-            thread.mode = option.value
-            thread.controller?.setMode(option.value)
+            thread.selectMode(option.value)
           }
         }
       }, menuTitle = t("composer.permissions")))
