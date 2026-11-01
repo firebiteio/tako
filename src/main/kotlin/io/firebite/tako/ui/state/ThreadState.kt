@@ -36,6 +36,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var branch by mutableStateOf(item.branch)
   var worktree by mutableStateOf(item.worktree)
   var pullRequest by mutableStateOf<GitInfo.PullRequest?>(item.pullRequest)
+  /** The number of the pull request the thread watches, if it does. */
+  var watching by mutableStateOf(item.watching)
+  /** Whether a watch is starting, between the click and gh's first answer. */
+  var watchStarting by mutableStateOf(false)
   var projectPath by mutableStateOf(item.projectPath)
   /** The id of the agent the thread runs. */
   var agent by mutableStateOf(item.agent)
@@ -113,6 +117,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     this.worktree = item.worktree
     this.projectPath = item.projectPath
     this.pullRequest = item.pullRequest
+    this.watching = item.watching
     this.hasSession = item.hasSession
     this.firstTurnMillis = item.firstTurnMillis
     if (item.agent.isNotEmpty() && item.agent != this.agent) {
