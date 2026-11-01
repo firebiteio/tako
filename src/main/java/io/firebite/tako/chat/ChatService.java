@@ -44,6 +44,8 @@ import io.firebite.tako.chat.watch.WatchException;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
+import io.firebite.tako.ide.project.Checkpoints;
+import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.ProjectIcons;
 import io.firebite.tako.mcp.McpServer;
@@ -159,6 +161,26 @@ public final class ChatService implements Disposable {
   /** Adds context to the selected thread. Must run on the EDT. */
   public void addContext(ContextItem item, @Nullable String prefill) {
     this.withActiveController(controller -> controller.addContext(item, prefill));
+  }
+
+  /**
+   * Adds a review comment to the thread whose changes it is on, selecting it and taking it out of the archive. Goes to
+   * the selected thread when there is no such thread, or it was closed. Must run on the EDT.
+   */
+  public void addReview(@Nullable String threadId, ContextItem item) {
+    ToolWindow window = this.toolWindow();
+    if (threadId == null || this.store.find(threadId) == null || window == null) {
+      this.addContext(item, null);
+      return;
+    }
+    window.activate(() -> {
+      if (this.store.find(threadId) == null) {
+        this.addContext(item, null);
+        return;
+      }
+      this.select(threadId);
+      this.post(new ChatMessage.Context(item, null), threadId);
+    });
   }
 
   /** Attaches image files to the selected thread's composer. Must run on the EDT. */
@@ -601,7 +623,14 @@ public final class ChatService implements Disposable {
   void closeAll(List<String> ids) {
     String activeId = this.store.activeId();
     for (String id : ids) {
-      if (this.store.find(id) != null) {
+      ThreadStore.Record record = this.store.find(id);
+      if (record != null) {
+        // Checkpoint refs are shared with the thread's worktree, so its project folder still reaches them once a bench
+        // removed the worktree.
+        String folder = this.folderOf(record);
+        if (!folder.isEmpty()) {
+          Async.inBackground(() -> Checkpoints.forget(Path.of(folder), id, 0, EnvironmentUtil.getEnvironmentMap()));
+        }
         this.disposeController(id);
         this.withdrawTools(id);
         this.store.remove(id);
@@ -994,6 +1023,27 @@ public final class ChatService implements Disposable {
     @Override
     public @Nullable String toolsUrl() {
       return ChatService.this.toolsUrl(this.record.id);
+    }
+
+    @Override
+    public @Nullable String busyThreadIn(String topLevel) {
+      Path top = Path.of(topLevel).toAbsolutePath().normalize();
+      Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
+      for (Map.Entry<String, ChatController> entry : ChatService.this.controllers.entrySet()) {
+        ChatController other = entry.getValue();
+        String folder = other.gitFolder();
+        if (entry.getKey().equals(this.record.id) || !other.state().isInTurn() || folder == null) {
+          continue;
+        }
+        Path otherFolder = Path.of(folder).toAbsolutePath().normalize();
+        String otherTop = GitCommands.topLevel(otherFolder, environment);
+        boolean sharesFiles = top.startsWith(otherFolder) || otherTop != null && top.equals(Path.of(otherTop));
+        if (sharesFiles) {
+          ThreadStore.Record record = ChatService.this.store.find(entry.getKey());
+          return record != null ? record.title : "";
+        }
+      }
+      return null;
     }
 
     @Override

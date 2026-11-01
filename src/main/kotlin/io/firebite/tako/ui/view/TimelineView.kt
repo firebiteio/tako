@@ -49,6 +49,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
+import com.intellij.openapi.ui.MessageDialogBuilder
 import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.clock
 import io.firebite.tako.ui.elapsed
@@ -59,7 +60,12 @@ import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
+import io.firebite.tako.ui.state.canRewind
+import io.firebite.tako.ui.state.promptsUpTo
+import io.firebite.tako.ui.state.rewind
 import io.firebite.tako.ui.t
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import org.jetbrains.jewel.ui.component.Text
 import org.jetbrains.jewel.ui.component.VerticallyScrollableContainer
 
@@ -219,7 +225,7 @@ private fun Timeline(thread: ThreadState, markdown: ChatMarkdown, actions: CodeA
 @Composable
 private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: ChatMarkdown, actions: CodeActions) {
   when (row) {
-    is TimelineRow.PromptRow -> UserRow(thread, row.prompt)
+    is TimelineRow.PromptRow -> UserRow(thread, row.prompt, rewinds = row.turn.takeIf { thread.canRewind(it) })
     is TimelineRow.Item -> Box(if (row.foldEnd) Modifier.padding(bottom = 8.dp) else Modifier) {
       TurnItemView(thread, row.item, row.forkPrompts, markdown, actions)
     }
@@ -265,8 +271,11 @@ val cssRem: Dp
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-/** @param queued the prompt waits for the running turn to end */
-private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false) {
+/**
+ * @param queued  the prompt waits for the running turn to end
+ * @param rewinds the turn the prompt starts, when the thread can rewind to before it
+ */
+private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false, rewinds: Turn? = null) {
   val workspace = thread.workspace
   val (interaction, hovered) = rememberHover()
   val long = prompt.text.length > COLLAPSE_CHARS || prompt.text.count { it == '\n' } >= COLLAPSE_LINES
@@ -318,7 +327,49 @@ private fun UserRow(thread: ThreadState, prompt: Prompt, queued: Boolean = false
       }
       Text(clock(prompt.at), color = colors.muted, style = smallStyle.copy(fontFeatureSettings = "tnum"))
       IconBtn(Icons.copy, t("common.copy"), iconSize = 14.dp) { copyText(prompt.text) }
+      if (rewinds != null) {
+        RewindButton(thread, rewinds)
+      }
     }
+  }
+}
+
+/** Opens the choice to rewind the conversation, or the conversation and the files, to before the turn's prompt. */
+@Composable
+private fun RewindButton(thread: ThreadState, turn: Turn) {
+  var open by remember(turn) { mutableStateOf(false) }
+  var hasSnapshot by remember(turn) { mutableStateOf(false) }
+  LaunchedEffect(open) {
+    if (open) {
+      hasSnapshot = false
+      val controller = thread.controller
+      val prompts = thread.promptsUpTo(turn)
+      hasSnapshot = controller != null &&
+        withContext(Dispatchers.IO) { controller.hasCheckpoint(prompts.size - 1, prompts.last()) }
+    }
+  }
+  Box {
+    IconBtn(Icons.history, t("timeline.rewind"), iconSize = 14.dp) { open = true }
+    if (open) {
+      MenuPopup(listOf(
+        MenuEntry(t("timeline.rewind.conversation"), t("timeline.rewind.conversation.description")) {
+          confirmRewind(thread, turn, false)
+        },
+        MenuEntry(t("timeline.rewind.files"),
+          if (hasSnapshot) t("timeline.rewind.files.description") else t("timeline.rewind.files.unavailable"),
+          enabled = hasSnapshot) {
+          confirmRewind(thread, turn, true)
+        }), t("timeline.rewind.menu"), Alignment.End) { open = false }
+    }
+  }
+}
+
+private fun confirmRewind(thread: ThreadState, turn: Turn, files: Boolean) {
+  val title = if (files) t("timeline.rewind.files") else t("timeline.rewind.conversation")
+  val text = if (files) t("timeline.rewind.confirm") + "\n\n" + t("timeline.rewind.files.confirm")
+  else t("timeline.rewind.confirm")
+  if (MessageDialogBuilder.yesNo(title, text).guessWindowAndAsk()) {
+    thread.rewind(turn, files)
   }
 }
 
