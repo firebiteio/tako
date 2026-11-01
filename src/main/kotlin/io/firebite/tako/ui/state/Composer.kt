@@ -55,6 +55,10 @@ fun ThreadState.submit() {
     }
     return
   }
+  if (this.gitRunning) {
+    this.showAlert(t("git.prompt.blocked"))
+    return
+  }
   if (this.isBench) {
     if (!this.startBench(text)) {
       return
