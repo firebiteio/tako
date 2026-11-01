@@ -139,6 +139,20 @@ class PlanActionsTest : BasePlatformTestCase() {
     assertEquals(before, this.store.all().size)
   }
 
+  fun testThePlanIsNotApprovedHereWhileANewThreadForItStarts() {
+    this.thread.addPermission("r0", this.toolPrompt("t0"))
+    this.thread.addPermission("r1", this.planPrompt("# A", "t1"))
+    this.thread.implementing = true
+
+    this.thread.answer(this.thread.approvals[1], true)
+    this.thread.answer(this.thread.approvals[1], true, suggestion = 0)
+    this.thread.answer(this.thread.approvals[0], true)
+
+    assertEquals(listOf("r1"), this.thread.approvals.map { it.requestId })
+    this.thread.answer(this.thread.approvals[0], false, "Keep planning.")
+    assertTrue(this.thread.approvals.isEmpty())
+  }
+
   fun testAPlanOfAThreadRemovedMeanwhileStartsNothingAndCanBeTriedAgain() {
     this.store.remove(this.thread.id)
     val before = this.store.all().size
