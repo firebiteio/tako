@@ -108,9 +108,13 @@ public final class ThreadUpkeep {
     this.service.archiveAll(done);
   }
 
-  /** Whether the thread stays though done: it is shown, works, waits, is hidden by a snooze or is a run. */
+  /**
+   * Whether the thread stays though done: it is shown, works, waits, watches its pull request for news to act on, is
+   * hidden by a snooze or is a run.
+   */
   private boolean isKept(ThreadStore.Record record) {
-    if (record.id.equals(this.store.activeId()) || this.store.isRun(record.id) || this.store.isSnoozeHidden(record)) {
+    if (record.id.equals(this.store.activeId()) || record.watch != null || this.store.isRun(record.id)
+      || this.store.isSnoozeHidden(record)) {
       return true;
     }
     ChatController controller = this.service.controller(record.id);

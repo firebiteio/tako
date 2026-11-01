@@ -3,6 +3,7 @@ package io.firebite.tako.chat;
 import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatHost;
+import io.firebite.tako.chat.watch.PullRequestWatch;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.settings.ChatSettings;
 import java.nio.file.Path;
@@ -398,6 +399,8 @@ public class ThreadListTest extends BasePlatformTestCase {
     ThreadStore.Record child = this.child(parent);
     ThreadStore.Record unread = this.thread();
     unread.unread = true;
+    ThreadStore.Record watching = this.thread();
+    watching.watch = new PullRequestWatch();
     for (ThreadStore.Record record : this.store.all()) {
       record.updatedAt = now - 8 * DAY;
       record.seenAt = 0;
@@ -412,6 +415,7 @@ public class ThreadListTest extends BasePlatformTestCase {
     assertFalse(run.archived);
     assertFalse(parent.archived);
     assertFalse(unread.archived);
+    assertFalse("its agent waits for news of the pull request", watching.archived);
     this.service.upkeep().tick(now);
     assertTrue(parent.archived);
   }
