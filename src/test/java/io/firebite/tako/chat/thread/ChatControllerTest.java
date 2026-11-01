@@ -390,6 +390,7 @@ public class ChatControllerTest extends BasePlatformTestCase {
     Path repository = Files.createTempDirectory("tako-rewind-repo").toRealPath();
     git(repository, "init", "-q");
     Files.writeString(repository.resolve("a.txt"), "before", StandardCharsets.UTF_8);
+    this.record.id = "3f2a6c1e-0000-4000-8000-000000000002";
     this.record.projectPath = repository.toString();
     this.finishFailingTurn();
     assertTrue(this.controller.hasCheckpoint(0, "fail"));
