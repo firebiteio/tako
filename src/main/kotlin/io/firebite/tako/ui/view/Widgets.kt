@@ -239,6 +239,7 @@ private val CHIP_FILE = Color(0xFF3B9EDE)
 private val CHIP_PROBLEMS = Color(0xFFD9A343)
 private val CHIP_SELECTION = Color(0xFFA87FD6)
 private val CHIP_THREAD = Color(0xFF4FAE8A)
+private val CHIP_REVIEW = Color(0xFFDE6E5B)
 
 /** A chip for attached IDE context. */
 @Composable
@@ -247,12 +248,14 @@ fun MentionChip(item: ContextItem, onRemove: (() -> Unit)?) {
     ContextItem.Kind.PROBLEMS -> CHIP_PROBLEMS
     ContextItem.Kind.SELECTION -> CHIP_SELECTION
     ContextItem.Kind.THREAD -> CHIP_THREAD
+    ContextItem.Kind.REVIEW -> CHIP_REVIEW
     else -> CHIP_FILE
   }
   val icon = when (item.kind) {
     ContextItem.Kind.PROBLEMS -> Icons.warning
     ContextItem.Kind.SELECTION -> Icons.selection
     ContextItem.Kind.THREAD -> Icons.thread
+    ContextItem.Kind.REVIEW -> Icons.review
     else -> Icons.file
   }
   val color = lerpColor(chip, colors.fg, 0.22f)

@@ -177,6 +177,7 @@ object Icons {
   val model: IconKey = lucide("sparkles")
   val effort: IconKey = lucide("brain")
   val selection: IconKey = lucide("file-code")
+  val review: IconKey = lucide("message-square-text")
   val timer: IconKey = lucide("timer")
   val cold: IconKey = lucide("snowflake")
   val loader: IconKey = lucide("loader-circle")

@@ -39,6 +39,7 @@ import io.firebite.tako.ide.context.IdeContext;
 import io.firebite.tako.ide.context.Images;
 import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.context.PromptComposer;
+import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.FileIndex;
@@ -614,7 +615,8 @@ public final class ChatController implements Disposable {
       }
       String title = TakoBundle.message("diff.title", this.backend.displayName(),
         Path.of(preview.filePath()).getFileName());
-      Async.onEdt(() -> IdeFiles.showDiff(this.project, preview, title));
+      ReviewTarget target = ReviewTarget.proposed(this.record.id, IdeFiles.absolute(this.project, preview.filePath()));
+      Async.onEdt(() -> IdeFiles.showDiff(this.project, preview, title, target));
     });
   }
 
@@ -631,7 +633,8 @@ public final class ChatController implements Disposable {
         this.postError(TakoBundle.message("error.no.turn.changes"));
         return;
       }
-      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews));
+      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews,
+        preview -> ReviewTarget.turn(this.record.id, IdeFiles.absolute(this.project, preview.filePath()))));
     });
   }
 

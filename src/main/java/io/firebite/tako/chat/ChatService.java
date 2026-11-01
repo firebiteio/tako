@@ -138,6 +138,26 @@ public final class ChatService implements Disposable {
     this.withActiveController(controller -> controller.addContext(item, prefill));
   }
 
+  /**
+   * Adds a review comment to the thread whose changes it is on, selecting it and taking it out of the archive. Goes to
+   * the selected thread when there is no such thread, or it was closed. Must run on the EDT.
+   */
+  public void addReview(@Nullable String threadId, ContextItem item) {
+    ToolWindow window = this.toolWindow();
+    if (threadId == null || this.store.find(threadId) == null || window == null) {
+      this.addContext(item, null);
+      return;
+    }
+    window.activate(() -> {
+      if (this.store.find(threadId) == null) {
+        this.addContext(item, null);
+        return;
+      }
+      this.select(threadId);
+      this.post(new ChatMessage.Context(item, null), threadId);
+    });
+  }
+
   /** Attaches image files to the selected thread's composer. Must run on the EDT. */
   public void addImages(List<Path> files) {
     this.withActiveController(controller -> controller.attachFiles(files));
