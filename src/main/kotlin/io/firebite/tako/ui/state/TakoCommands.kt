@@ -260,7 +260,7 @@ fun ThreadState.perform(action: TakoAction) {
       TakoCommand.MODEL -> this.selectModel(action.value)
       TakoCommand.EFFORT -> this.selectEffort(action.value)
       TakoCommand.MODE -> this.selectMode(action.value)
-      TakoCommand.AGENT -> if (action.value != this.agent) this.workspace.service.setAgent(this.id, action.value)
+      TakoCommand.AGENT -> this.workspace.service.setAgent(this.id, action.value)
       else -> {}
     }
     is TakoAction.NewThread -> this.openNewThread(action.prompt)
@@ -342,9 +342,10 @@ private val NO_MENU = SlashMenu(emptyList(), 0)
 
 /**
  * The `/` menu for the box's text: Tako's and the agent's commands while a name is typed, or the values of a Tako
- * command's argument after its name. Empty for other text.
+ * command's argument after its name. Empty for other text. Leading blanks don't count, as sending drops them too.
  */
-fun ThreadState.slashMenu(text: String): SlashMenu {
+fun ThreadState.slashMenu(box: String): SlashMenu {
+  val text = box.trimStart()
   SLASH_QUERY.matchEntire(text)?.let { return SlashMenu(this.commandItems(it.groupValues[1]), 0) }
   val match = ARGUMENT_QUERY.matchEntire(text) ?: return NO_MENU
   val command = TakoCommand.of(match.groupValues[1]) ?: return NO_MENU

@@ -367,6 +367,11 @@ class TakoCommandsTest : BasePlatformTestCase() {
       this.thread.slashMenu("/model op").items.map { it.name })
   }
 
+  fun testLeadingBlanksStillShowTheMenu() {
+    assertTrue(this.thread.slashMenu("  /archive").items.single().runs)
+    assertTrue(this.thread.slashMenu("\n/arch").items.single().tako)
+  }
+
   fun testNoMenuForOtherText() {
     this.start()
     for (text in listOf("", "//", "hello /model", "/model so\nmore", "/new ", "/compact x", "/agent ", "/model gpt")) {
