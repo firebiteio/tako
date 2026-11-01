@@ -8,6 +8,8 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
@@ -623,6 +625,8 @@ private fun SuggestionPopup(thread: ThreadState, suggestions: Suggestions, width
   PopupContainer(onDismissRequest = { suggestions.hide() }, horizontalAlignment = Alignment.Start,
     modifier = Modifier.width(width), style = menuPopupStyle(), popupProperties = PopupProperties(focusable = false),
     popupPositionProvider = provider) {
+    val activeRow = remember { BringIntoViewRequester() }
+    LaunchedEffect(suggestions.index) { activeRow.bringIntoView() }
     Column(Modifier.heightIn(max = maxHeight).verticalScroll(rememberScrollState()).padding(4.dp)) {
       for (index in 0 until suggestions.size) {
         val active = index == suggestions.index
@@ -631,7 +635,8 @@ private fun SuggestionPopup(thread: ThreadState, suggestions: Suggestions, width
           Text(t("composer.mention.threads"), Modifier.padding(start = 8.dp, top = 8.dp, bottom = 2.dp),
             color = colors.muted, style = tinyStyle)
         }
-        Row(Modifier.fillMaxWidth().hoverClick(selected = active) { chooseSuggestion(thread, suggestions, index, true) }
+        Row(Modifier.fillMaxWidth().then(if (active) Modifier.bringIntoViewRequester(activeRow) else Modifier)
+          .hoverClick(selected = active) { chooseSuggestion(thread, suggestions, index, true) }
           .padding(horizontal = 8.dp, vertical = 6.dp), verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(8.dp)) {
           if (isThread) {
