@@ -41,10 +41,8 @@ public final class WakePrompt {
     }
     appendListed(text, remarks, "- ", url == null
       ? ""
-      : "; read them all with gh api --paginate --hostname "
-        + url.host() + " repos/" + url.owner() + "/" + url.repo() + "/pulls/" + url.number()
-        + "/comments and gh pr view "
-        + url.number() + " -R " + url.repository() + " --json reviews");
+      : "; read them all with gh api --paginate --hostname " + url.host() + " " + url.allCommentsPath()
+        + " and gh pr view " + url.number() + " -R " + url.repository() + " --json reviews");
     if (update.end() == PullRequestWatch.End.COMMENT_LOOP) {
       text.append("\nTako stopped watching after ").append(PullRequestWatch.COMMENT_WAKE_LIMIT)
         .append(" comment-only updates in a row. Call watch_pull_request to watch it again.");

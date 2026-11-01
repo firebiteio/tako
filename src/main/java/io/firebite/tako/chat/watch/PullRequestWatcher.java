@@ -1,5 +1,6 @@
 package io.firebite.tako.chat.watch;
 
+import com.google.gson.Gson;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.progress.ProcessCanceledException;
 import io.firebite.tako.chat.store.ThreadStore;
@@ -25,6 +26,8 @@ public final class PullRequestWatcher {
   public static final long RATE_LIMIT_MILLIS = 900_000;
   public static final int MAX_FAILURES = 8;
   private static final Logger LOG = Logger.getInstance(PullRequestWatcher.class);
+  /** Compares watches as saved, to skip writing the threads when a poll changed nothing. */
+  private static final Gson GSON = new Gson();
 
   private final ThreadStore store;
   private final GhCli.Runner gh;
@@ -72,8 +75,11 @@ public final class PullRequestWatcher {
       }
       PullRequestStatus status = Objects.requireNonNull(PullRequestStatus.parse(view,
         commentsRead ? comments.out() : null));
-      String self = this.output(this.gh.run(folder, List.of("api", "--hostname", target.host(), "user", "--jq",
-        ".login"))).trim();
+      PullRequestWatch existing = record.watch;
+      String self = existing != null && target.equals(PullRequestUrl.parse(existing.url)) && !existing.self.isEmpty()
+        ? existing.self
+        : this.output(this.gh.run(folder, List.of("api", "--hostname", target.host(), "user", "--jq", ".login")))
+          .trim();
       if (self.isEmpty()) {
         throw new WatchException(WatchException.Reason.FAILED, "gh did not tell your login", "gh did not tell your "
           + "GitHub login.");
@@ -177,8 +183,12 @@ public final class PullRequestWatcher {
       }
       update = watch.advance(status, commentsRead);
       if (update.events().isEmpty()) {
-        update.next().nextPollAt = this.clock.getAsLong() + POLL_MILLIS;
-        this.swap(record, update.next());
+        if (GSON.toJson(update.next()).equals(GSON.toJson(watch))) {
+          watch.nextPollAt = this.clock.getAsLong() + POLL_MILLIS;
+        } else {
+          update.next().nextPollAt = this.clock.getAsLong() + POLL_MILLIS;
+          this.swap(record, update.next());
+        }
         return;
       }
     }
@@ -320,8 +330,7 @@ public final class PullRequestWatcher {
   }
 
   private static List<String> viewArgs(PullRequestUrl url) {
-    return List.of("pr", "view", "https://" + url.host() + "/" + url.owner() + "/" + url.repo() + "/pull/"
-      + url.number(), "--json", PullRequestStatus.VIEW_FIELDS);
+    return List.of("pr", "view", url.webUrl(), "--json", PullRequestStatus.VIEW_FIELDS);
   }
 
   private static List<String> commentsArgs(PullRequestUrl url) {

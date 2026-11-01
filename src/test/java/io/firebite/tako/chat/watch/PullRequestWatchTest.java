@@ -235,6 +235,14 @@ public class PullRequestWatchTest {
   }
 
   @Test
+  public void quietPollResetsTheCommentLoop() {
+    PullRequestWatch watch = watch(open(Gh.SHA_A));
+    watch.commentWakes = PullRequestWatch.COMMENT_WAKE_LIMIT - 1;
+
+    assertEquals(0, watch.advance(open(Gh.SHA_A), true).next().commentWakes);
+  }
+
+  @Test
   public void checkNewsResetsTheCommentLoop() {
     PullRequestWatch[] watch = {watch(open(Gh.SHA_A, Gh.run("build", "")))};
     watch[0].commentWakes = PullRequestWatch.COMMENT_WAKE_LIMIT - 1;

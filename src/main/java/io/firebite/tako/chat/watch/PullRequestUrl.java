@@ -40,9 +40,17 @@ public record PullRequestUrl(
     return this.host + "/" + this.owner + "/" + this.repo;
   }
 
-  /** The REST path of the pull request's review comments, newest first. */
+  public String webUrl() {
+    return "https://" + this.host + "/" + this.owner + "/" + this.repo + "/pull/" + this.number;
+  }
+
+  /** The REST path of the pull request's review comments, all of them when paginated. */
+  public String allCommentsPath() {
+    return "repos/" + this.owner + "/" + this.repo + "/pulls/" + this.number + "/comments";
+  }
+
+  /** The REST path of the pull request's newest 100 review comments, newest first. */
   public String commentsPath() {
-    return "repos/" + this.owner + "/" + this.repo + "/pulls/" + this.number
-      + "/comments?sort=created&direction=desc&per_page=100";
+    return this.allCommentsPath() + "?sort=created&direction=desc&per_page=100";
   }
 }

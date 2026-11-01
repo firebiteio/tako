@@ -12,7 +12,10 @@ import org.jetbrains.annotations.Nullable;
  * never changes this one, so saving it while a poll runs is safe.
  */
 public final class PullRequestWatch {
-  /** Wakes in a row that bring only reviews and comments, after which the watch ends: two bots could talk forever. */
+  /**
+   * Wakes in a row that bring only reviews and comments, with no quiet poll between, after which the watch ends: two
+   * bots could talk forever.
+   */
   public static final int COMMENT_WAKE_LIMIT = 10;
   /** How many review comments one poll reads, newest first. */
   public static final int COMMENT_WINDOW = 100;
@@ -96,7 +99,8 @@ public final class PullRequestWatch {
       next.conflicting = "CONFLICTING".equals(status.mergeable());
     }
     boolean isCommentsOnly = !events.isEmpty() && !hasProgress;
-    next.commentWakes = (isNewHead || hasProgress ? 0 : this.commentWakes) + (isCommentsOnly ? 1 : 0);
+    boolean isQuiet = events.isEmpty();
+    next.commentWakes = (isNewHead || hasProgress || isQuiet ? 0 : this.commentWakes) + (isCommentsOnly ? 1 : 0);
     End end = isCommentsOnly && next.commentWakes >= COMMENT_WAKE_LIMIT ? End.COMMENT_LOOP : null;
     return new Update(next, events, end);
   }

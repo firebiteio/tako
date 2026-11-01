@@ -235,6 +235,29 @@ public class PullRequestWatcherTest {
 
     assertTrue(started.kept());
     assertSame(first, record.watch);
+    assertEquals(1, this.countCalls("user"));
+  }
+
+  @Test
+  public void quietPollKeepsTheSavedWatch() throws WatchException {
+    ThreadStore.Record record = this.watched();
+    PullRequestWatch watch = record.watch;
+    this.later();
+
+    this.watcher.tick();
+
+    assertSame(watch, record.watch);
+    assertEquals(this.now + PullRequestWatcher.POLL_MILLIS, watch.nextPollAt);
+  }
+
+  private int countCalls(String arg) {
+    int count = 0;
+    for (List<String> call : this.gh.calls) {
+      if (call.contains(arg)) {
+        count++;
+      }
+    }
+    return count;
   }
 
   @Test
