@@ -162,6 +162,7 @@ public final class ChatService implements Disposable {
     ThreadStore.Record active = this.store.find(this.store.activeId());
     if (active != null && active.unread) {
       active.unread = false;
+      active.seenAt = System.currentTimeMillis();
       this.postUpdate(active);
     }
   }
@@ -347,9 +348,10 @@ public final class ChatService implements Disposable {
     if (record == null) {
       return;
     }
-    this.unarchive(record);
+    List<ThreadStore.Record> changed = this.unarchived(record);
     this.store.setActiveId(record.id);
-    this.markSeen(record);
+    changed.addAll(this.seen(record));
+    this.postUpdates(changed);
     this.post(new ChatMessage.Select(record.id));
     ChatController existing = this.controllers.get(record.id);
     if (existing != null) {
@@ -397,34 +399,47 @@ public final class ChatService implements Disposable {
     this.newController(record).open(prompt);
   }
 
-  /**
-   * Lists an archived thread again. A snooze that ended while it was archived ends now, as unread. A snoozed parent
-   * restored this way would hide the active thread, so that one's parents wake.
-   */
   private void unarchive(ThreadStore.Record record) {
+    this.postUpdates(this.unarchived(record));
+  }
+
+  /**
+   * Lists an archived thread again, with its idle time starting anew. A snooze that ended while it was archived ends
+   * now, as unread. A snoozed parent restored this way would hide the active thread, so that one's parents wake.
+   *
+   * @return the threads it changed, to post
+   */
+  private List<ThreadStore.Record> unarchived(ThreadStore.Record record) {
+    List<ThreadStore.Record> changed = new ArrayList<>();
     if (!record.archived) {
-      return;
+      return changed;
     }
+    long now = System.currentTimeMillis();
     record.archived = false;
-    if (ThreadUpkeep.isDue(record, System.currentTimeMillis())) {
+    record.seenAt = now;
+    if (ThreadUpkeep.isDue(record, now)) {
       record.snoozedUntil = 0;
       record.unread = true;
     }
-    List<ThreadStore.Record> changed = new ArrayList<>(List.of(record));
+    changed.add(record);
     ThreadStore.Record active = this.store.find(this.store.activeId());
     if (active != null && this.store.isSnoozeHidden(active)) {
       changed.addAll(this.store.wakeWithAncestors(active));
     }
-    this.postUpdates(changed);
+    return changed;
   }
 
-  /** The person opened the thread: it is read, a snooze over it ends and its idle time starts again. */
-  private void markSeen(ThreadStore.Record record) {
+  /**
+   * The person opened the thread: it is read, a snooze over it ends and its idle time starts again.
+   *
+   * @return the threads it changed, to post
+   */
+  private List<ThreadStore.Record> seen(ThreadStore.Record record) {
     record.unread = false;
     record.seenAt = System.currentTimeMillis();
     List<ThreadStore.Record> changed = new ArrayList<>(this.store.wakeWithAncestors(record));
     changed.add(record);
-    this.postUpdates(changed);
+    return changed;
   }
 
   /** Saves the threads once and tells the chat about each of them. */
@@ -776,7 +791,6 @@ public final class ChatService implements Disposable {
   public void restore(String id) {
     ThreadStore.Record record = this.store.find(id);
     if (record != null) {
-      record.seenAt = System.currentTimeMillis();
       this.unarchive(record);
     }
   }
@@ -1035,18 +1049,21 @@ public final class ChatService implements Disposable {
       }
     }
 
+    /** Leaves an archived thread alone: its agent was stopped, a report still queued for the EDT comes too late. */
     @Override
     public void needsLook(boolean asks) {
-      if (!this.isListed()) {
+      if (!this.isListed() || this.record.archived) {
         return;
       }
+      List<ThreadStore.Record> changed = new ArrayList<>();
       if (asks) {
-        ChatService.this.postUpdates(ChatService.this.store.wakeWithAncestors(this.record));
+        changed.addAll(ChatService.this.store.wakeWithAncestors(this.record));
       }
       if (!this.record.unread && !ChatService.this.isShown(this.record.id)) {
         this.record.unread = true;
-        ChatService.this.postUpdate(this.record);
+        changed.add(this.record);
       }
+      ChatService.this.postUpdates(changed);
     }
 
     /** Whether the record is still the thread's, so an update does not bring a closed thread back to the list. */

@@ -151,6 +151,18 @@ public class ThreadListTest extends BasePlatformTestCase {
     assertNull(this.service.host(record.id));
   }
 
+  public void testLateReportOfAnArchivedThreadChangesNothing() {
+    ThreadStore.Record record = this.thread();
+    record.snoozedUntil = this.later();
+    ChatHost host = this.service.host(record.id);
+    this.service.archive(record.id);
+
+    host.needsLook(true);
+
+    assertFalse(record.unread);
+    assertTrue(record.snoozedUntil > 0);
+  }
+
   public void testTurnEndedUnseenMarksUnreadAndOpeningClearsIt() {
     ThreadStore.Record record = this.thread();
 

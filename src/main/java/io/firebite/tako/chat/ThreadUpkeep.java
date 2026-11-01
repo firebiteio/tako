@@ -179,6 +179,9 @@ public final class ThreadUpkeep {
   /** The pull request as it is now, asked in the first of the folders that still exists; null when none does. */
   private static @Nullable GitInfo.PullRequest lookUp(Ask ask, Map<String, String> environment) {
     for (String folder : ask.folders()) {
+      if (folder.isBlank()) {
+        continue;
+      }
       Path path;
       try {
         path = Path.of(folder);
@@ -211,13 +214,9 @@ public final class ThreadUpkeep {
     boolean idle,
     int idleDays
   ) {
-    public static final int DEFAULT_IDLE_DAYS = 7;
-    public static final int MIN_IDLE_DAYS = 1;
-    public static final int MAX_IDLE_DAYS = 365;
-
     public static Rules of(ChatSettings.Data settings) {
       return new Rules(settings.settleOnPullRequest, settings.settleIdle,
-        Math.clamp(settings.settleIdleDays, MIN_IDLE_DAYS, MAX_IDLE_DAYS));
+        Math.clamp(settings.settleIdleDays, ChatSettings.MIN_IDLE_DAYS, ChatSettings.MAX_IDLE_DAYS));
     }
   }
 }
