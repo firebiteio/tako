@@ -624,7 +624,7 @@ public final class ChatService implements Disposable {
     String folder = this.workFolder(source);
     Async.inBackground(() -> {
       try {
-        if (!Files.isDirectory(Path.of(folder))) {
+        if (folder.isEmpty() || !Files.isDirectory(Path.of(folder))) {
           Async.onEdt(() -> this.failPlan(done, TakoBundle.message("error.plan.folder", folder)));
           return;
         }
@@ -649,15 +649,15 @@ public final class ChatService implements Disposable {
   }
 
   /**
+   * Completes with null when the thread did not start, even if it was stored, so the plan's approval stays.
+   *
    * @param folder   the planning thread's folder
-   * @param worktree the worktree made for the new thread, removed again if the planning thread is gone
+   * @param worktree the worktree made for the new thread, removed again when no thread got it
    */
   private void startPlanThread(CompletableFuture<@Nullable String> done, ThreadStore.Record source, String plan,
     String folder, @Nullable GitWorktree.Worktree worktree) {
     if (this.store.find(source.id) != source) {
-      if (worktree != null) {
-        Async.inBackground(() -> removeWorktree(Path.of(folder), worktree));
-      }
+      this.dropWorktree(folder, worktree);
       this.failPlan(done, TakoBundle.message("error.plan.thread.gone"));
       return;
     }
@@ -666,6 +666,7 @@ public final class ChatService implements Disposable {
       record = this.planThread(source, plan, worktree != null ? worktree.folder().toString() : source.workPath);
     } catch (RuntimeException e) {
       LOG.warn("Could not store a thread implementing the plan of thread " + source.id, e);
+      this.dropWorktree(folder, worktree);
       this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
       return;
     }
@@ -676,9 +677,16 @@ public final class ChatService implements Disposable {
       this.newController(record).open(Plans.implementPrompt(plan));
     } catch (RuntimeException e) {
       LOG.warn("Could not open the thread implementing the plan of thread " + source.id, e);
-      this.post(new ChatMessage.Error(Objects.toString(e.getMessage(), e.toString())));
+      this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
+      return;
     }
     done.complete(record.id);
+  }
+
+  private void dropWorktree(String repository, @Nullable GitWorktree.Worktree worktree) {
+    if (worktree != null) {
+      Async.inBackground(() -> removeWorktree(Path.of(repository), worktree));
+    }
   }
 
   private static void removeWorktree(Path repository, GitWorktree.Worktree worktree) {
