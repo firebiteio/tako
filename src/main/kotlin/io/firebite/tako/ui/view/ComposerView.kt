@@ -118,6 +118,7 @@ import io.firebite.tako.ui.state.chooseOption
 import io.firebite.tako.ui.state.addContext
 import io.firebite.tako.ui.state.advanceQuestion
 import io.firebite.tako.ui.state.contextNumbers
+import io.firebite.tako.ui.state.hasReviews
 import io.firebite.tako.ui.state.RunPlan
 import io.firebite.tako.ui.state.runLabel
 import io.firebite.tako.ui.state.sentPrompts
@@ -858,7 +859,8 @@ private fun RunMenu(thread: ThreadState, index: Int, onDismiss: () -> Unit) {
 
 @Composable
 private fun SendButton(thread: ThreadState) {
-  val hasText = thread.typed.isNotEmpty() || (thread.images.isNotEmpty() && thread.approvals.isEmpty())
+  val hasText = thread.typed.isNotEmpty()
+    || ((thread.images.isNotEmpty() || hasReviews(thread.contexts)) && thread.approvals.isEmpty())
   val isStop = thread.busy && !hasText && thread.approvals.isEmpty()
   val enabled = isStop || hasText || (thread.question?.selected?.isNotEmpty() == true)
   val tip = when {

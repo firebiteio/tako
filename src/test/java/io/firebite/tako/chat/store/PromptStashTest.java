@@ -11,6 +11,8 @@ import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.IdeContext;
 import io.firebite.tako.ide.context.PastedText;
+import io.firebite.tako.ide.context.ReviewComment;
+import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ui.bridge.ChatMessage;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -52,6 +54,22 @@ public class PromptStashTest {
     assertEquals("second paste", Files.readString(PastedText.fileOf(context.get(1), folder), StandardCharsets.UTF_8));
     assertEquals("a newer paste", Files.readString(PastedText.fileOf(reused, folder), StandardCharsets.UTF_8));
     assertEquals(kept, context.get(2));
+  }
+
+  @Test
+  public void reviewCommentsComeBackFromTheStashWithTheirKind() throws Exception {
+    Path file = newFile();
+    ContextItem review = ReviewComment.item(ReviewTarget.turn("thread-1", "/repo/Ünï.java"),
+      List.of(new ReviewComment.Line(0, 3, "int x = 1; // 😀")), "rename x", ReviewComment.note("a", false, null));
+    assertNotNull(review);
+    PromptStash.Entry entry = open(file).push(new ChatMessage.Submit("", List.of(review), List.of()));
+    String saved = Files.readString(file, StandardCharsets.UTF_8);
+
+    List<ContextItem> context = open(file).take(entry.id).prompt.context();
+
+    assertTrue(saved.contains("\"review\""));
+    assertEquals(List.of(review), context);
+    assertEquals(ContextItem.Kind.REVIEW, context.get(0).kind());
   }
 
   @Test
