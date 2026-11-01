@@ -171,6 +171,7 @@ object Icons {
   val search: IconKey = lucide("search")
   val pullRequest: IconKey = lucide("git-pull-request")
   val merged: IconKey = lucide("git-merge")
+  val commit: IconKey = lucide("git-commit-horizontal")
   val refresh: IconKey = lucide("refresh-cw")
   val more: IconKey = lucide("ellipsis")
   val model: IconKey = lucide("sparkles")

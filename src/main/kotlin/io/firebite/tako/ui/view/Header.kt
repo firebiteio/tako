@@ -30,6 +30,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import com.intellij.ide.actions.RevealFileAction
+import io.firebite.tako.chat.git.Blocker
+import io.firebite.tako.chat.git.GitAction
+import io.firebite.tako.chat.git.ThreadGit
 import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.state.ThreadState
@@ -105,6 +108,9 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
             }
           }
         }
+        if (thread.branch != null) {
+          GitActionsButton(workspace, thread)
+        }
       }
       val meta = listOf(thread?.costUsd?.takeIf { it > 0 }?.let { money(it) } ?: "", workspace.limits)
         .filter { it.isNotEmpty() }.joinToString(" · ")
@@ -156,6 +162,76 @@ private fun RestartButton(thread: ThreadState) {
     else -> t("header.restart", thread.agentName)
   }
   IconBtn(Icons.refresh, tip, enabled = canResume && isIdle && !thread.stopped) { thread.controller?.restartSession() }
+}
+
+/** Commit, push and pull request for the thread's folder. Reads git when clicked, then offers what is possible. */
+@Composable
+private fun GitActionsButton(workspace: Workspace, thread: ThreadState) {
+  Box {
+    val scope = rememberCoroutineScope()
+    var menu by remember(thread) { mutableStateOf<ThreadGit.Menu?>(null) }
+    var loading by remember(thread) { mutableStateOf(false) }
+    val running = thread.gitRunning
+    IconBtn(if (running || loading) Icons.loader else Icons.commit, if (running) t("git.running") else t("git.actions"),
+      enabled = !running && !loading) {
+      val controller = thread.controller ?: return@IconBtn
+      loading = true
+      scope.launch {
+        try {
+          menu = withContext(Dispatchers.IO) { controller.gitMenu() }
+        } finally {
+          loading = false
+        }
+      }
+    }
+    menu?.let { shown ->
+      val entries = shown.options.map { option ->
+        MenuEntry(gitLabel(option), gitDescription(option, shown, thread), gitIcon(option.action),
+          enabled = option.blocker == null) {
+          workspace.runGitAction(thread, option, shown.status)
+        }
+      }
+      MenuPopup(entries, t("git.menu"), Alignment.End) { menu = null }
+    }
+  }
+}
+
+private fun gitLabel(option: ThreadGit.Option): String = when (option.action) {
+  GitAction.COMMIT -> t("git.commit")
+  GitAction.COMMIT_AND_PUSH -> if (option.commits) t("git.commit.push") else t("git.push")
+  GitAction.COMMIT_AND_PULL_REQUEST -> if (option.commits) t("git.commit.pull.request") else t("git.pull.request")
+}
+
+private fun gitIcon(action: GitAction): IconKey = when (action) {
+  GitAction.COMMIT -> Icons.commit
+  GitAction.COMMIT_AND_PUSH -> Icons.branch
+  GitAction.COMMIT_AND_PULL_REQUEST -> Icons.pullRequest
+}
+
+/** What an enabled entry works on, or why a disabled one is. */
+private fun gitDescription(option: ThreadGit.Option, menu: ThreadGit.Menu, thread: ThreadState): String {
+  val status = menu.status
+  val blocker = option.blocker ?: return when (option.action) {
+    GitAction.COMMIT -> t("git.detail.changes", status.changedFiles)
+    GitAction.COMMIT_AND_PUSH -> t("git.detail.push", "${status.remote}/${status.branch}")
+    GitAction.COMMIT_AND_PULL_REQUEST -> t("git.detail.pull.request", "${status.gitHub?.owner}/${status.gitHub?.name}")
+  }
+  return when (blocker) {
+    Blocker.NOT_REPOSITORY -> t("git.blocked.not.repository")
+    Blocker.RUNNING -> t("git.blocked.running")
+    Blocker.AGENT_BUSY -> t("git.blocked.agent.busy", menu.busyName ?: thread.agentName)
+    Blocker.OTHER_THREAD_BUSY -> t("git.blocked.other.thread", menu.busyName ?: "")
+    Blocker.DETACHED -> t("git.blocked.detached")
+    Blocker.CONFLICTS -> t("git.blocked.conflicts")
+    Blocker.NOTHING_TO_COMMIT -> t("git.blocked.nothing.to.commit")
+    Blocker.NO_REMOTE -> t("git.blocked.no.remote")
+    Blocker.NOTHING_TO_PUSH -> t("git.blocked.nothing.to.push")
+    Blocker.NOT_GITHUB -> t("git.blocked.not.github")
+    Blocker.GH_MISSING -> t("git.blocked.gh.missing")
+    Blocker.GH_LOGGED_OUT -> t("git.blocked.gh.logged.out", status.gitHub?.host ?: "github.com")
+    Blocker.PULL_REQUEST_OPEN -> t("git.blocked.pull.request.open", thread.pullRequest?.number ?: "")
+    Blocker.DEFAULT_BRANCH -> t("git.blocked.default.branch", status.branch ?: "")
+  }
 }
 
 @Composable

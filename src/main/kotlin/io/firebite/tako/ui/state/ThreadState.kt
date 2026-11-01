@@ -29,6 +29,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var title by mutableStateOf(item.title)
   /** Whether the agent writes the thread a new title. */
   var titling by mutableStateOf(false)
+  /** Whether a git action started from the header runs or waits for its texts. */
+  var gitRunning by mutableStateOf(false)
   var archived by mutableStateOf(item.archived)
   var updatedAt by mutableLongStateOf(if (item.updatedAt > 0) item.updatedAt else System.currentTimeMillis())
   var costUsd by mutableStateOf(item.costUsd)
