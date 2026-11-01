@@ -579,7 +579,9 @@ public final class ChatService implements Disposable {
     for (String id : ids) {
       ThreadStore.Record record = this.store.find(id);
       if (record != null) {
-        String folder = this.workFolder(record);
+        // Checkpoint refs are shared with the thread's worktree, so its project folder still reaches them once a bench
+        // removed the worktree.
+        String folder = this.folderOf(record);
         if (!folder.isEmpty()) {
           Async.inBackground(() -> Checkpoints.forget(Path.of(folder), id, 0, EnvironmentUtil.getEnvironmentMap()));
         }
@@ -917,11 +919,21 @@ public final class ChatService implements Disposable {
         ChatController other = entry.getValue();
         ChatController.State state = other.state();
         boolean isActive = state.isBusy() || state == ChatController.State.WAITING;
-        if (!entry.getKey().equals(this.record.id) && isActive && ThreadStore.samePath(other.projectPath(), folder)) {
+        if (!entry.getKey().equals(this.record.id) && isActive && overlaps(other.projectPath(), folder)) {
           return true;
         }
       }
       return false;
+    }
+
+    /** Whether one folder is the other or holds it. */
+    private static boolean overlaps(@Nullable String one, String other) {
+      if (one == null) {
+        return false;
+      }
+      Path first = Path.of(one).toAbsolutePath().normalize();
+      Path second = Path.of(other).toAbsolutePath().normalize();
+      return first.startsWith(second) || second.startsWith(first);
     }
 
     @Override

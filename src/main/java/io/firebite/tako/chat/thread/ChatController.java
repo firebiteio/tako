@@ -543,6 +543,7 @@ public final class ChatController implements Disposable {
       return;
     }
     try {
+      this.saveDocuments();
       Checkpoints.capture(Path.of(folder), this.record.id, prompts, typed, environment);
     } catch (Worktrees.GitException e) {
       LOG.debug("No file checkpoint for thread " + this.record.id, e);
@@ -569,7 +570,9 @@ public final class ChatController implements Disposable {
     synchronized (this.rewindLock) {
       boolean idle = this.state == State.IDLE || this.state == State.STOPPED;
       if (!this.rewinding.isDone() || !idle || prompts.isEmpty() || this.isDisposed) {
-        this.view.post(new ChatMessage.Rewound(false, null));
+        this.view.post(new ChatMessage.Rewound(false, this.isDisposed || prompts.isEmpty()
+          ? null
+          : TakoBundle.message("error.rewind.busy")));
         return;
       }
       this.rewinding = done;
@@ -611,8 +614,11 @@ public final class ChatController implements Disposable {
     }
     String sessionId = this.record.sessionId;
     String rewound = null;
-    if (kept > 0 && sessionId != null && folder != null) {
+    if (kept > 0 && sessionId != null) {
       try {
+        if (folder == null) {
+          throw new AgentException(TakoBundle.message("error.rewind.mismatch"));
+        }
         rewound = this.backend.rewind(folder, sessionId, prompts);
       } catch (AgentException e) {
         this.keepsTimeline = true;
@@ -680,11 +686,16 @@ public final class ChatController implements Disposable {
     return sessionId;
   }
 
+  /** Writes unsaved editor changes to disk, so a snapshot or restore sees what the person sees. Waits for the EDT. */
+  private void saveDocuments() {
+    ApplicationManager.getApplication().invokeAndWait(() -> FileDocumentManager.getInstance().saveAllDocuments(),
+      ModalityState.defaultModalityState());
+  }
+
   /** Saves the editors, puts the files back and lets the IDE see the changed ones. */
   private void restoreFiles(String folder, String commit, Map<String, String> environment)
     throws Worktrees.GitException {
-    ApplicationManager.getApplication().invokeAndWait(() -> FileDocumentManager.getInstance().saveAllDocuments(),
-      ModalityState.defaultModalityState());
+    this.saveDocuments();
     List<File> refreshed = new ArrayList<>();
     for (Path path : Checkpoints.restore(Path.of(folder), this.record.id, commit, environment)) {
       Path existing = path;

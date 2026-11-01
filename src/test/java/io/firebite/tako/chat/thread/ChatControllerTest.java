@@ -355,7 +355,8 @@ public class ChatControllerTest extends BasePlatformTestCase {
 
     this.controller.rewind(List.of("write a.txt"), false);
 
-    assertEquals(new ChatMessage.Rewound(false, null), this.awaitPost(ChatMessage.Rewound.class));
+    assertEquals(new ChatMessage.Rewound(false, TakoBundle.message("error.rewind.busy")),
+      this.awaitPost(ChatMessage.Rewound.class));
     assertEquals(session, this.record.sessionId);
     assertEquals(ChatController.State.WAITING, this.controller.state());
     this.controller.answer(permission.requestId(), false, "no", false, null, null);
@@ -367,7 +368,8 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.controller.rewind(List.of("fail"), false);
     this.controller.rewind(List.of("fail"), false);
 
-    assertEquals(new ChatMessage.Rewound(false, null), this.awaitPost(ChatMessage.Rewound.class));
+    assertEquals(new ChatMessage.Rewound(false, TakoBundle.message("error.rewind.busy")),
+      this.awaitPost(ChatMessage.Rewound.class));
     assertEquals(new ChatMessage.Rewound(true, null), this.awaitPost(ChatMessage.Rewound.class));
   }
 
