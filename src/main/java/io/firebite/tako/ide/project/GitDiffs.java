@@ -46,7 +46,8 @@ public final class GitDiffs {
     int count = Integer.parseInt(Worktrees.git(topLevel, environment, "rev-list", "--count",
       mergeBase + ".." + head).trim());
     if (count == 0) {
-      return new Sources(uncommitted, BranchState.NO_OWN_COMMITS, base.name(), null, 0, List.of());
+      return new Sources(uncommitted, BranchState.NO_OWN_COMMITS, base.name(), null, 0,
+        commits(topLevel, head, environment));
     }
     String headShort = shortSha(topLevel, head, environment);
     Branch branch = new Branch(base.name(), mergeBase, shortSha(topLevel, mergeBase, environment), head,
@@ -95,6 +96,9 @@ public final class GitDiffs {
     }
     if ("commit".equals(fields[1])) {
       return new Content(null, 0, true);
+    }
+    if (!"blob".equals(fields[1])) {
+      throw new GitException(revision + ":" + path + " is a " + fields[1]);
     }
     long size = Long.parseLong(fields[3]);
     if (size > limit) {
@@ -242,7 +246,7 @@ public final class GitDiffs {
    * @param base the default branch's name, like {@code origin/main}, when the branch has one
    * @param branch the branch's commits since {@code base}, only when it has some
    * @param branchCommits how many commits the branch has since it left {@code base}
-   * @param commits the branch's own commits, newest first, or HEAD's newest when there is no base; at most
+   * @param commits the branch's own commits, newest first, or HEAD's newest when it has none of its own; at most
    *   {@link #COMMIT_LIMIT}
    */
   public record Sources(
@@ -326,7 +330,7 @@ public final class GitDiffs {
 
   /** @param bytes the file, null when it is larger than the limit or a submodule */
   public record Content(
-    byte[] bytes,
+    @Nullable byte[] bytes,
     long size,
     boolean isSubmodule
   ) {

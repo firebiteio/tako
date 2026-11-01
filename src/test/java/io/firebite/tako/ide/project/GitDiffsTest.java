@@ -223,7 +223,7 @@ public class GitDiffsTest {
 
     assertEquals(BranchState.NO_OWN_COMMITS, sources.branchState());
     assertEquals("origin/main", sources.base());
-    assertTrue(sources.commits().isEmpty());
+    assertEquals(List.of("base"), subjects(sources.commits()));
     assertNull(sources.branch());
 
     commit(clone, "unpushed");
@@ -325,6 +325,7 @@ public class GitDiffsTest {
     byte[] binary = {0, 1, 2, (byte) 0xff, 10, 13, 0};
     Files.write(repository.resolve("image.bin"), binary);
     write(repository, "big.txt", "0123456789");
+    write(repository, "folder/inside.txt", "x");
     commit(repository, "files");
 
     GitDiffs.Content small = GitDiffs.content(repository, "HEAD", "image.bin", GitDiffs.MAX_FILE_BYTES, ENVIRONMENT);
@@ -336,6 +337,8 @@ public class GitDiffsTest {
     assertEquals(10, big.size());
     assertFalse(big.isSubmodule());
     assertThrows(Worktrees.GitException.class, () -> GitDiffs.content(repository, "HEAD", "none.txt", 5,
+      ENVIRONMENT));
+    assertThrows(Worktrees.GitException.class, () -> GitDiffs.content(repository, "HEAD", "folder", 5,
       ENVIRONMENT));
   }
 

@@ -14,6 +14,7 @@ import com.intellij.openapi.util.UserDataHolder;
 import com.intellij.openapi.util.text.StringUtil;
 import com.intellij.openapi.vfs.LocalFileSystem;
 import com.intellij.openapi.vfs.VirtualFile;
+import com.intellij.util.PathUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.ide.project.GitDiffs;
 import io.firebite.tako.ide.project.Worktrees;
@@ -92,7 +93,7 @@ final class GitDiffProducer implements DiffRequestProducer {
     if (content.bytes() == null) {
       throw Unshown.tooLarge(content.size());
     }
-    String name = fileName(path);
+    String name = PathUtil.getFileName(path);
     return DiffContentFactory.getInstance().createFromBytes(this.project, content.bytes(),
       FileTypeManager.getInstance().getFileTypeByFileName(name), name);
   }
@@ -109,11 +110,6 @@ final class GitDiffProducer implements DiffRequestProducer {
       throw Unshown.tooLarge(file.getLength());
     }
     return DiffContentFactory.getInstance().create(this.project, file);
-  }
-
-  /** Git paths use {@code /} on every system. */
-  private static String fileName(String path) {
-    return path.substring(path.lastIndexOf('/') + 1);
   }
 
   /** A side the window shows a message for instead of its content. */
