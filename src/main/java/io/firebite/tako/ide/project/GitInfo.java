@@ -133,5 +133,9 @@ public record GitInfo(
     String url,
     String state
   ) {
+    /** Whether {@code gh} found it. GitLab merge requests are numbered {@code !7}. */
+    public boolean isGitHub() {
+      return this.number.startsWith("#");
+    }
   }
 }

@@ -90,7 +90,8 @@ public sealed interface ChatMessage {
     @Nullable GitInfo.PullRequest pullRequest,
     String agent,
     long firstTurnMillis,
-    @Nullable String parentId
+    @Nullable String parentId,
+    @Nullable String watching
   ) {
   }
 
