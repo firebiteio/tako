@@ -113,6 +113,9 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
         }
         if (thread.branch != null) {
           GitActionsButton(workspace, thread)
+          if (workspace.service.controller(thread.id) != null) {
+            DiffSourcesButton(thread)
+          }
         }
       }
       val meta = listOf(thread?.costUsd?.takeIf { it > 0 }?.let { money(it) } ?: "", workspace.limits)
@@ -122,9 +125,6 @@ fun Header(workspace: Workspace, windowWidth: Dp) {
         Tip(if (tokenCount > 0) t("header.meta.tokens", tokens(tokenCount)) else t("header.meta")) {
           Text(meta, color = colors.muted, style = tinyStyle, maxLines = 1)
         }
-      }
-      if (thread?.branch != null && workspace.service.controller(thread.id) != null) {
-        DiffSourcesButton(thread)
       }
       thread?.scratchpad?.let { path ->
         Box {
