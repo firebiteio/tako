@@ -75,6 +75,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var firstTurnMillis by mutableLongStateOf(item.firstTurnMillis)
   /** The folder the agent works in, once it started. */
   var projectRoot by mutableStateOf<String?>(null)
+  /** The usage limit the agent stopped on, while the chat offers to resume after it. */
+  var limit by mutableStateOf(item.limit)
 
   val turns = mutableStateListOf<Turn>()
   /** The chat's number for the last prompt sent. */
@@ -163,6 +165,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
     this.watching = item.watching
     this.hasSession = item.hasSession
     this.firstTurnMillis = item.firstTurnMillis
+    this.limit = item.limit
     if (item.agent.isNotEmpty() && item.agent != this.agent) {
       this.agent = item.agent
       this.info = null

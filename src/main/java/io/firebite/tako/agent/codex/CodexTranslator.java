@@ -18,6 +18,8 @@ final class CodexTranslator {
   private static final String TYPE = "type";
   private static final String TEXT = "text";
   private static final String ID = "id";
+  private static final double FULL_PERCENT = 100;
+  private static final long TOO_MANY_REQUESTS = 429;
 
   private CodexTranslator() {
   }
@@ -140,7 +142,66 @@ final class CodexTranslator {
     return limits;
   }
 
-  private static String windowLabel(JsonObject window, String fallback) {
+  /**
+   * The limit a turn that ended stopped on, or null when it did not stop on one. The reset is the latest of the used up
+   * windows', unknown when one of them has none.
+   *
+   * @param primary   the account's primary rate-limit window as last reported, if any
+   * @param secondary the secondary one
+   */
+  static @Nullable AgentEvent.LimitReached limitReached(JsonObject turn, @Nullable JsonObject primary,
+    @Nullable JsonObject secondary, long now) {
+    if (!"failed".equals(Json.string(turn, "status")) || !isLimit(Json.object(turn, "error"))) {
+      return null;
+    }
+    return usedUp(primary, secondary, now);
+  }
+
+  /**
+   * The limit of the used up window that resets last; unknown without one, or when one of them has no reset. A window
+   * whose reset passed is old news and does not count.
+   *
+   * @param now epoch millis
+   */
+  static AgentEvent.LimitReached usedUp(@Nullable JsonObject primary, @Nullable JsonObject secondary, long now) {
+    JsonObject latest = null;
+    Long resetsAt = null;
+    for (JsonObject window : new JsonObject[]{primary, secondary}) {
+      if (window == null || Json.decimal(window, "usedPercent") < FULL_PERCENT) {
+        continue;
+      }
+      Long reset = AgentEvent.LimitReached.epochSeconds(window, "resetsAt");
+      if (reset == null) {
+        return new AgentEvent.LimitReached(null, null);
+      }
+      if (reset <= now) {
+        continue;
+      }
+      if (resetsAt == null || reset > resetsAt) {
+        resetsAt = reset;
+        latest = window;
+      }
+    }
+    String label = latest == null ? null : windowLabel(latest, null);
+    return new AgentEvent.LimitReached(label, resetsAt);
+  }
+
+  private static boolean isLimit(@Nullable JsonObject error) {
+    JsonElement info = error == null ? null : error.get("codexErrorInfo");
+    if (info == null) {
+      return false;
+    }
+    if (info.isJsonPrimitive()) {
+      String code = info.getAsString();
+      return "usageLimitExceeded".equals(code) || "rateLimitExceeded".equals(code);
+    }
+    JsonObject failedAttempts = info.isJsonObject()
+      ? Json.object(info.getAsJsonObject(), "responseTooManyFailedAttempts")
+      : null;
+    return Json.number(failedAttempts, "httpStatusCode") == TOO_MANY_REQUESTS;
+  }
+
+  private static @Nullable String windowLabel(JsonObject window, @Nullable String fallback) {
     if (!Json.isNumber(window, "windowDurationMins")) {
       return fallback;
     }

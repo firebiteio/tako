@@ -27,6 +27,7 @@ It works with:
 - Ask a side question with `/side` or `/btw` while the thread works, then bring the answer back into its composer
 - Fix Problems sends a file's inspection results to the agent
 - For Claude Code, a context meter and a usage view with cost and tokens per session
+- When Claude Code or Codex stops on a usage limit, the thread says when the limit resets and can send a continue prompt then
 - Optional parallel runs: one prompt goes to several agents or models at once, each in its own git worktree. Compare what each changed, cost and took, then apply the best one
 
 ## Requirements
@@ -57,6 +58,10 @@ Hover over a prompt you sent and click the rewind button. Rewind conversation ma
 For the files, Tako snapshots the thread's folder in git each time you send a prompt while the agent is idle. The snapshots are commits under `refs/tako/checkpoints/<thread>`, outside your branches and index, and are deleted when the thread is closed. Ignored files are not part of them. Before it restores files, Tako keeps the state it replaces under `refs/tako/backup/<thread>`. Without a git repository only the conversation can be rewound.
 
 Claude Code continues in a copy of its session. The old session stays in the session history. Codex reverts the thread in place, which needs a Codex version with `thread/revert`. ACP agents can't rewind.
+
+### Usage limits
+
+When Claude Code or Codex stops because a subscription or rate limit ran out, a banner above the composer names the limit and when it resets. Resume at reset sends "Continue where you left off." a minute after the reset. Edit prompt changes that text, and Cancel resume or the X drops it. Snooze until reset hides the thread until then. Sending a message yourself, archiving or closing the thread drops it too. A command that only shows something, such as `/usage` or `/status`, keeps it. The schedule survives an IDE restart and goes out once the Tako tool window is open again, up to a day late. When several threads wait for the same agent, they resume 30 seconds apart. Agents that report no reset time, and ACP agents, get no schedule.
 
 ### Side chats
 

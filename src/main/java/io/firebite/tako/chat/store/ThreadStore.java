@@ -7,6 +7,7 @@ import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
+import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.chat.watch.PullRequestWatch;
@@ -310,6 +311,8 @@ public final class ThreadStore {
     public @Nullable PendingSetup pendingSetup;
     /** The pull request the thread watches, see {@link PullRequestWatcher}. Swapped whole, never changed in place. */
     public volatile @Nullable PullRequestWatch watch;
+    /** The usage limit the agent last stopped on, until the person moved on or the resume went out. */
+    public @Nullable LimitStop limit;
 
     /** The folder the thread works in: its {@link #workPath}, its {@link #projectPath} or else {@code basePath}. */
     public @Nullable String folder(@Nullable String basePath) {
@@ -337,8 +340,40 @@ public final class ThreadStore {
       return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         this.costUsd, this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens, this.branch,
         this.worktree, this.projectPath, this.pullRequest, this.agent(), this.firstTurnMillis, this.parentId,
-        watched == null ? null : watched.number, this.pinned, this.unread, this.snoozedUntil, this.sideChat,
+        watched == null ? null : watched.number, this.pinned, this.unread, this.snoozedUntil,
+        this.limit == null ? null : this.limit.item(TakoBundle.message("limit.prompt.default")), this.sideChat,
         this.inheritedPrompts);
+    }
+  }
+
+  /** A usage limit a thread's agent stopped on, and the resume the person scheduled for when it resets. */
+  public static final class LimitStop {
+    /** Waits this long past the reset, as the agent's clock and ours may differ. */
+    public static final long GRACE_MILLIS = 60_000;
+    /** Never resumes sooner than this after the limit stopped the agent, even when the reset already passed. */
+    public static final long MIN_WAIT_MILLIS = 120_000;
+
+    /** The limit's window, e.g. {@code 5h}, when the agent named it. */
+    public @Nullable String label;
+    /** When the limit resets, in epoch millis, 0 when unknown. */
+    public long resetsAt;
+    /** When the agent stopped on it, in epoch millis. */
+    public long hitAt;
+    public boolean scheduled;
+    /** The person scheduled a resume before this stop, whose reset is not known yet; it resumes once it is. */
+    public boolean resumesOnceReset;
+    /** What the resume sends, null for the default. */
+    public @Nullable String prompt;
+
+    /** When a scheduled resume goes out. */
+    public long fireAt() {
+      return Math.max(this.resetsAt + GRACE_MILLIS, this.hitAt + MIN_WAIT_MILLIS);
+    }
+
+    /** @param defaultPrompt what the resume sends when the person did not change it */
+    public ChatMessage.LimitItem item(String defaultPrompt) {
+      return new ChatMessage.LimitItem(this.label, this.resetsAt, this.scheduled,
+        this.prompt != null ? this.prompt : defaultPrompt, this.fireAt());
     }
   }
 

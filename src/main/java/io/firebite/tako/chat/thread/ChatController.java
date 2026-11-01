@@ -702,6 +702,7 @@ public final class ChatController implements Disposable {
       }
     }
     String text = prompt.text();
+    Async.onEdt(() -> this.host.prompted(text));
     String composed = text.isBlank() && !images.isEmpty()
       ? ""
       : PromptComposer.compose(text, prompt.context());
@@ -1255,6 +1256,8 @@ public final class ChatController implements Disposable {
       }
       case AgentEvent.ToolStarted tool -> this.changes.onToolStarted(tool);
       case AgentEvent.ToolFinished result -> this.changes.onToolFinished(result);
+      case AgentEvent.LimitReached limit -> Async.onEdt(() -> this.host.limitReached(limit.label(), limit.resetsAt(),
+        limit.namesReset()));
       case AgentEvent.TurnEnded ended -> next = this.onTurnEnded(ended);
       case AgentEvent.PromptTaken taken -> next = this.onPromptTaken(taken);
       default -> {

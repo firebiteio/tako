@@ -2,6 +2,7 @@ package io.firebite.tako.agent;
 
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
+import io.firebite.tako.json.Json;
 import java.util.List;
 import org.jetbrains.annotations.Nullable;
 
@@ -195,6 +196,35 @@ public sealed interface AgentEvent {
     String label,
     double usedPercent
   ) {
+  }
+
+  /**
+   * The running turn stopped on a usage or rate limit. Comes right before the turn's {@link TurnEnded}, and only live.
+   *
+   * @param label      the limit's window, e.g. {@code 5h}, when the agent names it
+   * @param resetsAt   when the limit resets, in epoch millis, when the agent says
+   * @param namesReset it only names the reset of the limit the last turn stopped on without one, after that turn ended
+   */
+  record LimitReached(
+    @Nullable String label,
+    @Nullable Long resetsAt,
+    boolean namesReset
+  ) implements AgentEvent {
+    /** Above this many epoch seconds a reset time is nonsense, and turning it into millis could overflow. */
+    private static final double MAX_EPOCH_SECONDS = 1e11;
+
+    public LimitReached(@Nullable String label, @Nullable Long resetsAt) {
+      this(label, resetsAt, false);
+    }
+
+    /** The epoch seconds at {@code key} in millis, or null when absent, not a number or out of range. */
+    public static @Nullable Long epochSeconds(@Nullable JsonObject object, String key) {
+      if (!Json.isNumber(object, key)) {
+        return null;
+      }
+      double seconds = Json.decimal(object, key);
+      return seconds > 0 && seconds < MAX_EPOCH_SECONDS ? Math.round(seconds * 1000) : null;
+    }
   }
 
   record Retrying(

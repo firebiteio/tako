@@ -23,6 +23,21 @@ public interface ChatHost {
   /** The person sent a prompt. */
   void activity();
 
+  /**
+   * A prompt is about to go out, as typed. Comes before the agent can answer it, unlike {@link #activity}, so before
+   * any {@link #limitReached} of its turn.
+   */
+  void prompted(String typed);
+
+  /**
+   * The turn stopped on a usage or rate limit.
+   *
+   * @param label    the limit's window, e.g. {@code 5h}, when the agent named it
+   * @param resetsAt   when it resets, in epoch millis, when the agent said
+   * @param namesReset it only names the reset of the limit the last turn reported without one
+   */
+  void limitReached(@Nullable String label, @Nullable Long resetsAt, boolean namesReset);
+
   /** The agent's {@link ChatController.State} changed. */
   void stateChanged();
 

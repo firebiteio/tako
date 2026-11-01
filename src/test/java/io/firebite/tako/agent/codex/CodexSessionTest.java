@@ -90,4 +90,50 @@ public class CodexSessionTest {
       session.stop();
     }
   }
+
+  @Test
+  public void aTurnStoppedByTheUsageLimitNamesWhenItResets() throws Exception {
+    Path codex = FakeExecutable.write("codex", FakeCodex.class);
+    RecordingListener listener = new RecordingListener();
+    AgentLaunch launch = new AgentLaunch(Files.createTempDirectory("work"), null, "", "", "", List.of(),
+      System.getenv(), null);
+    AgentSession session = new CodexBackend(codex.toString(), AgentDefaults.NONE, Map.of()).start(launch, listener);
+    try {
+      session.initialize().get(20, TimeUnit.SECONDS);
+      session.prompt(FakeCodex.LIMIT_PROMPT, List.of(), 1);
+
+      List<AgentEvent> events = listener.until(AgentEvent.TurnEnded.class);
+
+      assertEquals(new AgentEvent.LimitReached("5h", FakeCodex.LIMIT_RESETS_AT * 1000),
+        events.get(events.size() - 2));
+      assertEquals("You've hit your usage limit.", ((AgentEvent.TurnEnded) events.getLast()).error());
+    } finally {
+      session.stop();
+    }
+  }
+
+  @Test
+  public void aResetReportedAfterTheTurnEndedIsNamedOnce() throws Exception {
+    Path codex = FakeExecutable.write("codex", FakeCodex.class);
+    RecordingListener listener = new RecordingListener();
+    AgentLaunch launch = new AgentLaunch(Files.createTempDirectory("work"), null, "", "", "", List.of(),
+      System.getenv(), null);
+    AgentSession session = new CodexBackend(codex.toString(), AgentDefaults.NONE, Map.of()).start(launch, listener);
+    try {
+      session.initialize().get(20, TimeUnit.SECONDS);
+      session.prompt(FakeCodex.LATE_LIMIT_PROMPT, List.of(), 1);
+
+      List<AgentEvent> turn = listener.until(AgentEvent.TurnEnded.class);
+      assertEquals(new AgentEvent.LimitReached(null, null), turn.get(turn.size() - 2));
+      List<AgentEvent> later = listener.until(AgentEvent.LimitReached.class);
+      assertEquals(new AgentEvent.LimitReached("5h", FakeCodex.LIMIT_RESETS_AT * 1000, true), later.getLast());
+
+      session.prompt(FakeCodex.LIMIT_PROMPT, List.of(), 2);
+      List<AgentEvent> next = listener.until(AgentEvent.TurnEnded.class);
+      long limits = next.stream().filter(AgentEvent.LimitReached.class::isInstance).count();
+      assertEquals("the second update named nothing again", 1, limits);
+    } finally {
+      session.stop();
+    }
+  }
 }

@@ -85,6 +85,7 @@ import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.function.Consumer;
+import java.util.function.Predicate;
 import org.jetbrains.annotations.Nullable;
 
 /** The project's chat threads. They share one panel in the Tako tool window, with one controller per opened thread. */
@@ -98,6 +99,9 @@ public final class ChatService implements Disposable {
   private static final long PULL_REQUEST_REFRESH_MINUTES = 10;
   /** How often due pull request watches are polled; a thread that settles hears its news within this. */
   private static final long WATCH_TICK_SECONDS = 30;
+  private static final long RESUME_CHECK_SECONDS = 20;
+  /** When each agent last resumed a thread after its limit reset, across projects, so they do not resume at once. */
+  private static final Map<String, Long> LAST_RESUMES = new ConcurrentHashMap<>();
 
   private final Project project;
   private final ThreadStore store;
@@ -105,6 +109,7 @@ public final class ChatService implements Disposable {
   private final Benches benches;
   private final ThreadUpkeep upkeep;
   private final PullRequestWatcher watcher;
+  private final LimitResumes limits = new LimitResumes(System::currentTimeMillis, LAST_RESUMES);
   private final List<Runnable> activityListeners = new CopyOnWriteArrayList<>();
   /** The side chat each main thread's pane shows, by main thread id. */
   private final Map<String, String> shownSideChats = new ConcurrentHashMap<>();
@@ -157,6 +162,8 @@ public final class ChatService implements Disposable {
       UPKEEP_SECONDS, UPKEEP_SECONDS, TimeUnit.SECONDS);
     ScheduledFuture<?> pullRequestRefresh = scheduler.scheduleWithFixedDelay(
       () -> Async.onEdt(this::refreshPullRequests), 1, PULL_REQUEST_REFRESH_MINUTES, TimeUnit.MINUTES);
+    ScheduledFuture<?> resumeCheck = scheduler.scheduleWithFixedDelay(() -> Async.onEdt(this::resumeDue),
+      RESUME_CHECK_SECONDS, RESUME_CHECK_SECONDS, TimeUnit.SECONDS);
     this.project.getMessageBus().connect(content).subscribe(ToolWindowManagerListener.TOPIC,
       new ToolWindowManagerListener() {
         @Override
@@ -171,6 +178,7 @@ public final class ChatService implements Disposable {
       watchTicks.cancel(false);
       upkeepTick.cancel(false);
       pullRequestRefresh.cancel(false);
+      resumeCheck.cancel(false);
       for (ChatController controller : this.controllers.values()) {
         Disposer.dispose(controller);
       }
@@ -490,6 +498,49 @@ public final class ChatService implements Disposable {
     this.newController(record).open(prompt);
   }
 
+  /** Resumes the threads whose limit reset, if the person asked for it. Must run on the EDT. */
+  private void resumeDue() {
+    if (this.panel == null) {
+      return;
+    }
+    LimitResumes.Due due = this.limits.due(this.store.all(), record -> {
+      ChatController controller = this.controllers.get(record.id);
+      return controller != null && controller.state() != ChatController.State.IDLE
+        && controller.state() != ChatController.State.STOPPED;
+    });
+    this.postUpdates(due.changed());
+    for (LimitResumes.Resume resume : due.fire()) {
+      String prompt = resume.prompt();
+      this.prompt(resume.record(), prompt != null ? prompt : TakoBundle.message("limit.prompt.default"));
+    }
+  }
+
+  /** Sends the thread's continue prompt once the usage limit it stopped on reset. */
+  public void scheduleResume(String id) {
+    this.changeLimit(id, this.limits::schedule);
+  }
+
+  public void cancelResume(String id) {
+    this.changeLimit(id, this.limits::cancel);
+  }
+
+  /** @param prompt what the resume sends; blank for the default */
+  public void setResumePrompt(String id, String prompt) {
+    this.changeLimit(id, record -> this.limits.setPrompt(record, prompt));
+  }
+
+  /** Forgets the usage limit the thread stopped on, and its resume. */
+  public void dismissLimit(String id) {
+    this.changeLimit(id, this.limits::dismiss);
+  }
+
+  private void changeLimit(String id, Predicate<ThreadStore.Record> change) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record != null && change.test(record)) {
+      this.postUpdate(record);
+    }
+  }
+
   private void unarchive(ThreadStore.Record record) {
     this.postUpdates(this.unarchived(record));
   }
@@ -559,6 +610,7 @@ public final class ChatService implements Disposable {
     }
     for (ThreadStore.Record record : archived) {
       record.archived = true;
+      this.limits.dismiss(record);
       this.disposeController(record.id);
     }
     this.postUpdates(archived);
@@ -1208,6 +1260,7 @@ public final class ChatService implements Disposable {
   private void stopArchived(ThreadStore.Record record) {
     record.archived = true;
     this.watcher.stop(record.id);
+    this.limits.dismiss(record);
     this.disposeController(record.id);
     this.postUpdate(record);
   }
@@ -1585,6 +1638,26 @@ public final class ChatService implements Disposable {
     @Override
     public void stateChanged() {
       ChatService.this.fireActivity();
+    }
+
+    @Override
+    public void prompted(String typed) {
+      if (LimitResumes.movesOn(typed)) {
+        ChatService.this.dismissLimit(this.record.id);
+      }
+    }
+
+    /** Ignored for a thread closed or archived meanwhile, so a late call from its agent does not bring it back. */
+    @Override
+    public void limitReached(@Nullable String label, @Nullable Long resetsAt, boolean namesReset) {
+      if (ChatService.this.store.find(this.record.id) != this.record || this.record.archived) {
+        return;
+      }
+      long reset = resetsAt != null ? resetsAt : 0;
+      List<ThreadStore.Record> all = ChatService.this.store.all();
+      ChatService.this.postUpdates(namesReset
+        ? ChatService.this.limits.onReset(this.record, label, reset, all)
+        : ChatService.this.limits.onLimit(this.record, label, reset, all));
     }
 
     @Override
