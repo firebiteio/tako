@@ -56,6 +56,7 @@ import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.GitWorktree;
 import io.firebite.tako.ide.project.ProjectIcons;
+import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
@@ -623,23 +624,22 @@ public final class ChatService implements Disposable {
     String folder = this.workFolder(source);
     Async.inBackground(() -> {
       try {
-        String workPath = source.workPath;
         if (!Files.isDirectory(Path.of(folder))) {
           Async.onEdt(() -> this.failPlan(done, TakoBundle.message("error.plan.folder", folder)));
           return;
         }
+        GitWorktree.Worktree created = null;
         if (worktree) {
           String title = Plans.title(plan);
-          GitWorktree.Worktree created = GitWorktree.create(Path.of(folder), title != null ? title : Plans.UNTITLED,
+          created = GitWorktree.create(Path.of(folder), title != null ? title : Plans.UNTITLED,
             EnvironmentUtil.getEnvironmentMap());
           if (created == null) {
             Async.onEdt(() -> this.failPlan(done, TakoBundle.message("error.plan.worktree", folder)));
             return;
           }
-          workPath = created.folder().toString();
         }
-        String path = workPath;
-        Async.onEdt(() -> this.startPlanThread(done, source, plan, path));
+        GitWorktree.Worktree made = created;
+        Async.onEdt(() -> this.startPlanThread(done, source, plan, folder, made));
       } catch (RuntimeException e) {
         LOG.warn("Could not start a thread implementing the plan of thread " + id, e);
         Async.onEdt(() -> this.failPlan(done, Objects.toString(e.getMessage(), e.toString())));
@@ -648,22 +648,44 @@ public final class ChatService implements Disposable {
     return done;
   }
 
+  /**
+   * @param folder   the planning thread's folder
+   * @param worktree the worktree made for the new thread, removed again if the planning thread is gone
+   */
   private void startPlanThread(CompletableFuture<@Nullable String> done, ThreadStore.Record source, String plan,
-    @Nullable String workPath) {
-    try {
-      if (this.store.find(source.id) != source) {
-        this.failPlan(done, TakoBundle.message("error.plan.thread.gone"));
-        return;
+    String folder, @Nullable GitWorktree.Worktree worktree) {
+    if (this.store.find(source.id) != source) {
+      if (worktree != null) {
+        Async.inBackground(() -> removeWorktree(Path.of(folder), worktree));
       }
-      ThreadStore.Record record = this.planThread(source, plan, workPath);
+      this.failPlan(done, TakoBundle.message("error.plan.thread.gone"));
+      return;
+    }
+    ThreadStore.Record record;
+    try {
+      record = this.planThread(source, plan, worktree != null ? worktree.folder().toString() : source.workPath);
+    } catch (RuntimeException e) {
+      LOG.warn("Could not store a thread implementing the plan of thread " + source.id, e);
+      this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
+      return;
+    }
+    try {
       this.post(new ChatMessage.ThreadAdded(record.toItem()));
       this.store.setActiveId(record.id);
       this.post(new ChatMessage.Select(record.id));
       this.newController(record).open(Plans.implementPrompt(plan));
-      done.complete(record.id);
     } catch (RuntimeException e) {
-      LOG.warn("Could not start a thread implementing the plan of thread " + source.id, e);
-      this.failPlan(done, Objects.toString(e.getMessage(), e.toString()));
+      LOG.warn("Could not open the thread implementing the plan of thread " + source.id, e);
+      this.post(new ChatMessage.Error(Objects.toString(e.getMessage(), e.toString())));
+    }
+    done.complete(record.id);
+  }
+
+  private static void removeWorktree(Path repository, GitWorktree.Worktree worktree) {
+    try {
+      Worktrees.remove(repository, worktree.folder(), worktree.branch(), EnvironmentUtil.getEnvironmentMap());
+    } catch (Worktrees.GitException e) {
+      LOG.warn("Could not remove the worktree " + worktree.folder(), e);
     }
   }
 

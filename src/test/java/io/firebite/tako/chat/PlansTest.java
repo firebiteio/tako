@@ -19,6 +19,20 @@ public class PlansTest {
     assertEquals("Add dark mode", Plans.title("# Plan: Add dark mode"));
     assertEquals("Add dark mode", Plans.title("# PLAN - Add dark mode"));
     assertEquals("Planning the release", Plans.title("# Planning the release"));
+    assertEquals("Plan-based caching", Plans.title("# Plan-based caching"));
+    assertEquals("Add dark mode", Plans.title("# Plan — Add dark mode"));
+  }
+
+  @Test
+  public void titleSkipsAnEmptyPlanHeading() {
+    assertEquals("Add dark mode", Plans.title("# Plan:\n\n## Add dark mode"));
+  }
+
+  @Test
+  public void titleIgnoresCommentsInCodeBlocks() {
+    assertEquals("Add dark mode", Plans.title("Run:\n```bash\n# install deps\nnpm i\n```\n## Add dark mode"));
+    assertEquals("Add dark mode", Plans.title("~~~~\n# a\n```\n# b\n~~~~\n# Add dark mode"));
+    assertNull(Plans.title("```\n# never closed"));
   }
 
   @Test
