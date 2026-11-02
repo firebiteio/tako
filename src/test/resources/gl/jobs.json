@@ -1,0 +1,26 @@
+[
+  {
+    "id": 503,
+    "name": "flaky",
+    "stage": "test",
+    "status": "failed",
+    "allow_failure": true,
+    "web_url": "https://git.example.com/group/sub/app/-/jobs/503"
+  },
+  {
+    "id": 502,
+    "name": "lint",
+    "stage": "check",
+    "status": "success",
+    "allow_failure": false,
+    "web_url": "https://git.example.com/group/sub/app/-/jobs/502"
+  },
+  {
+    "id": 501,
+    "name": "test",
+    "stage": "test",
+    "status": "failed",
+    "allow_failure": false,
+    "web_url": "https://git.example.com/group/sub/app/-/jobs/501"
+  }
+]

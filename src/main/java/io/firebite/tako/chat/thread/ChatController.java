@@ -46,9 +46,9 @@ import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.ide.project.FileIndex;
+import io.firebite.tako.ide.project.ForgeCli;
 import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitDiffs;
-import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.ui.bridge.ChatMessage;
@@ -166,7 +166,7 @@ public final class ChatController implements Disposable {
     this.git = new ThreadGit(() -> {
       String folder = this.gitFolder();
       return folder == null ? null : Path.of(folder);
-    }, EnvironmentUtil.getEnvironmentMap(), this::busyIn, GitHubCli.GH);
+    }, EnvironmentUtil.getEnvironmentMap(), this::busyIn, ForgeCli::of);
   }
 
   /** Whether the IDE trusts the thread's project, and its project folder when that is another one than the IDE's. */
@@ -573,10 +573,10 @@ public final class ChatController implements Disposable {
   }
 
   /**
-   * The thread's git actions and the state they act on. Asks GitHub nothing, except for the pull request of a branch
-   * checked out since the last {@link #refreshGit}. Runs git, so call off the EDT.
+   * The thread's git actions and the state they act on. Asks the forge nothing, except for the pull request of a
+   * branch checked out since the last {@link #refreshGit}. Runs git, so call off the EDT.
    *
-   * @see #checkGitHub
+   * @see #checkForge
    */
   public ThreadGit.Menu gitMenu() {
     ThreadGit.Menu menu = this.git.menu(this.record.pullRequest, this.record.branch);
@@ -588,9 +588,9 @@ public final class ChatController implements Disposable {
     return this.git.menu(this.record.pullRequest, this.record.branch);
   }
 
-  /** Learns whether the GitHub CLI can create the menu's pull request. Asks GitHub, so call off the EDT. */
-  public void checkGitHub(ThreadGit.Menu menu) {
-    this.git.checkGitHub(menu);
+  /** Learns whether gh or glab can create the menu's pull request. Asks the forge, so call off the EDT. */
+  public void checkForge(ThreadGit.Menu menu) {
+    this.git.checkForge(menu);
   }
 
   /**

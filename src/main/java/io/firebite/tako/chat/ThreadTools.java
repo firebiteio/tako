@@ -107,13 +107,14 @@ final class ThreadTools implements McpTools {
       + ". Defaults to " + DEFAULT_WAIT_SECONDS + "."));
 
     JsonObject watchProperties = new JsonObject();
-    watchProperties.add("url", property("string", "The pull request's address, e.g. "
-      + "https://github.com/owner/repo/pull/12. Defaults to the open pull request of your branch."));
+    watchProperties.add("url", property("string", "The pull or merge request's address, e.g. "
+      + "https://github.com/owner/repo/pull/12 or https://gitlab.com/group/project/-/merge_requests/7. Defaults to "
+      + "the open pull or merge request of your branch."));
 
     return List.of(
-      new Tool(WATCH, "Watches a GitHub pull request for your thread. Tako checks it every 2 minutes with gh and wakes "
-        + "you with a prompt when checks fail or all pass, someone reviews or writes a review comment, the branch "
-        + "gets merge conflicts, or it is merged or closed. Only changes after this call wake you; the result tells "
+      new Tool(WATCH, "Watches a GitHub pull request or GitLab merge request for your thread. Tako checks it every 2 "
+        + "minutes with gh or glab and wakes you with a prompt when checks or pipeline jobs fail or all pass, someone "
+        + "reviews, approves or comments, the branch gets merge conflicts, or it is merged or closed. Only changes after this call wake you; the result tells "
         + "the current state. Use it after you push or open a pull request and should follow up on CI and reviews. "
         + "The watch ends when the pull request is merged or closed. Call unwatch_pull_request when you hand the work "
         + "back to the person.", schema(watchProperties)),

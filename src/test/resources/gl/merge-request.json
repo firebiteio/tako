@@ -1,0 +1,24 @@
+{
+  "id": 10740,
+  "iid": 7,
+  "project_id": 42,
+  "title": "Watch merge requests",
+  "state": "opened",
+  "target_branch": "main",
+  "source_branch": "feat/watch",
+  "sha": "aaaaaaa1111111111111111111111111111111111",
+  "merge_status": "can_be_merged",
+  "detailed_merge_status": "mergeable",
+  "has_conflicts": false,
+  "web_url": "https://git.example.com/group/sub/app/-/merge_requests/7",
+  "head_pipeline": {
+    "id": 900,
+    "iid": 31,
+    "project_id": 42,
+    "sha": "aaaaaaa1111111111111111111111111111111111",
+    "ref": "refs/merge-requests/7/head",
+    "status": "failed",
+    "source": "merge_request_event",
+    "web_url": "https://git.example.com/group/sub/app/-/pipelines/900"
+  }
+}

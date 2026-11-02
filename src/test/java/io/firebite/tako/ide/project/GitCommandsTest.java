@@ -13,6 +13,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.function.BooleanSupplier;
 import org.junit.Test;
 
@@ -144,7 +145,7 @@ public class GitCommandsTest {
     GitCommands.Status before = GitCommands.status(repository, ENVIRONMENT);
     assertEquals("origin", before.remote());
     assertFalse(before.tracksBranch());
-    assertNull(before.gitHub());
+    assertNull(before.hosted());
 
     assertEquals("origin/main", GitCommands.push(repository, ENVIRONMENT, before, NEVER));
 
@@ -229,8 +230,8 @@ public class GitCommandsTest {
 
     GitCommands.Status status = GitCommands.status(repository, ENVIRONMENT);
 
-    assertEquals(new GitCommands.GitHubRepo("github.com", "firebite", "tako"), status.gitHub());
-    assertEquals("repos/firebite/tako", status.gitHub().apiPath());
+    assertEquals(new GitCommands.HostedRepo(Forge.GITHUB, "github.com", "firebite/tako"), status.hosted());
+    assertEquals("repos/firebite/tako", status.hosted().apiPath());
   }
 
   @Test
@@ -244,7 +245,7 @@ public class GitCommandsTest {
     GitCommands.Status status = GitCommands.status(repository, ENVIRONMENT);
 
     assertEquals("fork", status.remote());
-    assertEquals(new GitCommands.GitHubRepo("github.com", "me", "app"), status.gitHub());
+    assertEquals(new GitCommands.HostedRepo(Forge.GITHUB, "github.com", "me/app"), status.hosted());
   }
 
   @Test
@@ -279,7 +280,7 @@ public class GitCommandsTest {
 
     GitCommands.Status status = GitCommands.parseStatus("/r", false, porcelain, false, config,
       "refs/remotes/my.fork/HEAD refs/remotes/my.fork/develop\nrefs/remotes/upstream/HEAD refs/remotes/upstream/main\n",
-      remotes);
+      remotes, Set.of());
 
     assertEquals("Feat", status.branch());
     assertEquals(2, status.changedFiles());
@@ -288,41 +289,70 @@ public class GitCommandsTest {
     assertTrue(status.tracksBranch());
     assertEquals(3, status.ahead());
     assertEquals("develop", status.defaultBranch());
-    assertEquals(new GitCommands.GitHubRepo("github.com", "me", "r"), status.gitHub());
+    assertEquals(new GitCommands.HostedRepo(Forge.GITHUB, "github.com", "me/r"), status.hosted());
+  }
+
+  @Test
+  public void selfHostedGitLabIsKnownFromGlab() {
+    Map<String, String> remotes = GitCommands
+      .parseRemotes("origin\thttps://git.example.com/client/neo/app.git (fetch)\n");
+    String porcelain = "# branch.oid 1234\n# branch.head feat\n";
+
+    GitCommands.Status known = GitCommands.parseStatus("/r", false, porcelain, false, Map.of(), "", remotes,
+      Set.of("git.example.com"));
+    GitCommands.Status unknown = GitCommands.parseStatus("/r", false, porcelain, false, Map.of(), "", remotes,
+      Set.of());
+
+    assertEquals(new GitCommands.HostedRepo(Forge.GITLAB, "git.example.com", "client/neo/app"), known.hosted());
+    assertNull(unknown.hosted());
   }
 
   @Test
   public void statusBeforeTheFirstCommitAndDetached() {
     GitCommands.Status unborn = GitCommands.parseStatus("/r", false, "# branch.oid (initial)\n# branch.head main\n",
-      false, Map.of(), "", Map.of());
+      false, Map.of(), "", Map.of(), Set.of());
     GitCommands.Status detached = GitCommands.parseStatus("/r", false, "# branch.oid 12\n# branch.head (detached)\n",
-      false, Map.of(), "", Map.of("origin", "https://github.com/o/r"));
+      false, Map.of(), "", Map.of("origin", "https://github.com/o/r"), Set.of());
 
     assertEquals("main", unborn.branch());
     assertFalse(unborn.hasCommits());
     assertNull(unborn.remote());
     assertNull(detached.branch());
     assertNull(detached.remote());
-    assertNull(detached.gitHub());
+    assertNull(detached.hosted());
   }
 
   @Test
   public void githubUrlsAreParsed() {
-    GitCommands.GitHubRepo tako = new GitCommands.GitHubRepo("github.com", "firebite", "tako");
-    assertEquals(tako, GitCommands.parseGitHub("git@github.com:firebite/tako.git"));
-    assertEquals(tako, GitCommands.parseGitHub("git@github.com:firebite/tako"));
-    assertEquals(tako, GitCommands.parseGitHub("https://github.com/firebite/tako.git\n"));
-    assertEquals(tako, GitCommands.parseGitHub("https://user:token@github.com/firebite/tako/"));
-    assertEquals(tako, GitCommands.parseGitHub("ssh://git@github.com:22/firebite/tako.git"));
-    assertEquals(new GitCommands.GitHubRepo("github.example.com", "team", "app"),
-      GitCommands.parseGitHub("https://GitHub.Example.com/team/app"));
-    assertNull(GitCommands.parseGitHub("git@gitlab.com:firebite/tako.git"));
-    assertNull(GitCommands.parseGitHub("https://example.com/github/tako.git"));
-    assertNull(GitCommands.parseGitHub("C:/repos/github/tako"));
-    assertNull(GitCommands.parseGitHub("https://github.com/firebite"));
-    assertNull(GitCommands.parseGitHub("https://github.com/a/b/c"));
-    assertNull(GitCommands.parseGitHub(""));
-    assertNull(GitCommands.parseGitHub(null));
+    GitCommands.HostedRepo tako = new GitCommands.HostedRepo(Forge.GITHUB, "github.com", "firebite/tako");
+    assertEquals(tako, GitCommands.parseRemote("git@github.com:firebite/tako.git", Set.of()));
+    assertEquals(tako, GitCommands.parseRemote("git@github.com:firebite/tako", Set.of()));
+    assertEquals(tako, GitCommands.parseRemote("https://github.com/firebite/tako.git\n", Set.of()));
+    assertEquals(tako, GitCommands.parseRemote("https://user:token@github.com/firebite/tako/", Set.of()));
+    assertEquals(tako, GitCommands.parseRemote("ssh://git@github.com:22/firebite/tako.git", Set.of()));
+    assertEquals(new GitCommands.HostedRepo(Forge.GITHUB, "github.example.com", "team/app"),
+      GitCommands.parseRemote("https://GitHub.Example.com/team/app", Set.of()));
+    assertNull(GitCommands.parseRemote("https://example.com/github/tako.git", Set.of()));
+    assertNull(GitCommands.parseRemote("C:/repos/github/tako", Set.of()));
+    assertNull(GitCommands.parseRemote("https://github.com/firebite", Set.of()));
+    assertNull(GitCommands.parseRemote("https://github.com/a/b/c", Set.of()));
+    assertNull(GitCommands.parseRemote("", Set.of()));
+    assertNull(GitCommands.parseRemote(null, Set.of()));
+  }
+
+  @Test
+  public void gitlabUrlsAreParsedWithSubgroups() {
+    GitCommands.HostedRepo tako = new GitCommands.HostedRepo(Forge.GITLAB, "gitlab.com", "firebite/tako");
+    assertEquals(tako, GitCommands.parseRemote("git@gitlab.com:firebite/tako.git", Set.of()));
+    assertEquals(tako, GitCommands.parseRemote("https://gitlab.com/firebite/tako", Set.of()));
+    GitCommands.HostedRepo nested = GitCommands.parseRemote("ssh://git@Git.Example.com:2222/client/neo/app.git",
+      Set.of("git.example.com"));
+    assertEquals(new GitCommands.HostedRepo(Forge.GITLAB, "git.example.com", "client/neo/app"), nested);
+    assertEquals("projects/client%2Fneo%2Fapp", nested.apiPath());
+    assertEquals("git.example.com/client/neo/app", nested.repository());
+    assertNull(GitCommands.parseRemote("https://git.example.com/client/neo/app.git", Set.of()));
+    assertNull(GitCommands.parseRemote("https://gitlab.com/firebite", Set.of()));
+    assertNull(GitCommands.parseRemote("https://gitlab.com/a//b", Set.of()));
   }
 
   @Test

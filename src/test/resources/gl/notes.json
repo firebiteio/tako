@@ -1,0 +1,39 @@
+[
+  {
+    "id": 3004,
+    "type": "DiffNote",
+    "body": "changed this line in [version 2 of the diff](/group/sub/app/-/merge_requests/7/diffs?diff_id=1)",
+    "author": {"id": 4, "username": "dave"},
+    "system": true,
+    "position": {"new_path": "src/App.java", "old_path": "src/App.java", "new_line": 12, "old_line": null}
+  },
+  {
+    "id": 3003,
+    "type": "DiffNote",
+    "body": "Rename this",
+    "author": {"id": 4, "username": "dave"},
+    "system": false,
+    "position": {"new_path": "src/App.java", "old_path": "src/App.java", "new_line": 12, "old_line": null}
+  },
+  {
+    "id": 3002,
+    "type": null,
+    "body": "Looks good overall",
+    "author": {"id": 5, "username": "erin"},
+    "system": false
+  },
+  {
+    "id": 3001,
+    "type": null,
+    "body": "approved this merge request",
+    "author": {"id": 5, "username": "erin"},
+    "system": true
+  },
+  {
+    "id": 3000,
+    "type": null,
+    "body": "added 1 commit\n\n<ul><li>aaaaaaa1 - feat: watch</li></ul>",
+    "author": {"id": 6, "username": "tako-user"},
+    "system": true
+  }
+]

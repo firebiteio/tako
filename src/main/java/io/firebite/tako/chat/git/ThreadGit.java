@@ -1,8 +1,9 @@
 package io.firebite.tako.chat.git;
 
 import io.firebite.tako.agent.AgentException;
+import io.firebite.tako.ide.project.Forge;
+import io.firebite.tako.ide.project.ForgeCli;
 import io.firebite.tako.ide.project.GitCommands;
-import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -24,38 +25,40 @@ import org.jetbrains.annotations.Nullable;
 public final class ThreadGit {
   /** The top folders of the repositories a git action runs in, each with what completes when it ended. */
   private static final Map<String, CompletableFuture<Void>> RUNNING = new ConcurrentHashMap<>();
-  /** How long a logged-in {@code gh} is trusted without asking again. */
-  private static final long GH_READY_MILLIS = 300_000;
+  /** How long a logged-in {@code gh} or {@code glab} is trusted without asking again. */
+  private static final long CLI_READY_MILLIS = 300_000;
   /**
-   * How long a missing or logged-out {@code gh} is trusted without asking again: short, so a login soon shows, and
-   * long enough that turns ending one after another do not ask each time.
+   * How long a missing or logged-out CLI is trusted without asking again: short, so a login soon shows, and long
+   * enough that turns ending one after another do not ask each time.
    */
-  private static final long GH_NOT_READY_MILLIS = 30_000;
-  private static final Map<String, KnownState> GH_STATES = new ConcurrentHashMap<>();
-  /** The hosts whose GitHub CLI state is being asked for, done once it answered. */
-  private static final Map<String, CompletableFuture<Void>> GH_ASKING = new ConcurrentHashMap<>();
+  private static final long CLI_NOT_READY_MILLIS = 30_000;
+  /** What the CLI answered, by {@link #cliKey}. */
+  private static final Map<String, KnownState> CLI_STATES = new ConcurrentHashMap<>();
+  /** The CLIs and hosts whose state is being asked for, by {@link #cliKey}, done once it answered. */
+  private static final Map<String, CompletableFuture<Void>> CLI_ASKING = new ConcurrentHashMap<>();
 
   private final Supplier<Path> folder;
   private final Map<String, String> environment;
   private final Function<String, Busy> busy;
-  private final GitHubCli gitHub;
+  private final Function<Forge, ForgeCli> clis;
 
   /**
    * @param folder the folder the thread works in, null when it has none
    * @param busy   who works in the repository with the given top folder now, null when nobody does
+   * @param clis   the CLI that opens pull requests on each forge
    */
   public ThreadGit(Supplier<Path> folder, Map<String, String> environment,
-    Function<String, Busy> busy, GitHubCli gitHub) {
+    Function<String, Busy> busy, Function<Forge, ForgeCli> clis) {
     this.folder = folder;
     this.environment = environment;
     this.busy = busy;
-    this.gitHub = gitHub;
+    this.clis = clis;
   }
 
   /**
-   * The checkout's state and the actions possible on it. Reads git locally and asks GitHub nothing: until
-   * {@link #checkGitHub} learned the GitHub CLI's state, creating a pull request waits on
-   * {@link Blocker#GH_CHECKING}. Call off the EDT.
+   * The checkout's state and the actions possible on it. Reads git locally and asks the forge nothing: until
+   * {@link #checkForge} learned the CLI's state, creating a pull request waits on {@link Blocker#CLI_CHECKING}. Call
+   * off the EDT.
    *
    * @param stored       the pull request the thread last found
    * @param storedBranch the branch it was found for, so another branch's pull request does not count
@@ -67,35 +70,36 @@ public final class ThreadGit {
       : GitCommands.status(directory, this.environment);
     String topLevel = status.topLevel();
     Busy working = topLevel == null ? null : this.busy.apply(topLevel);
-    GitCommands.GitHubRepo repository = status.gitHub();
-    GitHubCli.State gh = repository == null ? null : knownState(repository.host());
+    GitCommands.HostedRepo repository = status.hosted();
+    ForgeCli.State cli = repository == null ? null : knownState(repository);
     boolean running = topLevel != null && RUNNING.containsKey(topLevel);
     boolean isSameBranch = status.branch() != null && status.branch().equals(storedBranch);
-    return new Menu(status, options(status, gh, running, working == null ? null : working.blocker(),
+    return new Menu(status, options(status, cli, running, working == null ? null : working.blocker(),
       isSameBranch ? stored : null), working == null ? null : working.name());
   }
 
   /**
-   * Asks the GitHub CLI whether it is installed and logged in, unless it answered lately, so the next {@link #menu}
-   * knows. Callers asking for the same host meanwhile wait for that one answer. Asks GitHub over the network, so call
-   * off the EDT.
+   * Asks the forge's CLI whether it is installed and logged in, unless it answered lately, so the next {@link #menu}
+   * knows. Callers asking for the same CLI and host meanwhile wait for that one answer. Asks the forge over the
+   * network, so call off the EDT.
    */
-  public void checkGitHub(Menu menu) {
-    GitCommands.GitHubRepo repository = menu.status().gitHub();
-    if (repository == null || knownState(repository.host()) != null) {
+  public void checkForge(Menu menu) {
+    GitCommands.HostedRepo repository = menu.status().hosted();
+    if (repository == null || knownState(repository) != null) {
       return;
     }
-    String host = repository.host();
+    String key = cliKey(repository);
     CompletableFuture<Void> asking = new CompletableFuture<>();
-    CompletableFuture<Void> other = GH_ASKING.putIfAbsent(host, asking);
+    CompletableFuture<Void> other = CLI_ASKING.putIfAbsent(key, asking);
     if (other != null) {
       other.exceptionally(error -> null).join();
       return;
     }
     try {
-      GH_STATES.put(host, new KnownState(this.gitHub.state(host, this.environment), System.currentTimeMillis()));
+      ForgeCli.State state = this.clis.apply(repository.forge()).state(repository.host(), this.environment);
+      CLI_STATES.put(key, new KnownState(state, System.currentTimeMillis()));
     } finally {
-      GH_ASKING.remove(host, asking);
+      CLI_ASKING.remove(key, asking);
       asking.complete(null);
     }
   }
@@ -197,13 +201,14 @@ public final class ThreadGit {
     if (branch == null || !branch.equals(shown.branch())) {
       throw new ActionException(Failure.BRANCH_CHANGED, branch == null ? "" : branch, Result.NONE);
     }
-    GitCommands.GitHubRepo repository = status.gitHub();
+    GitCommands.HostedRepo repository = status.hosted();
+    ForgeCli cli = repository == null ? null : this.clis.apply(repository.forge());
     String base = null;
     if (option.action().createsPullRequest()) {
       if (repository == null) {
         throw new ActionException(Failure.PULL_REQUEST_FAILED, "", Result.NONE);
       }
-      base = this.step(() -> this.gitHub.defaultBranch(directory, this.environment, repository, cancelled),
+      base = this.step(() -> cli.defaultBranch(directory, this.environment, repository, cancelled),
         Failure.PULL_REQUEST_FAILED, Result.NONE);
       if (base.equals(branch)) {
         throw new ActionException(Failure.ON_DEFAULT_BRANCH, base, Result.NONE);
@@ -226,7 +231,7 @@ public final class ThreadGit {
       progress.accept(Step.PULL_REQUEST);
       String head = branch;
       String into = base;
-      pullRequest = this.step(() -> this.gitHub.create(directory, this.environment, repository, head, into,
+      pullRequest = this.step(() -> cli.create(directory, this.environment, repository, head, into,
         draft.title().strip(), draft.body().strip(), cancelled), Failure.PULL_REQUEST_FAILED,
         new Result(commit, pushedTo, null));
     }
@@ -249,34 +254,38 @@ public final class ThreadGit {
     }
   }
 
-  /** What the GitHub CLI answered for the host lately, null when it was not asked or too long ago. */
-  private static @Nullable GitHubCli.State knownState(String host) {
-    KnownState known = GH_STATES.get(host);
+  /** What the forge's CLI answered for the host lately, null when it was not asked or too long ago. */
+  private static @Nullable ForgeCli.State knownState(GitCommands.HostedRepo repository) {
+    KnownState known = CLI_STATES.get(cliKey(repository));
     if (known == null) {
       return null;
     }
-    long maxAge = known.state() == GitHubCli.State.READY ? GH_READY_MILLIS : GH_NOT_READY_MILLIS;
+    long maxAge = known.state() == ForgeCli.State.READY ? CLI_READY_MILLIS : CLI_NOT_READY_MILLIS;
     return System.currentTimeMillis() - known.at() < maxAge ? known.state() : null;
+  }
+
+  private static String cliKey(GitCommands.HostedRepo repository) {
+    return repository.forge().cli() + " " + repository.host();
   }
 
   /**
    * One entry per action, in menu order, each with what blocks it.
    *
-   * @param gh      the GitHub CLI's state, null when it is not known yet or the push remote is not on GitHub
+   * @param cli     the forge CLI's state, null when it is not known yet or the push remote is on no known forge
    * @param running a git action runs in the repository
    * @param busy    why an agent blocks every action, if one does
    * @param stored  the pull request the thread knows for its branch
    */
-  static List<Option> options(GitCommands.Status status, @Nullable GitHubCli.State gh, boolean running,
+  static List<Option> options(GitCommands.Status status, @Nullable ForgeCli.State cli, boolean running,
     @Nullable Blocker busy, @Nullable GitInfo.PullRequest stored) {
     List<Option> options = new ArrayList<>();
     for (GitAction action : GitAction.values()) {
-      options.add(new Option(action, status.hasChanges(), blocker(action, status, gh, running, busy, stored)));
+      options.add(new Option(action, status.hasChanges(), blocker(action, status, cli, running, busy, stored)));
     }
     return options;
   }
 
-  private static @Nullable Blocker blocker(GitAction action, GitCommands.Status status, @Nullable GitHubCli.State gh,
+  private static @Nullable Blocker blocker(GitAction action, GitCommands.Status status, @Nullable ForgeCli.State cli,
     boolean running, @Nullable Blocker busy, @Nullable GitInfo.PullRequest stored) {
     if (!status.isRepository()) {
       return Blocker.NOT_REPOSITORY;
@@ -307,14 +316,14 @@ public final class ThreadGit {
     if (action == GitAction.COMMIT_AND_PUSH) {
       return null;
     }
-    if (status.gitHub() == null) {
-      return Blocker.NOT_GITHUB;
+    if (status.hosted() == null) {
+      return Blocker.NOT_HOSTED;
     }
-    if (gh == null) {
-      return Blocker.GH_CHECKING;
+    if (cli == null) {
+      return Blocker.CLI_CHECKING;
     }
-    if (gh != GitHubCli.State.READY) {
-      return gh == GitHubCli.State.LOGGED_OUT ? Blocker.GH_LOGGED_OUT : Blocker.GH_MISSING;
+    if (cli != ForgeCli.State.READY) {
+      return cli == ForgeCli.State.LOGGED_OUT ? Blocker.CLI_LOGGED_OUT : Blocker.CLI_MISSING;
     }
     if (stored != null && "open".equals(stored.state())) {
       return Blocker.PULL_REQUEST_OPEN;
@@ -353,10 +362,10 @@ public final class ThreadGit {
     List<Option> options,
     @Nullable String busyName
   ) {
-    /** Whether an entry waits for {@link #checkGitHub}. */
-    public boolean waitsForGitHub() {
+    /** Whether an entry waits for {@link #checkForge}. */
+    public boolean waitsForForge() {
       for (Option option : this.options) {
-        if (option.blocker() == Blocker.GH_CHECKING) {
+        if (option.blocker() == Blocker.CLI_CHECKING) {
           return true;
         }
       }
@@ -365,7 +374,7 @@ public final class ThreadGit {
   }
 
   private record KnownState(
-    GitHubCli.State state,
+    ForgeCli.State state,
     long at
   ) {
   }

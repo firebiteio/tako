@@ -21,9 +21,9 @@ public final class PullRequestWatch {
   public static final int COMMENT_WINDOW = 100;
 
   public String url = "";
-  /** {@code #12}. */
+  /** {@code #12}, or {@code !7} on GitLab. */
   public String number = "";
-  /** The gh account's login. Its reviews and comments wake nobody, so the agent's replies do not wake it. */
+  /** The gh or glab account's login. Its reviews and comments wake nobody, so the agent's replies do not wake it. */
   public String self = "";
   public String headSha = "";
   /** The commit {@link #failedChecks} and {@link #passed} belong to. */

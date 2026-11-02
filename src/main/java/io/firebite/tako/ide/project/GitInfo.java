@@ -10,6 +10,7 @@ import java.nio.file.Path;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.TimeUnit;
 import org.jetbrains.annotations.Nullable;
 
@@ -24,6 +25,9 @@ public record GitInfo(
 ) {
   private static final Logger LOG = Logger.getInstance(GitInfo.class);
   private static final long TIMEOUT_SECONDS = 8;
+  private static final String GH_FIELDS = "number,title,url,state";
+  /** What follows the project in a GitLab merge request's web address. */
+  private static final String GITLAB_MERGE_REQUESTS = "/-/merge_requests/";
 
   /** Branch and worktree only, read locally without network. Works before the first commit. */
   public static GitInfo local(Path directory, Map<String, String> environment) {
@@ -43,29 +47,30 @@ public record GitInfo(
 
   /**
    * The open pull or merge request of the checked-out branch. Asks {@code gh} or {@code glab} over the network. When
-   * the branch pushes to a GitHub remote other than {@code origin}, also looks in that repository, where the thread's
-   * git actions open pull requests.
+   * the branch pushes to a remote other than {@code origin}, also looks in that repository, where the thread's git
+   * actions open pull requests.
    */
   public static @Nullable PullRequest pullRequest(Path directory, Map<String, String> environment) {
-    String remote = run(directory, environment, List.of("git", "remote", "get-url", "origin"));
-    String host = remote == null ? "" : remote.toLowerCase(Locale.ROOT);
-    if (host.contains("gitlab")) {
-      return parseGitLab(run(directory, environment, List.of("glab", "mr", "view", "-F", "json")));
-    }
-    if (host.contains("github")) {
-      PullRequest pullRequest = parseGitHub(run(directory, environment, List.of("gh", "pr", "view", "--json",
-        "number,title,url,state")));
+    String origin = run(directory, environment, List.of("git", "remote", "get-url", "origin"));
+    GitCommands.HostedRepo repository = GitCommands.parseRemote(origin, GlabHosts.read(environment));
+    if (repository != null) {
+      PullRequest pullRequest = parse(repository.forge(), run(directory, environment, switch (repository.forge()) {
+        case GITHUB -> List.of("gh", "pr", "view", "--json", GH_FIELDS);
+        case GITLAB -> List.of("glab", "mr", "view", "-F", "json");
+      }));
       if (pullRequest != null) {
         return pullRequest;
       }
     }
     GitCommands.Status status = GitCommands.status(directory, environment);
-    GitCommands.GitHubRepo pushed = status.gitHub();
+    GitCommands.HostedRepo pushed = status.hosted();
     if (pushed == null || status.branch() == null || "origin".equals(status.remote())) {
       return null;
     }
-    return parseGitHub(run(directory, environment, List.of("gh", "pr", "view", status.branch(), "--repo",
-      pushed.host() + "/" + pushed.owner() + "/" + pushed.name(), "--json", "number,title,url,state")));
+    return parse(pushed.forge(), run(directory, environment, switch (pushed.forge()) {
+      case GITHUB -> List.of("gh", "pr", "view", status.branch(), "--repo", pushed.repository(), "--json", GH_FIELDS);
+      case GITLAB -> List.of("glab", "mr", "view", status.branch(), "-R", pushed.repository(), "-F", "json");
+    }));
   }
 
   /**
@@ -81,7 +86,14 @@ public record GitInfo(
       return null;
     }
     String output = run(directory, environment, command);
-    return known.number().startsWith("!") ? parseGitLab(output) : parseGitHub(output);
+    return parse(Objects.requireNonNull(Forge.ofNumber(known.number())), output);
+  }
+
+  private static @Nullable PullRequest parse(Forge forge, @Nullable String output) {
+    return switch (forge) {
+      case GITHUB -> parseGitHub(output);
+      case GITLAB -> parseGitLab(output);
+    };
   }
 
   /** The command that shows the known pull or merge request, or null when its number is not one Tako wrote. */
@@ -96,11 +108,13 @@ public record GitInfo(
         return null;
       }
     }
+    boolean isWeb = known.url().startsWith("https://") || known.url().startsWith("http://");
+    int project = known.url().indexOf(GITLAB_MERGE_REQUESTS);
     return switch (number.charAt(0)) {
-      case '#' -> known.url().startsWith("https://") || known.url().startsWith("http://")
-        ? List.of("gh", "pr", "view", known.url(), "--json", "number,title,url,state")
-        : null;
-      case '!' -> List.of("glab", "mr", "view", id, "-F", "json");
+      case '#' -> isWeb ? List.of("gh", "pr", "view", known.url(), "--json", GH_FIELDS) : null;
+      case '!' -> isWeb && project > 0
+        ? List.of("glab", "mr", "view", id, "-R", known.url().substring(0, project), "-F", "json")
+        : List.of("glab", "mr", "view", id, "-F", "json");
       default -> null;
     };
   }
@@ -149,6 +163,7 @@ public record GitInfo(
     builder.environment().clear();
     builder.environment().putAll(environment);
     builder.environment().put("GH_PROMPT_DISABLED", "1");
+    builder.environment().put("NO_PROMPT", "true");
     builder.environment().put("GIT_TERMINAL_PROMPT", "0");
     builder.redirectError(ProcessBuilder.Redirect.DISCARD);
     Path output = null;
@@ -184,9 +199,5 @@ public record GitInfo(
     String url,
     String state
   ) {
-    /** Whether {@code gh} found it. GitLab merge requests are numbered {@code !7}. */
-    public boolean isGitHub() {
-      return this.number.startsWith("#");
-    }
   }
 }

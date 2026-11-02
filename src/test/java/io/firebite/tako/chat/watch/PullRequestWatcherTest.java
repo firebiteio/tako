@@ -10,6 +10,7 @@ import static org.junit.Assert.fail;
 
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.ide.project.Forge;
 import io.firebite.tako.ide.project.GitInfo;
 import java.io.IOException;
 import java.nio.file.Files;
@@ -96,14 +97,14 @@ public class PullRequestWatcherTest {
 
   @Test
   public void startFailsWithoutGh() {
-    this.gh.view = new GhCli.Result(GhCli.NOT_STARTED, "", "Cannot run program");
+    this.gh.view = new ForgeCall.Result(ForgeCall.NOT_STARTED, "", "Cannot run program");
 
     assertEquals(WatchException.Reason.MISSING, this.startFails(this.thread(), null).reason());
   }
 
   @Test
   public void startFailsLoggedOut() {
-    this.gh.view = new GhCli.Result(4, "", "To get started with GitHub CLI, please run:  gh auth login");
+    this.gh.view = new ForgeCall.Result(4, "", "To get started with GitHub CLI, please run:  gh auth login");
 
     WatchException e = this.startFails(this.thread(), null);
 
@@ -113,14 +114,14 @@ public class PullRequestWatcherTest {
 
   @Test
   public void startFailsRateLimited() {
-    this.gh.view = new GhCli.Result(1, "", "API rate limit exceeded");
+    this.gh.view = new ForgeCall.Result(1, "", "API rate limit exceeded");
 
     assertEquals(WatchException.Reason.RATE_LIMITED, this.startFails(this.thread(), null).reason());
   }
 
   @Test
   public void startsWhenCommentsCannotBeReadWithoutTellingOldOnesLater() throws WatchException {
-    this.gh.comments = new GhCli.Result(1, "", "HTTP 502");
+    this.gh.comments = new ForgeCall.Result(1, "", "HTTP 502");
     ThreadStore.Record record = this.watched();
     assertTrue(record.watch.commentsUnknown);
 
@@ -134,7 +135,7 @@ public class PullRequestWatcherTest {
 
   @Test
   public void startFailsWithoutLogin() {
-    this.gh.self = new GhCli.Result(0, "\n", "");
+    this.gh.self = new ForgeCall.Result(0, "\n", "");
 
     assertEquals(WatchException.Reason.FAILED, this.startFails(this.thread(), null).reason());
   }
@@ -153,13 +154,10 @@ public class PullRequestWatcherTest {
   public void startFailsWithoutPullRequest() {
     ThreadStore.Record record = this.thread();
     record.pullRequest = null;
-    ThreadStore.Record gitLab = this.thread();
-    gitLab.pullRequest = new GitInfo.PullRequest("!7", "MR", "https://gitlab.com/o/r/-/merge_requests/7", "open");
     ThreadStore.Record merged = this.thread();
     merged.pullRequest = new GitInfo.PullRequest("#12", "Watch", Gh.URL, "merged");
 
     assertEquals(WatchException.Reason.NO_PULL_REQUEST, this.startFails(record, null).reason());
-    assertEquals(WatchException.Reason.NO_PULL_REQUEST, this.startFails(gitLab, null).reason());
     assertEquals(WatchException.Reason.NO_PULL_REQUEST, this.startFails(merged, null).reason());
     assertTrue(this.gh.calls.isEmpty());
   }
@@ -361,7 +359,7 @@ public class PullRequestWatcherTest {
   @Test
   public void rateLimitPausesWithoutCountingAsFailure() throws WatchException {
     ThreadStore.Record record = this.watched();
-    this.gh.view = new GhCli.Result(1, "", "GraphQL: API rate limit exceeded");
+    this.gh.view = new ForgeCall.Result(1, "", "GraphQL: API rate limit exceeded");
     this.later();
     this.watcher.tick();
     int calls = this.gh.calls.size();
@@ -379,7 +377,7 @@ public class PullRequestWatcherTest {
   @Test
   public void repeatedFailuresEndTheWatch() throws WatchException {
     ThreadStore.Record record = this.watched();
-    this.gh.view = new GhCli.Result(1, "", "error connecting to api.github.com");
+    this.gh.view = new ForgeCall.Result(1, "", "error connecting to api.github.com");
     for (int i = 1; i < PullRequestWatcher.MAX_FAILURES; i++) {
       this.later();
       this.watcher.tick();
@@ -396,7 +394,7 @@ public class PullRequestWatcherTest {
   @Test
   public void oneSuccessResetsTheFailures() throws WatchException {
     ThreadStore.Record record = this.watched();
-    this.gh.view = new GhCli.Result(GhCli.TIMED_OUT, "", "gh did not answer within 20 seconds");
+    this.gh.view = new ForgeCall.Result(ForgeCall.TIMED_OUT, "", "gh did not answer within 20 seconds");
     this.later();
     this.watcher.tick();
     assertEquals(1, record.watch.failures);
@@ -411,7 +409,7 @@ public class PullRequestWatcherTest {
   @Test
   public void loggingOutEndsTheWatch() throws WatchException {
     ThreadStore.Record record = this.watched();
-    this.gh.view = new GhCli.Result(4, "", "");
+    this.gh.view = new ForgeCall.Result(4, "", "");
     this.later();
 
     this.watcher.tick();
@@ -423,7 +421,7 @@ public class PullRequestWatcherTest {
   @Test
   public void uninstalledGhEndsTheWatch() throws WatchException {
     ThreadStore.Record record = this.watched();
-    this.gh.view = new GhCli.Result(GhCli.NOT_STARTED, "", "gone");
+    this.gh.view = new ForgeCall.Result(ForgeCall.NOT_STARTED, "", "gone");
     this.later();
 
     this.watcher.tick();
@@ -448,7 +446,7 @@ public class PullRequestWatcherTest {
   @Test
   public void closingTheThreadDuringAPollDropsItsResult() throws WatchException {
     ThreadStore.Record record = this.watched();
-    this.gh.view = new GhCli.Result(1, "", "boom");
+    this.gh.view = new ForgeCall.Result(1, "", "boom");
     this.gh.onView = () -> this.store.remove(record.id);
     this.later();
 
@@ -534,33 +532,132 @@ public class PullRequestWatcherTest {
     assertEquals(List.of(), this.host.stops);
   }
 
-  private static GhCli.Result ok(String out) {
-    return new GhCli.Result(0, out, "");
+  @Test
+  public void startsOnAGitLabMergeRequestWithGlab() throws WatchException {
+    ThreadStore.Record record = this.gitLabThread();
+
+    PullRequestWatcher.Started started = this.watcher.start(record.id, null, false);
+
+    assertEquals("!7", started.status().label());
+    assertEquals("!7", record.watch.number);
+    assertEquals(FakeGh.SELF, record.watch.self);
+    assertEquals(List.of("test"), record.watch.failedChecks);
+    assertEquals(List.of("3001", "3002"), record.watch.seenReviews);
+    assertEquals(List.of(3003L), record.watch.seenComments);
+    assertFalse(this.gh.forges.contains(Forge.GITHUB));
+    assertEquals(List.of("api", "--hostname", "git.example.com", Gl.API), this.gh.calls.get(0));
+    assertEquals(List.of("api", "--hostname", "git.example.com", "projects/42/pipelines/900/jobs?per_page=100"),
+      this.gh.calls.get(1));
   }
 
-  /** Answers gh's commands with recorded output. */
-  private static final class FakeGh implements GhCli.Runner {
+  @Test
+  public void gitLabNotesWakeExceptOwnOnes() throws WatchException {
+    ThreadStore.Record record = this.gitLabThread();
+    this.watcher.start(record.id, null, false);
+    this.gh.notes = ok(Gl.notesAfter(Gl.note(3007, "dave", true, "requested changes"),
+      Gl.note(3006, FakeGh.SELF, false, "Done")));
+    this.later();
+
+    this.watcher.tick();
+
+    assertEquals(1, this.host.prompts.size());
+    String prompt = this.host.prompts.get(0);
+    assertTrue(prompt, prompt.startsWith("Update on merge request !7 (" + Gl.URL + ")"));
+    assertTrue(prompt, prompt.contains("- dave reviewed (changes requested)"));
+    assertFalse(prompt, prompt.contains("Done"));
+  }
+
+  @Test
+  public void gitLabPipelineFailureTellsHowToReadTheLog() throws WatchException {
+    ThreadStore.Record record = this.gitLabThread();
+    this.gh.jobs = ok("[]");
+    this.watcher.start(record.id, null, false);
+    this.gh.jobs = ok(Gl.recorded("jobs.json"));
+    this.later();
+
+    this.watcher.tick();
+
+    assertTrue(this.host.prompts.get(0), this.host.prompts.get(0).contains("  - test "
+      + "https://git.example.com/group/sub/app/-/jobs/501 (logs: glab ci trace 501 -R git.example.com/group/sub/app)"));
+  }
+
+  @Test
+  public void unreadableGitLabNotesFailThePoll() throws WatchException {
+    ThreadStore.Record record = this.gitLabThread();
+    this.watcher.start(record.id, null, false);
+    this.gh.notes = new ForgeCall.Result(1, "", "glab: 502 Bad Gateway (HTTP 502)");
+    this.later();
+
+    this.watcher.tick();
+
+    assertEquals(1, record.watch.failures);
+    assertEquals(List.of(), this.host.prompts);
+  }
+
+  @Test
+  public void loggedOutGlabNamesItself() {
+    this.gh.mergeRequest = new ForgeCall.Result(1, "", "glab: 401 Unauthorized (HTTP 401)");
+
+    WatchException e = this.startFails(this.gitLabThread(), null);
+
+    assertEquals(WatchException.Reason.LOGGED_OUT, e.reason());
+    assertEquals("glab", e.detail());
+    assertTrue(e.getMessage(), e.getMessage().contains("glab auth login --hostname git.example.com"));
+  }
+
+  private ThreadStore.Record gitLabThread() {
+    ThreadStore.Record record = this.store.create(null, null, null, "claude");
+    record.pullRequest = new GitInfo.PullRequest("!7", "Watch", Gl.URL, "open");
+    return record;
+  }
+
+  private static ForgeCall.Result ok(String out) {
+    return new ForgeCall.Result(0, out, "");
+  }
+
+  /** Answers gh's and glab's commands with recorded output. */
+  private static final class FakeGh implements ForgeCall.Runner {
     static final String SELF = "tako-user";
 
     final List<List<String>> calls = new ArrayList<>();
-    GhCli.Result view = ok(Gh.recorded("view-failing.json"));
-    GhCli.Result comments = ok(Gh.recorded("comments.json"));
-    GhCli.Result self = ok(SELF + "\n");
+    final List<Forge> forges = new ArrayList<>();
+    ForgeCall.Result view = ok(Gh.recorded("view-failing.json"));
+    ForgeCall.Result comments = ok(Gh.recorded("comments.json"));
+    ForgeCall.Result self = ok(SELF + "\n");
+    ForgeCall.Result mergeRequest = ok(Gl.recorded("merge-request.json"));
+    ForgeCall.Result jobs = ok(Gl.recorded("jobs.json"));
+    ForgeCall.Result notes = ok(Gl.recorded("notes.json"));
+    ForgeCall.Result user = ok("{\"id\": 6, \"username\": \"" + SELF + "\"}");
     @Nullable
     Runnable onView;
 
     @Override
-    public GhCli.Result run(Path directory, List<String> args) {
+    public ForgeCall.Result run(Forge forge, Path directory, List<String> args) {
       this.calls.add(args);
-      if (args.get(0).equals("pr")) {
-        Runnable hook = this.onView;
-        this.onView = null;
-        if (hook != null) {
-          hook.run();
+      this.forges.add(forge);
+      String last = args.getLast();
+      if (forge == Forge.GITLAB) {
+        if (last.equals(Gl.API)) {
+          return this.viewed(this.mergeRequest);
         }
-        return this.view;
+        if (last.equals("user")) {
+          return this.user;
+        }
+        return last.contains("/jobs") ? this.jobs : this.notes;
+      }
+      if (args.get(0).equals("pr")) {
+        return this.viewed(this.view);
       }
       return args.contains("user") ? this.self : this.comments;
+    }
+
+    private ForgeCall.Result viewed(ForgeCall.Result result) {
+      Runnable hook = this.onView;
+      this.onView = null;
+      if (hook != null) {
+        hook.run();
+      }
+      return result;
     }
   }
 
