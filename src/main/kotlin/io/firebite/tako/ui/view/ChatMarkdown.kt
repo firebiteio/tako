@@ -60,6 +60,7 @@ import org.commonmark.ext.gfm.tables.TableCell
 import org.commonmark.ext.gfm.tables.TableRow
 import org.commonmark.node.CustomBlock as CommonMarkBlock
 import org.commonmark.ext.gfm.tables.TableBlock as CommonMarkTable
+import org.jetbrains.jewel.markdown.MarkdownBlock.BlockQuote
 import org.jetbrains.jewel.markdown.MarkdownBlock.CodeBlock.FencedCodeBlock
 import org.jetbrains.jewel.markdown.MarkdownBlock.CustomBlock
 import org.jetbrains.jewel.markdown.MarkdownBlock.Paragraph
@@ -167,6 +168,18 @@ private class ChatBlockRenderer(
         }
       }
       super.RenderFencedCodeBlock(block, styling, enabled, Modifier)
+    }
+  }
+
+  @Composable
+  override fun RenderBlockQuote(block: BlockQuote, styling: MarkdownStyling.BlockQuote, enabled: Boolean,
+    onUrlClick: (String) -> Unit, modifier: Modifier) {
+    val bar = colors.softBorder
+    val rem = textStyle.fontSize.value.dp
+    Column(modifier.drawBehind { this.drawRoundRect(bar, size = Size(2.dp.toPx(), this.size.height),
+      cornerRadius = CornerRadius(1.dp.toPx())) }.padding(start = rem * 0.8f).alpha(0.75f),
+      verticalArrangement = Arrangement.spacedBy(this.rootStyling.blockVerticalSpacing)) {
+      this@ChatBlockRenderer.RenderBlocks(block.children, enabled, onUrlClick, Modifier)
     }
   }
 
@@ -387,10 +400,7 @@ fun rememberChatMarkdown(actions: CodeActions): ChatMarkdown {
       textStyle = editor.copy(lineHeight = editor.fontSize * 1.45),
       padding = PaddingValues(start = 12.dp, end = 12.dp, top = 6.dp, bottom = 10.dp), background = Color.Transparent))
     val styling = MarkdownStyling.create(base, inlinesStyling = inlines, blockVerticalSpacing = rem * 0.65f,
-      paragraph = MarkdownStyling.Paragraph.create(inlines), heading = heading,
-      blockQuote = MarkdownStyling.BlockQuote.create(padding = PaddingValues(start = rem * 0.8f), lineWidth = 2.dp,
-        lineColor = c.softBorder, textColor = c.muted),
-      code = code, list = list,
+      paragraph = MarkdownStyling.Paragraph.create(inlines), heading = heading, code = code, list = list,
       thematicBreak = MarkdownStyling.ThematicBreak.create(padding = PaddingValues(vertical = rem * 0.35f),
         lineWidth = 1.dp, lineColor = c.divider))
     val small = (base.fontSize.value - 2).sp
