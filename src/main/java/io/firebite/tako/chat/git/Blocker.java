@@ -14,12 +14,12 @@ public enum Blocker {
   NOTHING_TO_COMMIT,
   NO_REMOTE,
   NOTHING_TO_PUSH,
-  /** Pull requests need the remote the branch pushes to on GitHub. */
-  NOT_GITHUB,
-  /** The GitHub CLI's state is being asked for, see {@link ThreadGit#checkGitHub}. */
-  GH_CHECKING,
-  GH_MISSING,
-  GH_LOGGED_OUT,
+  /** Pull requests need the remote the branch pushes to on GitHub or GitLab. */
+  NOT_HOSTED,
+  /** The forge CLI's state is being asked for, see {@link ThreadGit#checkForge}. */
+  CLI_CHECKING,
+  CLI_MISSING,
+  CLI_LOGGED_OUT,
   PULL_REQUEST_OPEN,
   DEFAULT_BRANCH
 }

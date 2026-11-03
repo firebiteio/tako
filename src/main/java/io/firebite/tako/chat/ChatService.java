@@ -45,7 +45,7 @@ import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.chat.thread.ChatHost;
 import io.firebite.tako.chat.thread.ChatView;
 import io.firebite.tako.chat.thread.ThreadTitles;
-import io.firebite.tako.chat.watch.GhCli;
+import io.firebite.tako.chat.watch.ForgeCall;
 import io.firebite.tako.chat.watch.PullRequestWatch;
 import io.firebite.tako.chat.watch.PullRequestWatcher;
 import io.firebite.tako.chat.watch.WatchException;
@@ -54,6 +54,7 @@ import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Checkpoints;
+import io.firebite.tako.ide.project.Forge;
 import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.GitWorktree;
@@ -126,15 +127,15 @@ public final class ChatService implements Disposable {
     this.store = ThreadStore.getInstance(project);
     this.benches = new Benches(project, this, this.store);
     this.upkeep = new ThreadUpkeep(this, this.store);
-    this.watcher = new PullRequestWatcher(this.store, ChatService::runGh, new WatchHost(),
+    this.watcher = new PullRequestWatcher(this.store, ChatService::runForgeCli, new WatchHost(),
       System::currentTimeMillis);
   }
 
-  /** Runs gh, found anew each time, so installing it while the IDE runs is enough. */
-  private static GhCli.Result runGh(Path directory, List<String> args) {
+  /** Runs gh or glab, found anew each time, so installing it while the IDE runs is enough. */
+  private static ForgeCall.Result runForgeCli(Forge forge, Path directory, List<String> args) {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
-    String gh = ExecutableLocator.locate("", "gh", List.of(), environment, SystemInfo.isWindows);
-    return GhCli.system(gh != null ? gh : "gh", environment).run(directory, args);
+    String cli = ExecutableLocator.locate("", forge.cli(), List.of(), environment, SystemInfo.isWindows);
+    return ForgeCall.run(cli != null ? cli : forge.cli(), environment, directory, args);
   }
 
   public static ChatService getInstance(Project project) {
@@ -1308,9 +1309,9 @@ public final class ChatService implements Disposable {
       case NO_PULL_REQUEST -> TakoBundle.message("watch.failed.no.pull.request");
       case BAD_URL -> TakoBundle.message("watch.failed.bad.url", e.detail());
       case NOT_OPEN -> TakoBundle.message("watch.failed.not.open", e.detail());
-      case MISSING -> TakoBundle.message("watch.failed.missing");
-      case LOGGED_OUT -> TakoBundle.message("watch.failed.logged.out");
-      case RATE_LIMITED -> TakoBundle.message("watch.failed.rate.limited");
+      case MISSING -> TakoBundle.message("watch.failed.missing", e.detail());
+      case LOGGED_OUT -> TakoBundle.message("watch.failed.logged.out", e.detail());
+      case RATE_LIMITED -> TakoBundle.message("watch.failed.rate.limited", e.detail());
       case FAILED -> TakoBundle.message("watch.failed.other", e.detail());
     };
   }
@@ -1796,9 +1797,11 @@ public final class ChatService implements Disposable {
 
     @Override
     public void stopped(ThreadStore.Record record, String number, PullRequestWatcher.Stop reason, String message) {
+      Forge forge = Forge.ofNumber(number);
+      String cli = (forge != null ? forge : Forge.GITHUB).cli();
       String text = switch (reason) {
-        case MISSING -> TakoBundle.message("watch.stopped.missing", number);
-        case LOGGED_OUT -> TakoBundle.message("watch.stopped.logged.out", number);
+        case MISSING -> TakoBundle.message("watch.stopped.missing", number, cli);
+        case LOGGED_OUT -> TakoBundle.message("watch.stopped.logged.out", number, cli);
         case FAILURES -> TakoBundle.message("watch.stopped.failures", number, PullRequestWatcher.MAX_FAILURES, message);
       };
       ChatService.this.post(new ChatMessage.Notice(text), record.id);

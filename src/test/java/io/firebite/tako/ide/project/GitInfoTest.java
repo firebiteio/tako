@@ -54,9 +54,11 @@ public class GitInfoTest {
   public void knownPullRequestIsAskedForByItsUrlOrNumber() {
     assertEquals(List.of("gh", "pr", "view", "https://github.com/o/r/pull/7", "--json", "number,title,url,state"),
       GitInfo.viewCommand(new GitInfo.PullRequest("#7", "Fix", "https://github.com/o/r/pull/7", "open")));
-    assertEquals(List.of("glab", "mr", "view", "12", "-F", "json"),
-      GitInfo.viewCommand(new GitInfo.PullRequest("!12", "Fix", "https://gitlab.com/o/r/-/merge_requests/12",
+    assertEquals(List.of("glab", "mr", "view", "12", "-R", "https://git.example.com/g/sub/r", "-F", "json"),
+      GitInfo.viewCommand(new GitInfo.PullRequest("!12", "Fix", "https://git.example.com/g/sub/r/-/merge_requests/12",
         "open")));
+    assertEquals(List.of("glab", "mr", "view", "12", "-F", "json"),
+      GitInfo.viewCommand(new GitInfo.PullRequest("!12", "Fix", "", "open")));
   }
 
   @Test

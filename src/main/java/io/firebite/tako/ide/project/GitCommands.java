@@ -3,6 +3,7 @@ package io.firebite.tako.ide.project;
 import io.firebite.tako.agent.Processes;
 import java.io.IOException;
 import java.io.RandomAccessFile;
+import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -29,7 +30,7 @@ import org.jetbrains.annotations.Nullable;
  */
 public final class GitCommands {
   public static final BooleanSupplier NEVER_CANCELLED = () -> false;
-  static final long GH_TIMEOUT_SECONDS = 60;
+  static final long FORGE_TIMEOUT_SECONDS = 60;
   private static final long READ_TIMEOUT_SECONDS = 30;
   private static final long COMMIT_TIMEOUT_SECONDS = 600;
   private static final long PUSH_TIMEOUT_SECONDS = 300;
@@ -68,7 +69,8 @@ public final class GitCommands {
       String topLevel = Path.of(locations[0].strip()).toAbsolutePath().normalize().toString();
       boolean isMerging = Files.exists(directory.resolve(locations[1].strip()));
       return parseStatus(topLevel, isMerging, success(status.get()), !success(unmerged.get()).isBlank(),
-        parseConfig(config.get().stdout()), remoteHeads.get().stdout(), parseRemotes(remotes.get().stdout()));
+        parseConfig(config.get().stdout()), remoteHeads.get().stdout(), parseRemotes(remotes.get().stdout()),
+        GlabHosts.read(environment));
     } catch (CommandException | ExecutionException | NumberFormatException e) {
       return Status.NONE;
     } catch (InterruptedException e) {
@@ -84,9 +86,10 @@ public final class GitCommands {
    * @param config      every config value by its key, as {@link #parseConfig} reads them
    * @param remoteHeads {@code for-each-ref --format="%(refname) %(symref)" refs/remotes/*}{@code /HEAD}
    * @param remotes     each remote's fetch URL, as {@link #parseRemotes} reads them
+   * @param gitLabHosts the hosts glab knows, see {@link #parseRemote}
    */
   static Status parseStatus(String topLevel, boolean isMerging, String porcelain, boolean hasConflicts,
-    Map<String, String> config, String remoteHeads, Map<String, String> remotes) {
+    Map<String, String> config, String remoteHeads, Map<String, String> remotes, Set<String> gitLabHosts) {
     String branch = null;
     boolean hasCommits = false;
     int ahead = -1;
@@ -118,9 +121,9 @@ public final class GitCommands {
         }
       }
     }
-    GitHubRepo gitHub = remote == null ? null : parseGitHub(remotes.get(remote));
+    HostedRepo hosted = remote == null ? null : parseRemote(remotes.get(remote), gitLabHosts);
     return new Status(true, topLevel, branch, changedFiles, hasConflicts, isMerging, hasCommits, remote,
-      tracksBranch, tracksBranch ? ahead : 0, defaultBranch, gitHub);
+      tracksBranch, tracksBranch ? ahead : 0, defaultBranch, hosted);
   }
 
   /**
@@ -311,10 +314,13 @@ public final class GitCommands {
   }
 
   /**
-   * The GitHub repository a remote URL points to: {@code git@host:o/r.git}, {@code ssh://git@host:22/o/r} or
-   * {@code https://host/o/r.git}. Null for other hosts and for paths.
+   * The GitHub or GitLab repository a remote URL points to: {@code git@host:o/r.git}, {@code ssh://git@host:22/o/r}
+   * or {@code https://host/o/r.git}. A host is GitLab's when its name holds "gitlab" or glab knows it, and GitHub's
+   * when its name holds "github". GitLab paths may have subgroups. Null for other hosts and for paths.
+   *
+   * @param gitLabHosts the hosts glab knows, lowercase
    */
-  public static @Nullable GitHubRepo parseGitHub(@Nullable String url) {
+  public static @Nullable HostedRepo parseRemote(@Nullable String url, Set<String> gitLabHosts) {
     if (url == null) {
       return null;
     }
@@ -351,11 +357,16 @@ public final class GitCommands {
       path = path.substring(0, path.length() - ".git".length());
     }
     String[] parts = path.split("/");
-    host = host.toLowerCase(Locale.ROOT);
-    if (!host.contains("github") || parts.length != 2 || parts[0].isEmpty() || parts[1].isEmpty()) {
-      return null;
+    for (String part : parts) {
+      if (part.isEmpty()) {
+        return null;
+      }
     }
-    return new GitHubRepo(host, parts[0], parts[1]);
+    host = host.toLowerCase(Locale.ROOT);
+    if (host.contains("gitlab") || gitLabHosts.contains(host)) {
+      return parts.length >= 2 ? new HostedRepo(Forge.GITLAB, host, path) : null;
+    }
+    return host.contains("github") && parts.length == 2 ? new HostedRepo(Forge.GITHUB, host, path) : null;
   }
 
   /** The output's end, at most {@link #MAX_DETAIL_CHARS}: git's error output, then what it printed. */
@@ -470,6 +481,7 @@ public final class GitCommands {
     builder.environment().putAll(environment);
     builder.environment().put("GIT_TERMINAL_PROMPT", "0");
     builder.environment().put("GH_PROMPT_DISABLED", "1");
+    builder.environment().put("NO_PROMPT", "true");
     Path output = createTemp(".out");
     Path error = createTemp(".err");
     try {
@@ -564,7 +576,7 @@ public final class GitCommands {
    * @param tracksBranch  the branch tracks the branch of the same name on {@code remote}, which exists
    * @param ahead         commits not on the tracked branch, 0 when it tracks none
    * @param defaultBranch the remote's default branch as the last fetch recorded it, null when unknown
-   * @param gitHub        the GitHub repository of {@code remote}, null when it is elsewhere
+   * @param hosted        the GitHub or GitLab repository of {@code remote}, null when it is elsewhere
    */
   public record Status(
     boolean isRepository,
@@ -578,7 +590,7 @@ public final class GitCommands {
     boolean tracksBranch,
     int ahead,
     @Nullable String defaultBranch,
-    @Nullable GitHubRepo gitHub
+    @Nullable HostedRepo hosted
   ) {
     public static final Status NONE = new Status(false, null, null, 0, false, false, false, null, false, 0, null, null);
 
@@ -588,14 +600,23 @@ public final class GitCommands {
     }
   }
 
-  public record GitHubRepo(
+  /** @param path {@code owner/name}, on GitLab {@code group/subgroup/name} too */
+  public record HostedRepo(
+    Forge forge,
     String host,
-    String owner,
-    String name
+    String path
   ) {
-    /** {@code repos/owner/name}, the repository's REST path. */
+    /** The repository's REST path: {@code repos/owner/name}, or {@code projects/<encoded path>} on GitLab. */
     public String apiPath() {
-      return "repos/" + this.owner + "/" + this.name;
+      return switch (this.forge) {
+        case GITHUB -> "repos/" + this.path;
+        case GITLAB -> "projects/" + URLEncoder.encode(this.path, StandardCharsets.UTF_8);
+      };
+    }
+
+    /** {@code host/path}, as {@code gh --repo} and {@code glab -R} take it. */
+    public String repository() {
+      return this.host + "/" + this.path;
     }
   }
 
@@ -606,7 +627,7 @@ public final class GitCommands {
   ) {
   }
 
-  /** A git or gh command failed, was cancelled or took too long. The message is the command's own output. */
+  /** A git, gh or glab command failed, was cancelled or took too long. The message is the command's own output. */
   public static final class CommandException extends Exception {
     private final Kind kind;
 

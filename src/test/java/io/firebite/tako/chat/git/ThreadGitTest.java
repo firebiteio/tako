@@ -11,8 +11,9 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 
 import io.firebite.tako.agent.AgentException;
+import io.firebite.tako.ide.project.Forge;
+import io.firebite.tako.ide.project.ForgeCli;
 import io.firebite.tako.ide.project.GitCommands;
-import io.firebite.tako.ide.project.GitHubCli;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.TestRepos;
 import java.nio.file.Files;
@@ -21,6 +22,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicReference;
@@ -29,16 +31,18 @@ import org.junit.Test;
 
 public class ThreadGitTest {
   private static final BooleanSupplier NEVER = GitCommands.NEVER_CANCELLED;
-  private static final GitCommands.GitHubRepo REPO = new GitCommands.GitHubRepo("github.com", "o", "r");
+  private static final GitCommands.HostedRepo REPO = new GitCommands.HostedRepo(Forge.GITHUB, "github.com", "o/r");
   private static final GitInfo.PullRequest OPEN = new GitInfo.PullRequest("#7", "Old", "https://x/7", "open");
   private static final GitInfo.PullRequest MERGED = new GitInfo.PullRequest("#6", "Old", "https://x/6", "merged");
 
   private final AtomicReference<ThreadGit.Busy> busy = new AtomicReference<>();
-  private final FakeGitHub gitHub = new FakeGitHub();
+  private final FakeForge gitHub = new FakeForge();
+  /** The forges whose CLI the thread's git asked for, in order. */
+  private final List<Forge> forges = new CopyOnWriteArrayList<>();
 
   @Test
   public void cleanPushedBranchOffersOnlyAPullRequest() {
-    List<ThreadGit.Option> options = ThreadGit.options(status(0, true, 0), GitHubCli.State.READY, false, null, null);
+    List<ThreadGit.Option> options = ThreadGit.options(status(0, true, 0), ForgeCli.State.READY, false, null, null);
 
     assertEquals(List.of(
       new ThreadGit.Option(GitAction.COMMIT, false, Blocker.NOTHING_TO_COMMIT),
@@ -48,7 +52,7 @@ public class ThreadGitTest {
 
   @Test
   public void changesOfferEverything() {
-    List<ThreadGit.Option> options = ThreadGit.options(status(2, false, 0), GitHubCli.State.READY, false, null,
+    List<ThreadGit.Option> options = ThreadGit.options(status(2, false, 0), ForgeCli.State.READY, false, null,
       MERGED);
 
     for (ThreadGit.Option option : options) {
@@ -59,8 +63,8 @@ public class ThreadGitTest {
 
   @Test
   public void unpushedCommitsCanBePushed() {
-    assertNull(blocker(GitAction.COMMIT_AND_PUSH, status(0, true, 2), GitHubCli.State.READY, null));
-    assertNull(blocker(GitAction.COMMIT_AND_PUSH, status(0, false, 0), GitHubCli.State.READY, null));
+    assertNull(blocker(GitAction.COMMIT_AND_PUSH, status(0, true, 2), ForgeCli.State.READY, null));
+    assertNull(blocker(GitAction.COMMIT_AND_PUSH, status(0, false, 0), ForgeCli.State.READY, null));
   }
 
   @Test
@@ -92,8 +96,8 @@ public class ThreadGitTest {
   public void cleanBranchWithoutCommitsHasNothingToPush() {
     GitCommands.Status unborn = with(status(0, false, 0), "feat", "origin", REPO, false, false);
 
-    assertEquals(Blocker.NOTHING_TO_PUSH, blocker(GitAction.COMMIT_AND_PUSH, unborn, GitHubCli.State.READY, null));
-    assertEquals(Blocker.NOTHING_TO_PUSH, blocker(GitAction.COMMIT_AND_PULL_REQUEST, unborn, GitHubCli.State.READY,
+    assertEquals(Blocker.NOTHING_TO_PUSH, blocker(GitAction.COMMIT_AND_PUSH, unborn, ForgeCli.State.READY, null));
+    assertEquals(Blocker.NOTHING_TO_PUSH, blocker(GitAction.COMMIT_AND_PULL_REQUEST, unborn, ForgeCli.State.READY,
       null));
   }
 
@@ -102,17 +106,17 @@ public class ThreadGitTest {
     GitCommands.Status changed = status(1, false, 0);
     GitAction pr = GitAction.COMMIT_AND_PULL_REQUEST;
 
-    assertEquals(Blocker.NOT_GITHUB, blocker(pr, with(changed, "feat", "origin", null, false, true), null, null));
-    assertEquals(Blocker.GH_MISSING, blocker(pr, changed, GitHubCli.State.MISSING, null));
-    assertEquals(Blocker.GH_CHECKING, blocker(pr, changed, null, null));
-    assertEquals(Blocker.GH_LOGGED_OUT, blocker(pr, changed, GitHubCli.State.LOGGED_OUT, null));
-    assertEquals(Blocker.PULL_REQUEST_OPEN, blocker(pr, changed, GitHubCli.State.READY, OPEN));
+    assertEquals(Blocker.NOT_HOSTED, blocker(pr, with(changed, "feat", "origin", null, false, true), null, null));
+    assertEquals(Blocker.CLI_MISSING, blocker(pr, changed, ForgeCli.State.MISSING, null));
+    assertEquals(Blocker.CLI_CHECKING, blocker(pr, changed, null, null));
+    assertEquals(Blocker.CLI_LOGGED_OUT, blocker(pr, changed, ForgeCli.State.LOGGED_OUT, null));
+    assertEquals(Blocker.PULL_REQUEST_OPEN, blocker(pr, changed, ForgeCli.State.READY, OPEN));
     assertNull("push still updates an open pull request",
-      blocker(GitAction.COMMIT_AND_PUSH, changed, GitHubCli.State.READY, OPEN));
+      blocker(GitAction.COMMIT_AND_PUSH, changed, ForgeCli.State.READY, OPEN));
     GitCommands.Status onMain = new GitCommands.Status(true, "/r", "main", 1, false, false, true, "origin", false, 0,
       "main", REPO);
-    assertEquals(Blocker.DEFAULT_BRANCH, blocker(pr, onMain, GitHubCli.State.READY, null));
-    assertNull(blocker(GitAction.COMMIT_AND_PUSH, onMain, GitHubCli.State.READY, null));
+    assertEquals(Blocker.DEFAULT_BRANCH, blocker(pr, onMain, ForgeCli.State.READY, null));
+    assertNull(blocker(GitAction.COMMIT_AND_PUSH, onMain, ForgeCli.State.READY, null));
   }
 
   @Test
@@ -369,18 +373,18 @@ public class ThreadGitTest {
     write(repository, "a.txt", "changed\n");
     git(repository, "remote", "add", "origin", "https://github.logged-out-" + System.nanoTime() + ".com/o/r.git");
     ThreadGit git = this.threadGit(repository);
-    this.gitHub.state = GitHubCli.State.LOGGED_OUT;
+    this.gitHub.state = ForgeCli.State.LOGGED_OUT;
 
     ThreadGit.Menu local = git.menu(null, null);
-    assertEquals(Blocker.GH_CHECKING, local.options().getLast().blocker());
-    assertTrue(local.waitsForGitHub());
+    assertEquals(Blocker.CLI_CHECKING, local.options().getLast().blocker());
+    assertTrue(local.waitsForForge());
     assertNull("commit and push do not wait", local.options().get(GitAction.COMMIT_AND_PUSH.ordinal()).blocker());
     assertEquals(0, this.gitHub.stateCalls.get());
 
-    git.checkGitHub(local);
-    assertEquals(Blocker.GH_LOGGED_OUT, git.menu(null, null).options().getLast().blocker());
-    this.gitHub.state = GitHubCli.State.READY;
-    git.checkGitHub(git.menu(null, null));
+    git.checkForge(local);
+    assertEquals(Blocker.CLI_LOGGED_OUT, git.menu(null, null).options().getLast().blocker());
+    this.gitHub.state = ForgeCli.State.READY;
+    git.checkForge(git.menu(null, null));
     assertEquals("a recent answer is reused", 1, this.gitHub.stateCalls.get());
   }
 
@@ -393,12 +397,12 @@ public class ThreadGitTest {
 
     assertNull(menu(git).options().getLast().blocker());
     assertNull(menu(git).options().getLast().blocker());
-    assertFalse(git.menu(null, null).waitsForGitHub());
+    assertFalse(git.menu(null, null).waitsForForge());
     assertEquals(1, this.gitHub.stateCalls.get());
 
     ThreadGit.Menu plain = this.threadGit(TestRepos.committed()).menu(null, null);
-    assertFalse(plain.waitsForGitHub());
-    this.threadGit(TestRepos.committed()).checkGitHub(plain);
+    assertFalse(plain.waitsForForge());
+    this.threadGit(TestRepos.committed()).checkForge(plain);
     assertEquals(1, this.gitHub.stateCalls.get());
   }
 
@@ -479,7 +483,31 @@ public class ThreadGitTest {
 
     assertEquals("fork/feat", result.pushedTo());
     assertEquals(List.of("feat->main: t / b"), this.gitHub.created);
-    assertEquals(new GitCommands.GitHubRepo("github.com", "me", "app"), this.gitHub.repositories.getFirst());
+    assertEquals(new GitCommands.HostedRepo(Forge.GITHUB, "github.com", "me/app"),
+      this.gitHub.repositories.getFirst());
+  }
+
+  @Test
+  public void mergeRequestsGoToGitLabThroughGlab() throws Exception {
+    Path repository = TestRepos.committed();
+    git(repository, "checkout", "-q", "-b", "feat");
+    write(repository, "a.txt", "changed\n");
+    Path bare = TestRepos.addRemote(repository, "origin");
+    git(repository, "remote", "set-url", "origin", "https://gitlab.com/group/sub/app.git");
+    git(repository, "remote", "set-url", "--push", "origin", bare.toString());
+    ThreadGit git = this.threadGit(repository);
+    ThreadGit.Menu menu = menu(git);
+    ThreadGit.Option mergeRequest = menu.options().getLast();
+    assertNull(mergeRequest.blocker());
+
+    git.run(mergeRequest, menu.status(), new Draft("m", "t", "b"), s -> {
+    }, NEVER);
+
+    assertEquals(List.of("feat->main: t / b"), this.gitHub.created);
+    assertEquals(new GitCommands.HostedRepo(Forge.GITLAB, "gitlab.com", "group/sub/app"),
+      this.gitHub.repositories.getFirst());
+    assertTrue(this.forges.contains(Forge.GITLAB));
+    assertFalse(this.forges.contains(Forge.GITHUB));
   }
 
   @Test
@@ -493,7 +521,7 @@ public class ThreadGitTest {
 
     List<CompletableFuture<Void>> checks = new ArrayList<>();
     for (int i = 0; i < 4; i++) {
-      checks.add(CompletableFuture.runAsync(() -> git.checkGitHub(local)));
+      checks.add(CompletableFuture.runAsync(() -> git.checkForge(local)));
     }
     for (CompletableFuture<Void> check : checks) {
       check.get(10, TimeUnit.SECONDS);
@@ -509,7 +537,7 @@ public class ThreadGitTest {
     git(repository, "checkout", "-q", "-b", "feat");
     write(repository, "a.txt", "changed\n");
     ThreadGit git = this.threadGit(repository);
-    git.checkGitHub(git.menu(null, null));
+    git.checkForge(git.menu(null, null));
 
     assertEquals(Blocker.PULL_REQUEST_OPEN, git.menu(OPEN, "feat").options().getLast().blocker());
     assertNull(git.menu(OPEN, "main").options().getLast().blocker());
@@ -565,18 +593,21 @@ public class ThreadGitTest {
   /** The menu as the header ends up showing it: after the GitHub CLI was asked, when it had to be. */
   private static ThreadGit.Menu menu(ThreadGit git) {
     ThreadGit.Menu menu = git.menu(null, null);
-    if (!menu.waitsForGitHub()) {
+    if (!menu.waitsForForge()) {
       return menu;
     }
-    git.checkGitHub(menu);
+    git.checkForge(menu);
     return git.menu(null, null);
   }
 
   private ThreadGit threadGit(Path folder) {
-    return new ThreadGit(() -> folder, ENVIRONMENT, topLevel -> this.busy.get(), this.gitHub);
+    return new ThreadGit(() -> folder, ENVIRONMENT, topLevel -> this.busy.get(), forge -> {
+      this.forges.add(forge);
+      return this.gitHub;
+    });
   }
 
-  private static Blocker blocker(GitAction action, GitCommands.Status status, GitHubCli.State gh,
+  private static Blocker blocker(GitAction action, GitCommands.Status status, ForgeCli.State gh,
     GitInfo.PullRequest stored) {
     return ThreadGit.options(status, gh, false, null, stored).get(action.ordinal()).blocker();
   }
@@ -588,7 +619,7 @@ public class ThreadGitTest {
   }
 
   private static GitCommands.Status with(GitCommands.Status status, String branch, String remote,
-    GitCommands.GitHubRepo gitHub, boolean hasConflicts, boolean hasCommits) {
+    GitCommands.HostedRepo gitHub, boolean hasConflicts, boolean hasCommits) {
     return new GitCommands.Status(true, status.topLevel(), branch, status.changedFiles(), hasConflicts,
       status.isMerging(), hasCommits, remote, status.tracksBranch(),
       status.ahead(), status.defaultBranch(), gitHub);
@@ -608,9 +639,9 @@ public class ThreadGitTest {
     void run() throws Exception;
   }
 
-  private static final class FakeGitHub implements GitHubCli {
+  private static final class FakeForge implements ForgeCli {
     private final List<String> created = new ArrayList<>();
-    private final List<GitCommands.GitHubRepo> repositories = new ArrayList<>();
+    private final List<GitCommands.HostedRepo> repositories = new ArrayList<>();
     private final AtomicInteger stateCalls = new AtomicInteger();
     private volatile State state = State.READY;
     private volatile String createError;
@@ -628,14 +659,14 @@ public class ThreadGitTest {
     }
 
     @Override
-    public String defaultBranch(Path directory, Map<String, String> environment, GitCommands.GitHubRepo repository,
+    public String defaultBranch(Path directory, Map<String, String> environment, GitCommands.HostedRepo repository,
       BooleanSupplier cancelled) {
       return "main";
     }
 
     @Override
     public GitInfo.PullRequest create(Path directory, Map<String, String> environment,
-      GitCommands.GitHubRepo repository, String head, String base, String title, String body,
+      GitCommands.HostedRepo repository, String head, String base, String title, String body,
       BooleanSupplier cancelled) throws GitCommands.CommandException {
       if (this.createError != null) {
         throw new GitCommands.CommandException(GitCommands.CommandException.Kind.FAILED, this.createError);

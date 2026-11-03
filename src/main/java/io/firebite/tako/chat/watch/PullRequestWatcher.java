@@ -16,7 +16,7 @@ import java.util.function.LongSupplier;
 import org.jetbrains.annotations.Nullable;
 
 /**
- * Polls the pull requests threads watch and wakes a thread's agent with a prompt when something on its pull request
+ * Polls the pull requests threads watch, GitHub's or GitLab's merge requests, and wakes a thread's agent with a prompt when something on its pull request
  * needs it. A thread that is busy is not polled; its watch stays due, so the next tick after the thread settles polls
  * it and tells everything that changed meanwhile in one prompt. What a watch has seen moves on only once the prompt
  * was delivered.
@@ -30,27 +30,28 @@ public final class PullRequestWatcher {
   private static final Gson GSON = new Gson();
 
   private final ThreadStore store;
-  private final GhCli.Runner gh;
+  private final PullRequestReader reader;
   private final Host host;
   private final LongSupplier clock;
-  /** Guards swapping a record's watch. gh, {@link Host#lookup} and {@link Host#deliver} never run under it. */
+  /** Guards swapping a record's watch. The CLI, {@link Host#lookup} and {@link Host#deliver} never run under it. */
   private final Object lock = new Object();
   private final Set<String> starting = ConcurrentHashMap.newKeySet();
 
-  public PullRequestWatcher(ThreadStore store, GhCli.Runner gh, Host host, LongSupplier clock) {
+  /** @param cli runs gh or glab */
+  public PullRequestWatcher(ThreadStore store, ForgeCall.Runner cli, Host host, LongSupplier clock) {
     this.store = store;
-    this.gh = gh;
+    this.reader = new PullRequestReader(cli);
     this.host = host;
     this.clock = clock;
   }
 
   /**
-   * Watches a pull request for the thread, replacing a watch on another one. Watching the one already watched keeps
-   * what that watch has seen. Runs gh, so call off the EDT.
+   * Watches a pull or merge request for the thread, replacing a watch on another one. Watching the one already watched
+   * keeps what that watch has seen. Runs gh or glab, so call off the EDT.
    *
-   * @param url         the pull request's address, or null for the one of the thread's branch
-   * @param freshLookup whether to ask gh for the branch's pull request instead of trusting the thread's record, which
-   *                    may be from before the agent switched branches or opened one
+   * @param url         the request's address, or null for the one of the thread's branch
+   * @param freshLookup whether to ask the forge for the branch's request instead of trusting the thread's record,
+   *                    which may be from before the agent switched branches or opened one
    */
   public Started start(String threadId, @Nullable String url, boolean freshLookup) throws WatchException {
     ThreadStore.Record record = this.store.find(threadId);
@@ -67,24 +68,34 @@ public final class PullRequestWatcher {
     try {
       PullRequestUrl target = this.target(record, url, freshLookup);
       Path folder = this.host.folder(record);
-      String view = this.view(folder, target);
-      GhCli.Result comments = this.gh.run(folder, commentsArgs(target));
-      boolean commentsRead = GhCli.classify(comments) == null;
-      if (!commentsRead) {
-        LOG.debug("Could not read the review comments of " + target.repository() + ": " + comments.err());
+      PullRequestReader.Read read = this.reader.read(folder, target);
+      if (read.failure() != null) {
+        throw failure(target, read.failure());
       }
-      PullRequestStatus status = Objects.requireNonNull(PullRequestStatus.parse(view,
-        commentsRead ? comments.out() : null));
+      PullRequestStatus status = Objects.requireNonNull(read.status());
+      if (!status.isOpen()) {
+        String state = status.state().toLowerCase(Locale.ROOT);
+        throw new WatchException(WatchException.Reason.NOT_OPEN, status.label(), status.label() + " is " + state
+          + ". Only open pull requests can be watched.");
+      }
       PullRequestWatch existing = record.watch;
-      String self = existing != null && target.equals(PullRequestUrl.parse(existing.url)) && !existing.self.isEmpty()
-        ? existing.self
-        : this.output(this.gh.run(folder, List.of("api", "--hostname", target.host(), "user", "--jq", ".login")))
-          .trim();
-      if (self.isEmpty()) {
-        throw new WatchException(WatchException.Reason.FAILED, "gh did not tell your login", "gh did not tell your "
-          + "GitHub login.");
+      String self;
+      if (existing != null && target.equals(PullRequestUrl.parse(existing.url)) && !existing.self.isEmpty()) {
+        self = existing.self;
+      } else {
+        ForgeCall.Result user = this.reader.self(folder, target);
+        ForgeCall.Failure failure = ForgeCall.classify(user);
+        if (failure != null) {
+          throw failure(target, failure);
+        }
+        self = user.out().trim();
       }
-      return this.begin(record, status, self, commentsRead);
+      if (self.isEmpty()) {
+        String cli = target.forge().cli();
+        throw new WatchException(WatchException.Reason.FAILED, cli + " did not tell your login", cli + " did not "
+          + "tell your " + target.forge().displayName() + " login.");
+      }
+      return this.begin(record, status, self, read.commentsRead());
     } finally {
       this.starting.remove(threadId);
     }
@@ -156,32 +167,17 @@ public final class PullRequestWatcher {
       }
       return;
     }
-    Path folder = this.host.folder(record);
-    GhCli.Result view = this.gh.run(folder, viewArgs(url));
-    GhCli.Failure failure = GhCli.classify(view);
-    PullRequestStatus status = null;
-    boolean commentsRead = false;
-    if (failure == null) {
-      GhCli.Result comments = this.gh.run(folder, commentsArgs(url));
-      commentsRead = GhCli.classify(comments) == null;
-      if (!commentsRead) {
-        LOG.debug("Could not read the review comments of " + watch.url + ": " + comments.err());
-      }
-      status = PullRequestStatus.parse(view.out(), commentsRead ? comments.out() : null);
-      if (status == null) {
-        failure = new GhCli.Failure(GhCli.Kind.OTHER, "gh gave no pull request for " + watch.url);
-      }
-    }
+    PullRequestReader.Read read = this.reader.read(this.host.folder(record), url);
     PullRequestWatch.Update update;
     synchronized (this.lock) {
       if (!this.isCurrent(record, watch)) {
         return;
       }
-      if (failure != null) {
-        this.failed(record, watch, failure);
+      if (read.failure() != null) {
+        this.failed(record, watch, read.failure());
         return;
       }
-      update = watch.advance(status, commentsRead);
+      update = watch.advance(Objects.requireNonNull(read.status()), read.commentsRead());
       if (update.events().isEmpty()) {
         if (GSON.toJson(update.next()).equals(GSON.toJson(watch))) {
           watch.nextPollAt = this.clock.getAsLong() + POLL_MILLIS;
@@ -212,7 +208,8 @@ public final class PullRequestWatcher {
     if (url != null && !url.isBlank()) {
       PullRequestUrl parsed = PullRequestUrl.parse(url);
       if (parsed == null) {
-        throw new WatchException(WatchException.Reason.BAD_URL, url, "Not a GitHub pull request URL: " + url);
+        throw new WatchException(WatchException.Reason.BAD_URL, url, "Not a GitHub pull request or GitLab merge "
+          + "request URL: " + url);
       }
       return parsed;
     }
@@ -220,48 +217,33 @@ public final class PullRequestWatcher {
     if (pullRequest == null) {
       pullRequest = record.pullRequest;
     }
-    if (pullRequest == null || !pullRequest.isGitHub() || !"open".equals(pullRequest.state())) {
-      throw new WatchException(WatchException.Reason.NO_PULL_REQUEST, "", "This thread's branch has no open GitHub "
-        + "pull request. Pass url.");
+    if (pullRequest == null || !"open".equals(pullRequest.state())) {
+      throw new WatchException(WatchException.Reason.NO_PULL_REQUEST, "", "This thread's branch has no open pull "
+        + "or merge request. Pass url.");
     }
     PullRequestUrl parsed = PullRequestUrl.parse(pullRequest.url());
     if (parsed == null) {
-      throw new WatchException(WatchException.Reason.BAD_URL, pullRequest.url(), "Not a GitHub pull request URL: "
-        + pullRequest.url());
+      throw new WatchException(WatchException.Reason.BAD_URL, pullRequest.url(), "Not a GitHub pull request or "
+        + "GitLab merge request URL: " + pullRequest.url());
     }
     return parsed;
   }
 
-  /** gh's view of the open pull request. */
-  private String view(Path folder, PullRequestUrl target) throws WatchException {
-    String view = this.output(this.gh.run(folder, viewArgs(target)));
-    PullRequestStatus status = PullRequestStatus.parse(view, null);
-    if (status == null) {
-      throw new WatchException(WatchException.Reason.FAILED, "gh gave no pull request", "gh gave no pull request for "
-        + target.repository() + "#" + target.number() + ".");
-    }
-    if (!status.isOpen()) {
-      String state = status.state().toLowerCase(Locale.ROOT);
-      throw new WatchException(WatchException.Reason.NOT_OPEN, status.label(), status.label() + " is " + state
-        + ". Only open pull requests can be watched.");
-    }
-    return view;
-  }
-
-  /** The command's output, or the reason it failed. */
-  private String output(GhCli.Result result) throws WatchException {
-    GhCli.Failure failure = GhCli.classify(result);
-    if (failure == null) {
-      return result.out();
-    }
-    throw switch (failure.kind()) {
-      case MISSING -> new WatchException(WatchException.Reason.MISSING, "", "gh, the GitHub CLI, is not installed "
-        + "or not on the PATH.");
-      case LOGGED_OUT -> new WatchException(WatchException.Reason.LOGGED_OUT, "", "gh is not logged in. The person "
-        + "has to run gh auth login.");
-      case RATE_LIMITED -> new WatchException(WatchException.Reason.RATE_LIMITED, "", "GitHub's rate limit is "
+  /**
+   * Why a CLI call failed, for the agent and the chat. The detail names the CLI when it is missing or logged out, and
+   * the forge when its rate limit is reached.
+   */
+  private static WatchException failure(PullRequestUrl url, ForgeCall.Failure failure) {
+    String cli = url.forge().cli();
+    String forge = url.forge().displayName();
+    return switch (failure.kind()) {
+      case MISSING -> new WatchException(WatchException.Reason.MISSING, cli, cli + ", the " + forge + " CLI, is not "
+        + "installed or not on the PATH.");
+      case LOGGED_OUT -> new WatchException(WatchException.Reason.LOGGED_OUT, cli, cli + " is not logged in to "
+        + url.host() + ". The person has to run " + cli + " auth login --hostname " + url.host() + ".");
+      case RATE_LIMITED -> new WatchException(WatchException.Reason.RATE_LIMITED, forge, forge + "'s rate limit is "
         + "reached. Try again later.");
-      case OTHER -> new WatchException(WatchException.Reason.FAILED, failure.message(), "gh failed: "
+      case OTHER -> new WatchException(WatchException.Reason.FAILED, failure.message(), cli + " failed: "
         + failure.message());
     };
   }
@@ -288,7 +270,7 @@ public final class PullRequestWatcher {
     }
   }
 
-  private void failed(ThreadStore.Record record, PullRequestWatch watch, GhCli.Failure failure) {
+  private void failed(ThreadStore.Record record, PullRequestWatch watch, ForgeCall.Failure failure) {
     switch (failure.kind()) {
       case RATE_LIMITED -> watch.nextPollAt = this.clock.getAsLong() + RATE_LIMIT_MILLIS;
       case MISSING -> this.end(record, watch, Stop.MISSING, failure.message());
@@ -329,14 +311,6 @@ public final class PullRequestWatcher {
     this.store.save();
   }
 
-  private static List<String> viewArgs(PullRequestUrl url) {
-    return List.of("pr", "view", url.webUrl(), "--json", PullRequestStatus.VIEW_FIELDS);
-  }
-
-  private static List<String> commentsArgs(PullRequestUrl url) {
-    return List.of("api", "--hostname", url.host(), url.commentsPath());
-  }
-
   /** Why a watch ended on its own, other than by its pull request merging or closing. */
   public enum Stop {
     MISSING,
@@ -351,10 +325,10 @@ public final class PullRequestWatcher {
     @Nullable
     ChatController.State state(String threadId);
 
-    /** Where gh runs: a folder that exists. */
+    /** Where gh or glab runs: a folder that exists. */
     Path folder(ThreadStore.Record record);
 
-    /** The open pull request of the thread's branch, asked of gh now; null without one or a work folder. */
+    /** The open pull request of the thread's branch, asked of the forge now; null without one or a work folder. */
     @Nullable
     GitInfo.PullRequest lookup(ThreadStore.Record record);
 
@@ -364,7 +338,7 @@ public final class PullRequestWatcher {
      */
     boolean deliver(ThreadStore.Record record, PullRequestWatch watch, String prompt);
 
-    /** The watch ended on its own; tell the person. */
+    /** The watch ended on its own; tell the person. @param number {@code #12} or {@code !7} */
     void stopped(ThreadStore.Record record, String number, Stop reason, String message);
 
     /** The thread's watch started or ended; the chat should show it. */

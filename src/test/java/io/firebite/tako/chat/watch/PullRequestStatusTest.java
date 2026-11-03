@@ -4,6 +4,7 @@ import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertNull;
 import static org.junit.Assert.assertTrue;
 
+import io.firebite.tako.ide.project.Forge;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Test;
@@ -84,6 +85,64 @@ public class PullRequestStatusTest {
     assertEquals(PullRequestStatus.Outcome.PENDING, status.checks().get(0).outcome());
     assertEquals(PullRequestStatus.Outcome.PENDING, status.checks().get(1).outcome());
     assertEquals(List.of(new PullRequestStatus.Review("R1", "", "", "")), status.reviews());
+  }
+
+  @Test
+  public void readsGitLabMergeRequest() {
+    PullRequestStatus status = Gl.status();
+
+    assertEquals(Forge.GITLAB, status.forge());
+    assertEquals("!7", status.label());
+    assertEquals(Gl.URL, status.url());
+    assertTrue(status.isOpen());
+    assertEquals(Gh.SHA_A, status.headSha());
+    assertEquals("main", status.baseBranch());
+    assertEquals("MERGEABLE", status.mergeable());
+    assertEquals(List.of(
+      new PullRequestStatus.Check("flaky", "https://git.example.com/group/sub/app/-/jobs/503",
+        PullRequestStatus.Outcome.PASSED),
+      new PullRequestStatus.Check("lint", "https://git.example.com/group/sub/app/-/jobs/502",
+        PullRequestStatus.Outcome.PASSED),
+      new PullRequestStatus.Check("test", "https://git.example.com/group/sub/app/-/jobs/501",
+        PullRequestStatus.Outcome.FAILED)),
+      status.checks());
+    assertEquals(List.of(new PullRequestStatus.Review("3001", "erin", "APPROVED", ""),
+      new PullRequestStatus.Review("3002", "erin", "COMMENTED", "Looks good overall")), status.reviews());
+    assertEquals(List.of(new PullRequestStatus.Comment(3003, "dave", "src/App.java", 12, null, "Rename this",
+      Gl.URL + "#note_3003")), status.comments());
+  }
+
+  @Test
+  public void gitLabStatesInGitHubsTerms() {
+    String request = Gl.recorded("merge-request.json");
+
+    assertEquals("MERGED", gitLab(request.replace("\"opened\"", "\"merged\"")).state());
+    assertEquals("CLOSED", gitLab(request.replace("\"opened\"", "\"closed\"")).state());
+    assertEquals("CLOSED", gitLab(request.replace("\"opened\"", "\"locked\"")).state());
+    assertEquals("CONFLICTING", gitLab(request.replace("\"has_conflicts\": false", "\"has_conflicts\": true"))
+      .mergeable());
+    assertEquals("UNKNOWN", gitLab(request.replace("\"can_be_merged\"", "\"checking\"")).mergeable());
+    assertEquals(PullRequestStatus.Outcome.PENDING, PullRequestStatus.parseGitLab(request,
+      "[{\"name\":\"test\",\"status\":\"running\"},{\"name\":\"deploy\",\"status\":\"manual\"}]", "[]").checks()
+      .getFirst().outcome());
+    assertNull(PullRequestStatus.parseGitLab("{\"message\":\"404 Not found\"}", null, null));
+  }
+
+  @Test
+  public void onlyTheHeadsPipelineCounts() {
+    String request = Gl.recorded("merge-request.json");
+
+    assertEquals(new PullRequestStatus.Pipeline(42, 900), PullRequestStatus.headPipeline(request));
+    assertEquals("projects/42/pipelines/900/jobs?per_page=100", PullRequestStatus.headPipeline(request).jobsPath());
+    String older = request.replaceFirst("\"sha\": \"aaaaaaa1", "\"sha\": \"bbbbbbb2");
+    assertNull("a pipeline of the commit before", PullRequestStatus.headPipeline(older));
+    assertEquals("merged results test the head too", new PullRequestStatus.Pipeline(42, 900),
+      PullRequestStatus.headPipeline(older.replace("/7/head", "/7/merge")));
+    assertNull(PullRequestStatus.headPipeline(request.replace("\"head_pipeline\"", "\"no_pipeline\"")));
+  }
+
+  private static PullRequestStatus gitLab(String request) {
+    return PullRequestStatus.parseGitLab(request, null, "[]");
   }
 
   @Test

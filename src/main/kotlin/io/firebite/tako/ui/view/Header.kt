@@ -36,6 +36,8 @@ import io.firebite.tako.chat.git.Blocker
 import io.firebite.tako.chat.git.GitAction
 import io.firebite.tako.chat.git.ThreadGit
 import io.firebite.tako.ide.editor.IdeFiles
+import io.firebite.tako.ide.project.Forge
+import io.firebite.tako.ide.project.GitCommands
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.WatchButton
@@ -247,8 +249,8 @@ private fun WatchToggle(thread: ThreadState, button: WatchButton) {
 }
 
 /**
- * Commit, push and pull request for the thread's folder. The menu opens with what was last read and updates as git
- * and the GitHub CLI answer again. It is read ahead whenever the thread shows, a turn starts or ends, the branch
+ * Commit, push and pull or merge request for the thread's folder. The menu opens with what was last read and updates
+ * as git and gh or glab answer again. It is read ahead whenever the thread shows, a turn starts or ends, the branch
  * changes or a git action ends.
  */
 @Composable
@@ -270,7 +272,7 @@ private fun GitActionsButton(workspace: Workspace, thread: ThreadState) {
     if (isOpen) {
       val shown = thread.gitMenu
       val entries = shown?.options?.map { option ->
-        MenuEntry(gitLabel(option), gitDescription(option, shown, thread), gitIcon(option.action),
+        MenuEntry(gitLabel(option, shown.status), gitDescription(option, shown, thread), gitIcon(option.action),
           enabled = option.blocker == null) {
           workspace.runGitAction(thread, option, shown.status)
         }
@@ -281,7 +283,7 @@ private fun GitActionsButton(workspace: Workspace, thread: ThreadState) {
 }
 
 /**
- * Reads the thread's git menu, then again once the GitHub CLI answered, if it has to. A read that started after this
+ * Reads the thread's git menu, then again once gh or glab answered, if it has to. A read that started after this
  * one wins, so an older, slower answer never replaces a newer one. A failed read keeps the menu as it was.
  */
 private suspend fun readGitMenu(thread: ThreadState) {
@@ -293,9 +295,9 @@ private suspend fun readGitMenu(thread: ThreadState) {
       return
     }
     thread.gitMenu = local
-    if (local.waitsForGitHub()) {
+    if (local.waitsForForge()) {
       val checked = withContext(Dispatchers.IO) {
-        controller.checkGitHub(local)
+        controller.checkForge(local)
         controller.gitMenu()
       }
       if (read == thread.gitMenuReads) {
@@ -309,10 +311,19 @@ private suspend fun readGitMenu(thread: ThreadState) {
   }
 }
 
-private fun gitLabel(option: ThreadGit.Option): String = when (option.action) {
-  GitAction.COMMIT -> t("git.commit")
-  GitAction.COMMIT_AND_PUSH -> if (option.commits) t("git.commit.push") else t("git.push")
-  GitAction.COMMIT_AND_PULL_REQUEST -> if (option.commits) t("git.commit.pull.request") else t("git.pull.request")
+/** GitLab calls them merge requests. */
+private fun gitLabel(option: ThreadGit.Option, status: GitCommands.Status): String {
+  val isGitLab = status.hosted?.forge == Forge.GITLAB
+  return when (option.action) {
+    GitAction.COMMIT -> t("git.commit")
+    GitAction.COMMIT_AND_PUSH -> if (option.commits) t("git.commit.push") else t("git.push")
+    GitAction.COMMIT_AND_PULL_REQUEST -> when {
+      isGitLab && option.commits -> t("git.commit.merge.request")
+      isGitLab -> t("git.merge.request")
+      option.commits -> t("git.commit.pull.request")
+      else -> t("git.pull.request")
+    }
+  }
 }
 
 private fun gitIcon(action: GitAction): IconKey = when (action) {
@@ -327,8 +338,9 @@ private fun gitDescription(option: ThreadGit.Option, menu: ThreadGit.Menu, threa
   val blocker = option.blocker ?: return when (option.action) {
     GitAction.COMMIT -> t("git.detail.changes", status.changedFiles)
     GitAction.COMMIT_AND_PUSH -> t("git.detail.push", "${status.remote}/${status.branch}")
-    GitAction.COMMIT_AND_PULL_REQUEST -> t("git.detail.pull.request", "${status.gitHub?.owner}/${status.gitHub?.name}")
+    GitAction.COMMIT_AND_PULL_REQUEST -> t("git.detail.pull.request", status.hosted?.path ?: "")
   }
+  val forge = status.hosted?.forge ?: Forge.GITHUB
   return when (blocker) {
     Blocker.NOT_REPOSITORY -> t("git.blocked.not.repository")
     Blocker.RUNNING -> t("git.blocked.running")
@@ -339,10 +351,10 @@ private fun gitDescription(option: ThreadGit.Option, menu: ThreadGit.Menu, threa
     Blocker.NOTHING_TO_COMMIT -> t("git.blocked.nothing.to.commit")
     Blocker.NO_REMOTE -> t("git.blocked.no.remote")
     Blocker.NOTHING_TO_PUSH -> t("git.blocked.nothing.to.push")
-    Blocker.NOT_GITHUB -> t("git.blocked.not.github")
-    Blocker.GH_CHECKING -> t("git.blocked.gh.checking")
-    Blocker.GH_MISSING -> t("git.blocked.gh.missing")
-    Blocker.GH_LOGGED_OUT -> t("git.blocked.gh.logged.out", status.gitHub?.host ?: "github.com")
+    Blocker.NOT_HOSTED -> t("git.blocked.not.hosted")
+    Blocker.CLI_CHECKING -> t("git.blocked.cli.checking", forge.cli())
+    Blocker.CLI_MISSING -> t("git.blocked.cli.missing", forge.displayName(), forge.cli())
+    Blocker.CLI_LOGGED_OUT -> t("git.blocked.cli.logged.out", forge.cli(), status.hosted?.host ?: "")
     Blocker.PULL_REQUEST_OPEN -> t("git.blocked.pull.request.open", thread.pullRequest?.number ?: "")
     Blocker.DEFAULT_BRANCH -> t("git.blocked.default.branch", status.branch ?: "")
   }
