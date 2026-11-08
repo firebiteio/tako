@@ -202,7 +202,7 @@ private fun InlineDiff(oldText: String?, newText: String?) {
 }
 
 @Composable
-private fun TodoList(todos: List<Todo>) {
+fun TodoList(todos: List<Todo>) {
   Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
     for (todo in todos) {
       Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {

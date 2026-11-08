@@ -146,6 +146,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var followingEnd = false
   /** When the person last opened or closed a row of the timeline, see [noteExpansion]. */
   var expandedAt = 0L
+  /** Which tab of the work pane shows. Only this session remembers. */
+  var workTab by mutableStateOf(WorkTab.CHANGES)
 
   fun update(item: ChatMessage.ThreadItem) {
     this.title = item.title.ifEmpty { this.title }

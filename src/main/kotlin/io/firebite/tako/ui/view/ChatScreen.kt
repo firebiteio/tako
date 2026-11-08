@@ -65,9 +65,9 @@ import org.jetbrains.jewel.ui.icon.IconKey
 val NARROW = 640.dp
 /** Below this width of the thread area a side chat covers its main thread instead of sitting beside it. */
 private val SIDE_PANE_MIN_AREA = 720.dp
-/** The width conversations and the composer keep to on wide windows, CSS's 46rem. */
+/** The width conversations and the composer keep to on wide windows, 80 times the body text size. */
 val LANE: Dp
-  @Composable @ReadOnlyComposable get() = (46 * textStyle.fontSize.value).dp
+  @Composable @ReadOnlyComposable get() = (80 * textStyle.fontSize.value).dp
 
 @Composable
 fun ChatScreen(workspace: Workspace) {
@@ -180,14 +180,19 @@ private fun ThreadArea(thread: ThreadState, markdown: ChatMarkdown, actions: Cod
   BoxWithConstraints(modifier.fillMaxWidth()) {
     val covers = this.maxWidth < SIDE_PANE_MIN_AREA
     SideEffect { workspace.sidePaneCovers = covers }
+    val pane = Modifier.width((this.maxWidth * 0.4f).coerceIn(320.dp, 480.dp)).fillMaxHeight()
     when {
+      side == null && !covers -> Row(Modifier.fillMaxSize()) {
+        ThreadView(thread, markdown, actions, Modifier.weight(1f).fillMaxHeight(), changesInPane = true)
+        Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
+        WorkPane(thread, markdown, actions, pane)
+      }
       side == null -> ThreadView(thread, markdown, actions, Modifier.fillMaxSize())
       covers -> SideChatPane(thread, side, markdown, actions, Modifier.fillMaxSize())
       else -> Row(Modifier.fillMaxSize()) {
         ThreadView(thread, markdown, actions, Modifier.weight(1f).fillMaxHeight())
         Box(Modifier.width(1.dp).fillMaxHeight().background(colors.divider))
-        SideChatPane(thread, side, markdown, actions,
-          Modifier.width((this@BoxWithConstraints.maxWidth * 0.4f).coerceIn(320.dp, 480.dp)).fillMaxHeight())
+        SideChatPane(thread, side, markdown, actions, pane)
       }
     }
   }

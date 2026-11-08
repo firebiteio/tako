@@ -61,6 +61,7 @@ import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
+import io.firebite.tako.ui.state.WorkTab
 import io.firebite.tako.ui.state.bringBack
 import io.firebite.tako.ui.state.canActOn
 import io.firebite.tako.ui.state.canBringBack
@@ -169,9 +170,14 @@ private suspend fun ThreadState.followEnd() {
   }
 }
 
-/** A thread's conversation over its composer; an empty thread shows a headline instead. */
+/**
+ * A thread's conversation over its composer; an empty thread shows a headline instead.
+ *
+ * @param changesInPane a [WorkPane] beside it lists the changes, so each turn only points there
+ */
 @Composable
-fun ThreadView(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions, modifier: Modifier) {
+fun ThreadView(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions, modifier: Modifier,
+  changesInPane: Boolean = false) {
   Column(modifier.fillMaxWidth()) {
     if (thread.ownTurns.isEmpty()) {
       Spacer(Modifier.weight(1f))
@@ -180,7 +186,7 @@ fun ThreadView(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions
       Spacer(Modifier.weight(1f))
     } else {
       Box(Modifier.weight(1f).fillMaxWidth()) {
-        Timeline(thread, markdown, actions)
+        Timeline(thread, markdown, actions, changesInPane)
         if (!thread.stick && thread.scrollState.canScrollForward) {
           ScrollToEnd(Modifier.align(Alignment.BottomCenter).padding(bottom = 12.dp)) { thread.scrollToEnd++ }
         }
@@ -221,7 +227,7 @@ private fun Hero(thread: ThreadState) {
 }
 
 @Composable
-private fun Timeline(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions) {
+private fun Timeline(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions, changesInPane: Boolean) {
   val scrollState = thread.scrollState
   val rows = timelineRows(thread)
   LaunchedEffect(scrollState) {
@@ -245,7 +251,7 @@ private fun Timeline(thread: ThreadState, markdown: ChatMarkdown, actions: CodeA
         key(row.key) {
           Box(Modifier.fillMaxWidth().padding(horizontal = 12.dp), contentAlignment = Alignment.TopCenter) {
             Box(Modifier.widthIn(max = LANE).fillMaxWidth()) {
-              TimelineRowView(thread, row, markdown, actions)
+              TimelineRowView(thread, row, markdown, actions, changesInPane)
             }
           }
         }
@@ -255,7 +261,8 @@ private fun Timeline(thread: ThreadState, markdown: ChatMarkdown, actions: CodeA
 }
 
 @Composable
-private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: ChatMarkdown, actions: CodeActions) {
+private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: ChatMarkdown, actions: CodeActions,
+  changesInPane: Boolean) {
   when (row) {
     is TimelineRow.PromptRow -> UserRow(thread, row.prompt, rewinds = row.turn.takeIf { thread.canRewind(it) })
     is TimelineRow.Item -> Box(if (row.foldEnd) Modifier.padding(bottom = 8.dp) else Modifier) {
@@ -264,7 +271,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
     is TimelineRow.FoldHead -> FoldHeadView(thread, row.fold)
     is TimelineRow.Working -> WorkingRow(thread)
     is TimelineRow.Error -> InlineAlert(row.text, Modifier.fillMaxWidth().padding(bottom = 12.dp))
-    is TimelineRow.Changes -> ChangesCard(thread, row.turn)
+    is TimelineRow.Changes -> if (changesInPane) ChangesAnchor(thread, row.turn) else ChangesCard(thread, row.turn)
     is TimelineRow.Queued -> UserRow(thread, row.queued.prompt, row.queued)
   }
 }
@@ -530,8 +537,23 @@ private fun WorkingRow(thread: ThreadState) {
   }
 }
 
+/** One line for what the turn changed, which shows the work pane's list of changes. */
 @Composable
-private fun ChangesCard(thread: ThreadState, turn: Turn) {
+private fun ChangesAnchor(thread: ThreadState, turn: Turn) {
+  val changes = turn.changeList
+  Row(Modifier.fillMaxWidth().padding(bottom = 12.dp).heightIn(min = 26.dp).hoverClick(alpha = 0.6f) {
+    thread.workTab = WorkTab.CHANGES
+  }.padding(2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    RowIcon { Ico(Icons.diff, tint = colors.muted) }
+    Text(t("timeline.changes", changes.size), Modifier.weight(1f), color = colors.muted, maxLines = 1,
+      overflow = TextOverflow.Ellipsis)
+    Text("+" + changes.sumOf { it.added }, color = colors.add, style = monoStyle)
+    Text("−" + changes.sumOf { it.removed }, color = colors.del, style = monoStyle)
+  }
+}
+
+@Composable
+fun ChangesCard(thread: ThreadState, turn: Turn) {
   val changes = turn.changeList
   val shape = RoundedCornerShape(10.dp)
   Column(Modifier.fillMaxWidth().padding(bottom = 16.dp).clip(shape).background(colors.card)

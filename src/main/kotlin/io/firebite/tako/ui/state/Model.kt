@@ -16,6 +16,8 @@ import io.firebite.tako.ide.context.ContextItem
 
 enum class EntryStatus { RUNNING, DONE, ERROR, DECLINED }
 
+enum class WorkTab { CHANGES, PLAN, TASKS }
+
 /** An assistant text block. It streams in until [done], when its code gets highlighted. */
 class AssistantText(text: String, done: Boolean) {
   var text by mutableStateOf(text)
