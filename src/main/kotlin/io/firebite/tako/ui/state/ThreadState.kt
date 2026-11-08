@@ -142,6 +142,10 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var stick by mutableStateOf(true)
   /** Bumped to scroll the timeline to its end, e.g. after sending. */
   var scrollToEnd by mutableIntStateOf(0)
+  /** Whether the timeline is moving to its end by itself, which is no reason to stop following it. */
+  var followingEnd = false
+  /** When the person last opened or closed a row of the timeline, see [noteExpansion]. */
+  var expandedAt = 0L
 
   fun update(item: ChatMessage.ThreadItem) {
     this.title = item.title.ifEmpty { this.title }

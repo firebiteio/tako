@@ -54,6 +54,7 @@ import io.firebite.tako.ui.state.cardState
 import io.firebite.tako.ui.state.entryLabel
 import io.firebite.tako.ui.state.groupSummary
 import io.firebite.tako.ui.state.kind
+import io.firebite.tako.ui.state.noteExpansion
 import io.firebite.tako.ui.state.prettyJson
 import io.firebite.tako.ui.state.string
 import io.firebite.tako.ui.state.taskTitle
@@ -87,7 +88,10 @@ fun ToolEntryView(entry: ToolEntry, markdown: ChatMarkdown, actions: CodeActions
   val failed = entry.status == EntryStatus.ERROR
   Column(Modifier.fillMaxWidth()) {
     Tip(label.joinToString("") { it.text }) {
-      Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).hoverClick(alpha = 0.6f) { entry.open = !entry.open }
+      Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).hoverClick(alpha = 0.6f) {
+        entry.thread.noteExpansion()
+        entry.open = !entry.open
+      }
         .padding(2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         RowIcon {
           Ico(Icons.category(entry.category), tint = if (failed) colors.del.copy(alpha = 0.7f) else colors.muted)
@@ -243,13 +247,18 @@ fun GroupView(group: WorkGroup, markdown: ChatMarkdown, actions: CodeActions) {
   val categories = entries.map { it.category }.toSet()
   val running = entries.firstOrNull { it.status == EntryStatus.RUNNING }?.takeIf { group.thread.busy }
   Column(Modifier.fillMaxWidth().padding(bottom = 4.dp)) {
-    Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).hoverClick(alpha = 0.6f) { group.collapsed = !group.collapsed }
-      .padding(2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+    Row(Modifier.fillMaxWidth().heightIn(min = 26.dp).hoverClick(alpha = 0.6f) {
+      group.thread.noteExpansion()
+      group.collapsed = !group.collapsed
+    }.padding(2.dp), verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
       RowIcon {
         Ico(if (categories.size == 1) Icons.category(categories.first()) else Icons.group, tint = colors.muted)
       }
       val text = if (running != null) rowLabelText(entryLabel(running)) else AnnotatedString(groupSummary(group))
       ShineText(text, running != null, colors.muted, textStyle, Modifier.weight(1f))
+      if (entries.any { it.status == EntryStatus.ERROR }) {
+        Ico(Icons.closeSmall, size = 12.dp, tint = colors.del)
+      }
       Chevron(!group.collapsed, tint = colors.faint)
     }
     if (!group.collapsed) {

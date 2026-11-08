@@ -4,7 +4,6 @@ import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.ScrollState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -56,6 +55,7 @@ import io.firebite.tako.ui.clock
 import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.state.AssistantText
 import io.firebite.tako.ui.state.Fold
+import io.firebite.tako.ui.state.Follow
 import io.firebite.tako.ui.state.Prompt
 import io.firebite.tako.ui.state.QueuedPrompt
 import io.firebite.tako.ui.state.ThreadState
@@ -69,8 +69,10 @@ import io.firebite.tako.ui.state.canQuote
 import io.firebite.tako.ui.state.canRewind
 import io.firebite.tako.ui.state.canSteer
 import io.firebite.tako.ui.state.editQueued
+import io.firebite.tako.ui.state.follow
 import io.firebite.tako.ui.state.implementElsewhere
 import io.firebite.tako.ui.state.moveQueuedUp
+import io.firebite.tako.ui.state.noteExpansion
 import io.firebite.tako.ui.state.ownTurns
 import io.firebite.tako.ui.state.promptsUpTo
 import io.firebite.tako.ui.state.removeQueued
@@ -158,8 +160,13 @@ private fun timelineRows(thread: ThreadState): List<TimelineRow> {
   return rows
 }
 
-private suspend fun ScrollState.scrollToEnd() {
-  this.scrollTo(this.maxValue)
+private suspend fun ThreadState.followEnd() {
+  this.followingEnd = true
+  try {
+    this.scrollState.scrollTo(this.scrollState.maxValue)
+  } finally {
+    this.followingEnd = false
+  }
 }
 
 /** A thread's conversation over its composer; an empty thread shows a headline instead. */
@@ -219,16 +226,18 @@ private fun Timeline(thread: ThreadState, markdown: ChatMarkdown, actions: CodeA
   val rows = timelineRows(thread)
   LaunchedEffect(scrollState) {
     snapshotFlow { scrollState.isScrollInProgress to scrollState.canScrollForward }.collect { (scrolling, canForward) ->
-      if (scrolling) {
-        thread.stick = !canForward
-      } else if (thread.stick && canForward) {
-        scrollState.scrollToEnd()
+      val sinceExpansion = System.currentTimeMillis() - thread.expandedAt
+      when (follow(thread.stick, scrolling, thread.followingEnd, canForward, sinceExpansion)) {
+        Follow.PIN -> thread.stick = true
+        Follow.UNPIN -> thread.stick = false
+        Follow.SCROLL_TO_END -> thread.followEnd()
+        Follow.NOTHING -> {}
       }
     }
   }
   LaunchedEffect(thread.scrollToEnd) {
     thread.stick = true
-    scrollState.scrollToEnd()
+    thread.followEnd()
   }
   VerticallyScrollableContainer(Modifier.fillMaxSize(), scrollState = scrollState) {
     Column(Modifier.fillMaxWidth().padding(top = 16.dp, bottom = 8.dp)) {
@@ -252,7 +261,7 @@ private fun TimelineRowView(thread: ThreadState, row: TimelineRow, markdown: Cha
     is TimelineRow.Item -> Box(if (row.foldEnd) Modifier.padding(bottom = 8.dp) else Modifier) {
       TurnItemView(thread, row.item, row.forkPrompts, markdown, actions)
     }
-    is TimelineRow.FoldHead -> FoldHeadView(row.fold)
+    is TimelineRow.FoldHead -> FoldHeadView(thread, row.fold)
     is TimelineRow.Working -> WorkingRow(thread)
     is TimelineRow.Error -> InlineAlert(row.text, Modifier.fillMaxWidth().padding(bottom = 12.dp))
     is TimelineRow.Changes -> ChangesCard(thread, row.turn)
@@ -351,7 +360,10 @@ private fun UserRow(thread: ThreadState, prompt: Prompt, queued: QueuedPrompt? =
       if (long) {
         val (toggle, toggleHovered) = rememberHover()
         Text(if (collapsed) t("timeline.show.more") else t("timeline.show.less"),
-          Modifier.hoverable(toggle).clickable(toggle, indication = null) { collapsed = !collapsed }
+          Modifier.hoverable(toggle).clickable(toggle, indication = null) {
+            thread.noteExpansion()
+            collapsed = !collapsed
+          }
             .padding(horizontal = 6.dp), color = if (toggleHovered) colors.fg else colors.muted, style = smallStyle)
       }
       Text(clock(prompt.at), color = colors.muted, style = smallStyle.copy(fontFeatureSettings = "tnum"))
@@ -484,10 +496,13 @@ private fun AssistantRow(thread: ThreadState, text: AssistantText, markdown: Cha
 }
 
 @Composable
-private fun FoldHeadView(fold: Fold) {
+private fun FoldHeadView(thread: ThreadState, fold: Fold) {
   Column(Modifier.fillMaxWidth().padding(bottom = 8.dp)) {
     val (interaction, hovered) = rememberHover()
-    Row(Modifier.fillMaxWidth().hoverClick(alpha = 0f, interaction = interaction) { fold.open = !fold.open }
+    Row(Modifier.fillMaxWidth().hoverClick(alpha = 0f, interaction = interaction) {
+      thread.noteExpansion()
+      fold.open = !fold.open
+    }
       .padding(start = 4.dp, end = 4.dp, top = 4.dp, bottom = 8.dp), verticalAlignment = Alignment.CenterVertically,
       horizontalArrangement = Arrangement.spacedBy(4.dp)) {
       val color = if (hovered) colors.fg else colors.muted
@@ -621,7 +636,10 @@ private fun PlanCard(thread: ThreadState, item: TurnItem.Plan, markdown: ChatMar
     }
     if (long) {
       OutlineButton(if (collapsed) t("timeline.plan.expand") else t("timeline.plan.collapse"),
-        Modifier.padding(top = 8.dp)) { collapsed = !collapsed }
+        Modifier.padding(top = 8.dp)) {
+        thread.noteExpansion()
+        collapsed = !collapsed
+      }
     }
   }
 }

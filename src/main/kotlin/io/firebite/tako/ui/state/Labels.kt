@@ -5,7 +5,6 @@ import com.google.gson.JsonObject
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.json.Json
-import io.firebite.tako.ui.conjunction
 import io.firebite.tako.ui.firstLine
 import io.firebite.tako.ui.t
 
@@ -110,22 +109,49 @@ fun entryLabel(entry: ToolEntry): List<LabelPart> {
   }
 }
 
-/** E.g. "Read 2 files, ran a command, and used 1 tool". */
+/** The few names a group's row shows per kind of call, and how long each may be. */
+private const val NAMES_SHOWN = 3
+private const val NAME_LENGTH = 40
+
+/** The first different names, shortened, and how many more there are, e.g. "a.ts, b.ts, c.ts +2". */
+fun nameList(names: List<String>): String {
+  val different = names.distinct()
+  val shown = different.take(NAMES_SHOWN)
+    .joinToString(", ") { if (it.length > NAME_LENGTH) it.take(NAME_LENGTH) + "…" else it }
+  val more = different.size - NAMES_SHOWN
+  return if (more > 0) "$shown +$more" else shown
+}
+
+/** What a group's row calls the call: its file's name, command, search pattern or query. */
+private fun summaryName(entry: ToolEntry): String {
+  val input = entry.input
+  val name = when (entry.category) {
+    ToolKind.READ, ToolKind.EDIT -> entry.thread.relative(input.string("file_path") ?: input.string("notebook_path"))
+      .replace('\\', '/').substringAfterLast('/')
+    ToolKind.COMMAND -> firstLine(input.string("command") ?: input.string("description") ?: "")
+    ToolKind.SEARCH -> entry.title ?: input.string("pattern") ?: ""
+    ToolKind.WEB -> entry.title ?: input.string("query") ?: input.string("url") ?: ""
+    else -> ""
+  }
+  return name.ifEmpty { entry.name }
+}
+
+/** E.g. "Read a.ts, b.ts · ran npm test · used 1 tool", naming what was touched so it can be checked without opening. */
 fun groupSummary(group: WorkGroup): String {
-  val counts = group.entries.groupingBy { it.category }.eachCount()
+  val byKind = group.entries.groupBy { it.category }
+  fun names(kind: ToolKind): String? = byKind[kind]?.let { entries -> nameList(entries.map { summaryName(it) }) }
   val parts = ArrayList<String>()
-  counts[ToolKind.READ]?.let { parts.add(t("timeline.group.read", it)) }
-  counts[ToolKind.EDIT]?.let { parts.add(t("timeline.group.edit", it)) }
-  counts[ToolKind.COMMAND]?.let { parts.add(t("timeline.group.command", it)) }
-  counts[ToolKind.SEARCH]?.let { parts.add(t("timeline.group.search", it)) }
-  counts[ToolKind.WEB]?.let { parts.add(t("timeline.group.web", it)) }
+  names(ToolKind.READ)?.let { parts.add(t("timeline.group.read", it)) }
+  names(ToolKind.EDIT)?.let { parts.add(t("timeline.group.edit", it)) }
+  names(ToolKind.COMMAND)?.let { parts.add(t("timeline.group.command", it)) }
+  names(ToolKind.SEARCH)?.let { parts.add(t("timeline.group.search", it)) }
+  names(ToolKind.WEB)?.let { parts.add(t("timeline.group.web", it)) }
   val others = listOf(ToolKind.AGENT, ToolKind.TODO, ToolKind.QUESTION, ToolKind.PLAN, ToolKind.OTHER)
-    .sumOf { counts[it] ?: 0 }
+    .sumOf { byKind[it]?.size ?: 0 }
   if (others > 0) {
     parts.add(t("timeline.group.other", others))
   }
-  val summary = conjunction(parts)
-  return summary.replaceFirstChar { it.uppercase() }
+  return parts.joinToString(" · ").replaceFirstChar { it.uppercase() }
 }
 
 data class Todo(val content: String, val status: String, val activeForm: String?)

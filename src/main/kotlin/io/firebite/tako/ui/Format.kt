@@ -1,6 +1,5 @@
 package io.firebite.tako.ui
 
-import java.text.ListFormat
 import java.time.Instant
 import java.time.LocalDate
 import java.time.ZoneId
@@ -80,11 +79,6 @@ fun clock(millis: Long): String = CLOCK.format(Instant.ofEpochMilli(millis).atZo
 fun shortDay(day: LocalDate): String = SHORT_DAY.format(day)
 
 fun dateTime(millis: Long): String = DATE_TIME.format(Instant.ofEpochMilli(millis).atZone(ZoneId.systemDefault()))
-
-private val listFormat = ListFormat.getInstance(textLocale, ListFormat.Type.STANDARD, ListFormat.Style.FULL)
-
-/** E.g. "read 2 files, ran 1 command, and used 1 tool", in the texts' language. */
-fun conjunction(parts: List<String>): String = listFormat.format(parts)
 
 /** Paths are equal ignoring case and slash direction, as on Windows. */
 fun samePath(first: String?, second: String?): Boolean {
