@@ -21,6 +21,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
@@ -90,6 +91,9 @@ private val PATH_LIKE = Regex("""[/\\]|^[\w\-]+\.[A-Za-z]{1,6}$""")
 /** Marks inline code, whose boxes paragraphs draw behind their text. */
 private const val CODE_TAG = "tako.code"
 
+/** Whether the blocks being rendered sit inside a quote. */
+private val LocalInQuote = staticCompositionLocalOf { false }
+
 /** What code in the agent's answers can do in the IDE. */
 interface CodeActions {
   fun copy(text: String)
@@ -148,6 +152,7 @@ private class ChatBlockRenderer(
   styling: MarkdownStyling,
   extensions: List<MarkdownRendererExtension>,
   private val actions: CodeActions,
+  private val quoted: MarkdownStyling.Paragraph,
 ) : DefaultMarkdownBlockRenderer(styling, extensions, ChatInlineRenderer(extensions, actions)) {
   @Composable
   override fun RenderFencedCodeBlock(block: FencedCodeBlock, styling: MarkdownStyling.Code.Fenced, enabled: Boolean,
@@ -177,9 +182,11 @@ private class ChatBlockRenderer(
     val bar = colors.softBorder
     val rem = textStyle.fontSize.value.dp
     Column(modifier.drawBehind { this.drawRoundRect(bar, size = Size(2.dp.toPx(), this.size.height),
-      cornerRadius = CornerRadius(1.dp.toPx())) }.padding(start = rem * 0.8f).alpha(0.75f),
+      cornerRadius = CornerRadius(1.dp.toPx())) }.padding(start = rem * 0.8f),
       verticalArrangement = Arrangement.spacedBy(this.rootStyling.blockVerticalSpacing)) {
-      this@ChatBlockRenderer.RenderBlocks(block.children, enabled, onUrlClick, Modifier)
+      CompositionLocalProvider(LocalInQuote provides true) {
+        this@ChatBlockRenderer.RenderBlocks(block.children, enabled, onUrlClick, Modifier)
+      }
     }
   }
 
@@ -191,7 +198,7 @@ private class ChatBlockRenderer(
     val fontSize = styling.inlinesStyling.textStyle.fontSize
     val fill = colors.card
     val border = colors.softBorder
-    super.RenderParagraph(block, styling, enabled, onUrlClick, {
+    super.RenderParagraph(block, if (LocalInQuote.current) this.quoted else styling, enabled, onUrlClick, {
       layout = it
       onTextLayout(it)
     }, modifier.drawBehind { layout?.let { this.drawCodeBoxes(it, fontSize, fill, border) } }, overflow, softWrap,
@@ -410,7 +417,8 @@ fun rememberChatMarkdown(actions: CodeActions): ChatMarkdown {
     val extensions = listOf(tables, GitHubStrikethroughRendererExtension)
     val processor = MarkdownProcessor(listOf(ChatTableProcessor, GitHubStrikethroughProcessorExtension(),
       AutolinkProcessorExtension))
-    ChatMarkdown(processor, ChatBlockRenderer(styling, extensions, actions))
+    val quoted = MarkdownStyling.Paragraph.create(inlines(base.copy(color = c.body.copy(alpha = c.body.alpha * 0.75f))))
+    ChatMarkdown(processor, ChatBlockRenderer(styling, extensions, actions, quoted))
   }
 }
 
