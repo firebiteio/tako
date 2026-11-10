@@ -62,6 +62,13 @@ dependencies {
   testImplementation("org.opentest4j:opentest4j:1.3.0")
 }
 
+tasks.test {
+  // Tests load every plugin into one class loader. In IU 262.11879 the Ultimate plugin's
+  // obfuscated startup activity Q.Q.Q.Q.V clashes with an interface of the same name in
+  // lib/product-backend.jar, so its creation fails and every platform test errors in setUp.
+  systemProperty("idea.suppressed.plugins.id", "com.intellij.modules.ultimate")
+}
+
 spotless {
   lineEndings = com.diffplug.spotless.LineEnding.UNIX
   java {
