@@ -6,6 +6,8 @@ import com.intellij.ui.JBIntSpinner;
 import com.intellij.ui.TitledSeparator;
 import com.intellij.ui.components.JBCheckBox;
 import com.intellij.ui.components.JBLabel;
+import com.intellij.ui.components.JBScrollPane;
+import com.intellij.ui.components.JBTextArea;
 import com.intellij.ui.dsl.listCellRenderer.BuilderKt;
 import com.intellij.util.ui.FormBuilder;
 import com.intellij.util.ui.JBUI;
@@ -28,6 +30,7 @@ public final class ChatSettingsConfigurable implements Configurable {
   private JBCheckBox settlePullRequestBox;
   private JBCheckBox settleIdleBox;
   private JBIntSpinner settleDaysSpinner;
+  private JBTextArea delegationNotesArea;
 
   @Override
   public @Nls String getDisplayName() {
@@ -49,6 +52,9 @@ public final class ChatSettingsConfigurable implements Configurable {
     idleRow.add(this.settleIdleBox);
     idleRow.add(this.settleDaysSpinner);
     idleRow.add(new JBLabel(TakoBundle.message("settings.tako.settle.idle.days")));
+    this.delegationNotesArea = new JBTextArea(5, 0);
+    this.delegationNotesArea.setLineWrap(true);
+    this.delegationNotesArea.setWrapStyleWord(true);
     JPanel panel = FormBuilder.createFormBuilder()
       .addLabeledComponent(TakoBundle.message("settings.tako.default.agent"), this.defaultAgentBox)
       .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.default.agent.hint")))
@@ -60,6 +66,10 @@ public final class ChatSettingsConfigurable implements Configurable {
       .addComponent(this.settlePullRequestBox)
       .addComponent(idleRow)
       .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.settle.hint")))
+      .addComponent(new TitledSeparator(TakoBundle.message("settings.tako.delegation")))
+      .addLabeledComponent(TakoBundle.message("settings.tako.delegation.notes"),
+        new JBScrollPane(this.delegationNotesArea), true)
+      .addComponent(new JBLabel(TakoBundle.message("settings.tako.delegation.notes.hint")))
       .addComponentFillVertically(new JPanel(), 0)
       .getPanel();
     this.reset();
@@ -73,7 +83,8 @@ public final class ChatSettingsConfigurable implements Configurable {
       || this.steerBox.isSelected() != data.steerWhileWorking
       || this.settlePullRequestBox.isSelected() != data.settleOnPullRequest
       || this.settleIdleBox.isSelected() != data.settleIdle
-      || this.settleDaysSpinner.getNumber() != data.idleDays();
+      || this.settleDaysSpinner.getNumber() != data.idleDays()
+      || !this.delegationNotesArea.getText().equals(data.delegationNotes);
   }
 
   @Override
@@ -86,6 +97,7 @@ public final class ChatSettingsConfigurable implements Configurable {
     data.settleOnPullRequest = this.settlePullRequestBox.isSelected();
     data.settleIdle = this.settleIdleBox.isSelected();
     data.settleIdleDays = this.settleDaysSpinner.getNumber();
+    data.delegationNotes = this.delegationNotesArea.getText();
     if (changed) {
       ChatService.postSettingsToOpenProjects();
     }
@@ -107,6 +119,7 @@ public final class ChatSettingsConfigurable implements Configurable {
     this.settleIdleBox.setSelected(data.settleIdle);
     this.settleDaysSpinner.setNumber(data.idleDays());
     this.settleDaysSpinner.setEnabled(data.settleIdle);
+    this.delegationNotesArea.setText(data.delegationNotes);
   }
 
   private String selectedId() {

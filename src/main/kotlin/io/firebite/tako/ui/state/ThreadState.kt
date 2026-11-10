@@ -148,6 +148,8 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var expandedAt = 0L
   /** Which tab of the work pane shows. Only this session remembers. */
   var workTab by mutableStateOf(WorkTab.CHANGES)
+  /** Whether the panel of the threads this one created is folded. Only this session remembers. */
+  var childrenFolded by mutableStateOf(false)
 
   fun update(item: ChatMessage.ThreadItem) {
     this.title = item.title.ifEmpty { this.title }

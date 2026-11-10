@@ -6,6 +6,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentDefaults;
 import io.firebite.tako.agent.AgentEvent;
+import io.firebite.tako.agent.AgentInfo;
 import io.firebite.tako.agent.FakeExecutable;
 import io.firebite.tako.agent.ToolKind;
 import io.firebite.tako.agent.acp.AcpBackend;
@@ -31,6 +32,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.LinkedBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import org.jetbrains.annotations.Nullable;
@@ -106,6 +108,10 @@ public class ChatControllerTest extends BasePlatformTestCase {
       @Override
       public String toolsUrl() {
         return null;
+      }
+
+      @Override
+      public void started(AgentInfo info) {
       }
 
       @Override
@@ -756,6 +762,28 @@ public class ChatControllerTest extends BasePlatformTestCase {
     this.controller.submit("from another agent");
     assertEquals(ChatController.State.WAITING, this.controller.state());
     assertEquals("from another agent", this.awaitPost(ChatMessage.Submit.class).text());
+  }
+
+  public void testSettledStaysPendingWhileStartingAndCompletesOnClose() {
+    CompletableFuture<ChatController.State> settled = this.controller.settled();
+    assertFalse(settled.isDone());
+
+    this.controller.dispose();
+
+    assertEquals(ChatController.State.STARTING, settled.getNow(null));
+  }
+
+  public void testSettledCompletesAgainAfterEachTurn() throws Exception {
+    CompletableFuture<ChatController.State> first = this.controller.settled();
+    ChatMessage.Permission permission = this.startWaitingTurn();
+    assertFalse(first.getNow(ChatController.State.WORKING).isBusy());
+    assertEquals("waiting for the person is settled", ChatController.State.WAITING,
+      this.controller.settled().getNow(null));
+
+    this.controller.answer(permission.requestId(), true, null, false, null, null);
+    CompletableFuture<ChatController.State> next = this.controller.settled();
+
+    assertEquals(ChatController.State.IDLE, next.get(TIMEOUT_MILLIS, TimeUnit.MILLISECONDS));
   }
 
   public void testSwitchingAgentsHandsTheConversationToTheNextPromptOnly() throws Exception {

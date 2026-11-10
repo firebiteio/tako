@@ -127,6 +127,8 @@ public final class ChatController implements Disposable {
 
   /** Guards waking {@link #awaitSettled} waiters on each change of {@link #state}. */
   private final Object stateLock = new Object();
+  /** Completes once the agent is no longer busy, replaced when it gets busy again. Guarded by {@link #stateLock}. */
+  private CompletableFuture<State> settled = new CompletableFuture<>();
 
   private volatile State state = State.STARTING;
   private volatile boolean isDisposed;
@@ -690,11 +692,33 @@ public final class ChatController implements Disposable {
     }
   }
 
+  /**
+   * Like {@link #awaitSettled} without blocking: completes with the state once the agent is no longer busy or the
+   * thread closed.
+   */
+  public CompletableFuture<State> settled() {
+    synchronized (this.stateLock) {
+      return this.settled.copy();
+    }
+  }
+
+  /** Under {@link #stateLock}: wakes the waiters on a change of {@link #state}. */
+  private void stateChanged() {
+    this.stateLock.notifyAll();
+    if (this.state.isBusy() && !this.isDisposed) {
+      if (this.settled.isDone()) {
+        this.settled = new CompletableFuture<>();
+      }
+    } else {
+      this.settled.complete(this.state);
+    }
+  }
+
   @Override
   public void dispose() {
     synchronized (this.stateLock) {
       this.isDisposed = true;
-      this.stateLock.notifyAll();
+      this.stateChanged();
     }
     this.stash(false);
     if (this.setup != null) {
@@ -753,7 +777,7 @@ public final class ChatController implements Disposable {
         return;
       }
       this.state = State.IDLE;
-      this.stateLock.notifyAll();
+      this.stateChanged();
     }
     Async.onEdt(this.host::stateChanged);
   }
@@ -761,7 +785,7 @@ public final class ChatController implements Disposable {
   private void setState(State state) {
     synchronized (this.stateLock) {
       this.state = state;
-      this.stateLock.notifyAll();
+      this.stateChanged();
     }
     Async.onEdt(this.host::stateChanged);
   }
@@ -801,6 +825,7 @@ public final class ChatController implements Disposable {
         this.postError(message);
         return;
       }
+      this.host.started(info);
       this.hasTools = launch.toolsUrl() != null && session.takesTools();
       this.canRewind = info.capabilities().rewind() && !this.record.sideChat;
       this.canSteer = info.capabilities().steer();

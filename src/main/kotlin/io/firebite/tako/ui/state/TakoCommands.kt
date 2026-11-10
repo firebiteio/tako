@@ -2,6 +2,7 @@ package io.firebite.tako.ui.state
 
 import androidx.compose.foundation.text.input.clearText
 import com.intellij.openapi.diagnostic.logger
+import io.firebite.tako.chat.Orchestration
 import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.t
@@ -32,6 +33,7 @@ enum class TakoCommand(val id: String, val takesArgument: Boolean) {
   MODE("mode", true),
   AGENT("agent", true),
   NEW("new", true),
+  ORCHESTRATE("orchestrate", true),
   FORK("fork", false),
   ARCHIVE("archive", false),
   TITLE("title", false),
@@ -47,6 +49,7 @@ enum class TakoCommand(val id: String, val takesArgument: Boolean) {
       MODE -> t("slash.mode.hint")
       AGENT -> t("slash.agent.hint")
       NEW -> t("slash.new.hint")
+      ORCHESTRATE -> t("slash.orchestrate.hint")
       SIDE, BTW -> t("slash.side.hint")
       else -> ""
     }
@@ -58,6 +61,7 @@ enum class TakoCommand(val id: String, val takesArgument: Boolean) {
       MODE -> t("slash.mode.description")
       AGENT -> t("slash.agent.description")
       NEW -> t("slash.new.description")
+      ORCHESTRATE -> t("slash.orchestrate.description")
       FORK -> t("slash.fork.description")
       ARCHIVE -> t("slash.archive.description")
       TITLE -> t("slash.title.description")
@@ -138,6 +142,9 @@ sealed interface TakoAction {
   /** @param prompt sent in the new thread unless empty */
   data class NewThread(val prompt: String) : TakoAction
 
+  /** @param task sent in this thread with the orchestrator instructions attached */
+  data class Orchestrate(val task: String) : TakoAction
+
   /** @param prompts how many prompts the fork keeps */
   data class Fork(val prompts: Int) : TakoAction
 
@@ -169,6 +176,12 @@ fun ThreadState.resolve(invocation: TakoInvocation): TakoAction {
     TakoCommand.MODEL, TakoCommand.EFFORT, TakoCommand.MODE, TakoCommand.AGENT ->
       this.resolveChoice(command, invocation.argument)
     TakoCommand.NEW -> TakoAction.NewThread(invocation.argument)
+    TakoCommand.ORCHESTRATE -> when {
+      invocation.argument.isEmpty() -> TakoAction.Fail(t("slash.error.orchestrate.missing"))
+      invocation.argument.startsWith("/") -> TakoAction.Fail(t("slash.error.orchestrate.slash"))
+      this.isBench -> TakoAction.Fail(t("slash.error.orchestrate.bench"))
+      else -> TakoAction.Orchestrate(invocation.argument)
+    }
     TakoCommand.FORK -> this.resolveFork()
     TakoCommand.ARCHIVE -> TakoAction.Archive
     TakoCommand.TITLE -> when {
@@ -280,6 +293,7 @@ fun ThreadState.perform(action: TakoAction) {
       else -> {}
     }
     is TakoAction.NewThread -> this.openNewThread(action.prompt)
+    is TakoAction.Orchestrate -> this.orchestrate(action.task)
     is TakoAction.Fork -> this.workspace.service.fork(this.id, action.prompts)
     TakoAction.Archive -> this.workspace.archive(this)
     TakoAction.Title -> this.regenerateTitle()
@@ -303,6 +317,14 @@ private fun ThreadState.openNewThread(prompt: String) {
     this.images.clear()
   }
   this.workspace.service.newThread(this.projectPath, null, submit)
+}
+
+/** Sends the task here as a prompt would go: queued or steered while a turn runs, with the attached context. */
+private fun ThreadState.orchestrate(task: String) {
+  val contexts = listOf(Orchestration.context(t("slash.orchestrate.chip"))) + this.contexts
+  this.startPrompt(task, contexts, this.images.map { it.image }, this.followUpDelivery(false))
+  this.contexts.clear()
+  this.images.clear()
 }
 
 /**
@@ -398,6 +420,7 @@ private fun ThreadState.offers(command: TakoCommand): Boolean = when {
 /** A side chat goes with its main thread: it doesn't fork, archive or take another agent on its own. */
 private fun ThreadState.offersInSideChat(command: TakoCommand): Boolean =
   command != TakoCommand.FORK && command != TakoCommand.ARCHIVE && command != TakoCommand.AGENT
+    && command != TakoCommand.ORCHESTRATE
 
 /** Commands whose name has the query: exact name first, then those starting with it, Tako's before the agent's. */
 private fun ThreadState.commandItems(query: String): List<SlashItem> {

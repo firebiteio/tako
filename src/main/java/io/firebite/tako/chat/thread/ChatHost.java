@@ -1,5 +1,6 @@
 package io.firebite.tako.chat.thread;
 
+import io.firebite.tako.agent.AgentInfo;
 import java.nio.file.Path;
 import java.util.List;
 import org.jetbrains.annotations.Nullable;
@@ -48,6 +49,9 @@ public interface ChatHost {
   /** Where the thread's agent reaches Tako's tools over MCP, or null without them. */
   @Nullable
   String toolsUrl();
+
+  /** The agent started and tells what it offers. Unlike the others, may be called from any thread. */
+  void started(AgentInfo info);
 
   /**
    * The title of another open thread whose agent works or waits for an answer in the repository with the top folder

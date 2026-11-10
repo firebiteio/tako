@@ -33,6 +33,7 @@ import io.firebite.tako.agent.AgentBackend;
 import io.firebite.tako.agent.AgentEvent;
 import io.firebite.tako.agent.AgentException;
 import io.firebite.tako.agent.AgentHistory;
+import io.firebite.tako.agent.AgentInfo;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
@@ -103,6 +104,8 @@ public final class ChatService implements Disposable {
   private static final long RESUME_CHECK_SECONDS = 20;
   /** When each agent last resumed a thread after its limit reset, across projects, so they do not resume at once. */
   private static final Map<String, Long> LAST_RESUMES = new ConcurrentHashMap<>();
+  /** Across projects, as an agent offers the same models in each. */
+  private static final AgentCatalog AGENTS = new AgentCatalog();
 
   private final Project project;
   private final ThreadStore store;
@@ -111,6 +114,7 @@ public final class ChatService implements Disposable {
   private final ThreadUpkeep upkeep;
   private final PullRequestWatcher watcher;
   private final LimitResumes limits = new LimitResumes(System::currentTimeMillis, LAST_RESUMES);
+  private final ChildWakes wakes = new ChildWakes();
   private final List<Runnable> activityListeners = new CopyOnWriteArrayList<>();
   /** The side chat each main thread's pane shows, by main thread id. */
   private final Map<String, String> shownSideChats = new ConcurrentHashMap<>();
@@ -1302,6 +1306,38 @@ public final class ChatService implements Disposable {
     return this.watcher;
   }
 
+  ChildWakes wakes() {
+    return this.wakes;
+  }
+
+  /**
+   * Wakes the threads that handed this one a prompt with wake set, once it is done. Like the pull request watch, skips
+   * a thread that is gone or archived and opens one that is closed. Must run on the EDT.
+   */
+  private void wakeParents(ThreadStore.Record record) {
+    ChatController controller = this.controllers.get(record.id);
+    if (controller == null || this.store.find(record.id) != record) {
+      return;
+    }
+    ChatController.State state = controller.state();
+    List<String> parents = this.wakes.changed(record.id, state);
+    if (parents.isEmpty()) {
+      return;
+    }
+    String prompt = ThreadDonePrompt.compose(record.id, record.title, record.agent(), state, controller.lastAnswer(),
+      controller.error());
+    for (String id : parents) {
+      ThreadStore.Record parent = this.store.find(id);
+      if (parent != null && !parent.archived && this.panel != null && !this.project.isDisposed()) {
+        this.prompt(parent, prompt);
+      }
+    }
+  }
+
+  static AgentCatalog agents() {
+    return AGENTS;
+  }
+
   /** What the chat says when a watch did not start, or null when nothing needs saying. */
   private static @Nullable String watchFailure(WatchException e) {
     return switch (e.reason()) {
@@ -1518,6 +1554,7 @@ public final class ChatService implements Disposable {
 
   private void disposeController(String id) {
     ChatController controller = this.controllers.remove(id);
+    this.wakes.closed(id);
     if (controller != null) {
       Disposer.dispose(controller);
       this.fireActivity();
@@ -1672,6 +1709,7 @@ public final class ChatService implements Disposable {
     @Override
     public void stateChanged() {
       ChatService.this.fireActivity();
+      ChatService.this.wakeParents(this.record);
     }
 
     @Override
@@ -1714,6 +1752,11 @@ public final class ChatService implements Disposable {
     @Override
     public @Nullable String toolsUrl() {
       return ChatService.this.toolsUrl(this.record.id);
+    }
+
+    @Override
+    public void started(AgentInfo info) {
+      AGENTS.remember(info);
     }
 
     @Override

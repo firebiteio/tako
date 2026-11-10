@@ -8,6 +8,7 @@ import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.store.ThreadStore
+import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ui.bridge.ChatMessage
 import io.firebite.tako.ui.t
 import kotlinx.coroutines.cancel
@@ -163,6 +164,43 @@ class TakoCommandsTest : BasePlatformTestCase() {
   fun testNewTakesTheRestAsItsPrompt() {
     assertEquals(TakoAction.NewThread(""), this.resolve("/new"))
     assertEquals(TakoAction.NewThread("idea: rewrite the parser"), this.resolve("/new idea: rewrite the parser"))
+  }
+
+  fun testOrchestrateTakesTheRestAsItsTaskAndNeedsOne() {
+    assertEquals(TakoAction.Orchestrate("port the parser"), this.resolve("/orchestrate port the parser"))
+    assertEquals(t("slash.error.orchestrate.missing"), this.fail("/orchestrate"))
+    assertEquals(t("slash.error.orchestrate.missing"), this.fail("/orchestrate   "))
+    assertEquals(t("slash.error.orchestrate.slash"), this.fail("/orchestrate /compact x"))
+  }
+
+  fun testOrchestrateSendsTheTaskHereWithTheInstructionsAsContext() {
+    val file = ContextItem.create(ContextItem.Kind.FILE, "Parser.java", "class Parser")
+    this.thread.contexts.add(file)
+    val threads = this.store.all().size
+    this.type("/orchestrate port the parser")
+
+    this.thread.submit()
+
+    val prompt = this.thread.turns.single().prompt!!
+    assertEquals("port the parser", prompt.text)
+    assertEquals(listOf(t("slash.orchestrate.chip"), "Parser.java"), prompt.contexts.map { it.label })
+    assertTrue(prompt.contexts[0].text.contains("list_agents"))
+    assertTrue(this.thread.contexts.isEmpty())
+    assertEquals("", this.thread.input.text.toString())
+    assertEquals(threads, this.store.all().size)
+  }
+
+  fun testOrchestrateIsNotOfferedInASideChat() {
+    val record = this.store.create(null, null, null, "claude")
+    record.parentId = this.thread.id
+    record.sideChat = true
+    val side = ThreadState(this.workspace, record.toItem())
+    this.workspace.threads[record.id] = side
+
+    assertEquals(t("slash.error.side.chat", "orchestrate"), (side.resolve(parseTakoCommand("/orchestrate x")!!)
+      as TakoAction.Fail).message)
+    assertTrue(side.slashMenu("/orchestrate").items.isEmpty())
+    assertEquals("orchestrate", this.thread.slashMenu("/orchestrate").items.single().name)
   }
 
   fun testForkNeedsTheCapabilityAndAFinishedAnswer() {
@@ -337,7 +375,7 @@ class TakoCommandsTest : BasePlatformTestCase() {
 
   fun testTheMenuListsTakosCommandsWithoutAgentCommands() {
     val names = this.thread.slashMenu("/").items.map { it.name }
-    assertEquals(listOf("model", "effort", "mode", "new", "archive", "title", "usage", "side", "btw"), names)
+    assertEquals(listOf("model", "effort", "mode", "new", "orchestrate", "archive", "title", "usage", "side", "btw"), names)
     assertTrue(this.thread.slashMenu("/").items.all { it.tako })
   }
 

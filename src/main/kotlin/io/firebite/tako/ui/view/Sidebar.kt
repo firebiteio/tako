@@ -122,7 +122,7 @@ fun threadStatus(thread: ThreadState, now: Long): ThreadStatus {
 
 /** The thread's status, recomposing its reader only when the status changes, not on every clock tick. */
 @Composable
-private fun rememberStatus(workspace: Workspace, thread: ThreadState): ThreadStatus {
+internal fun rememberStatus(workspace: Workspace, thread: ThreadState): ThreadStatus {
   val status by remember(thread) { derivedStateOf(structuralEqualityPolicy()) { threadStatus(thread, workspace.now) } }
   return status
 }
@@ -760,7 +760,7 @@ private fun RowActions(workspace: Workspace, thread: ThreadState, modifier: Modi
 }
 
 @Composable
-private fun statusColor(kind: StatusKind): Color = when (kind) {
+internal fun statusColor(kind: StatusKind): Color = when (kind) {
   StatusKind.WORKING -> colors.primary
   StatusKind.INPUT -> colors.warn
   StatusKind.DONE -> colors.add
@@ -769,7 +769,7 @@ private fun statusColor(kind: StatusKind): Color = when (kind) {
 }
 
 @Composable
-private fun StatusIcon(kind: StatusKind, thread: ThreadState, color: Color) {
+internal fun StatusIcon(kind: StatusKind, thread: ThreadState, color: Color) {
   when (kind) {
     StatusKind.WORKING -> Spinner(14.dp)
     StatusKind.INPUT -> Ico(if (thread.approvals.firstOrNull()?.prompt?.kind == PermissionPrompt.Kind.QUESTION) {

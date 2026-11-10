@@ -53,6 +53,8 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
     /** Archives a thread after {@link #settleIdleDays} without activity. */
     public boolean settleIdle;
     public int settleIdleDays = DEFAULT_IDLE_DAYS;
+    /** Free text on which agent or model suits which work, for agents that hand tasks to other threads. */
+    public String delegationNotes = "";
 
     @OptionTag("executablePath")
     public String claudePath = "";
