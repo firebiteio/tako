@@ -109,12 +109,8 @@ public final class ChatController implements Disposable {
   /** Prompts {@link #submit} holds back until the running rewind is done. */
   private final AtomicInteger deferredSubmits = new AtomicInteger();
 
-  /** Guards waking {@link #awaitSettled} waiters on each change of {@link #state}. */
-  private final Object stateLock = new Object();
-  /** Completes once the agent is no longer busy, replaced when it gets busy again. Guarded by {@link #stateLock}. */
-  private CompletableFuture<State> settled = new CompletableFuture<>();
-
-  private volatile State state = State.STARTING;
+  /** The thread's state. Its monitor also guards a switch against {@link #dispose}. */
+  private final StateCell status;
   private volatile boolean isDisposed;
   private volatile boolean hasTools;
   /** Whether the running agent takes prompts into its running turn. */
@@ -145,6 +141,7 @@ public final class ChatController implements Disposable {
       || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
     this.handoff = new HandoffTracker(record, this.conversation);
+    this.status = new StateCell(host::stateChanged);
     ThreadStore.PendingSetup pending = record.pendingSetup;
     this.setup = pending == null
       ? null
@@ -236,8 +233,8 @@ public final class ChatController implements Disposable {
   }
 
   private void submit(Submit prompt) {
-    if (this.state != State.WAITING) {
-      this.setState(State.WORKING);
+    if (this.status.get() != State.WAITING) {
+      this.status.set(State.WORKING);
     }
     this.error = null;
     CompletableFuture<Void> rewind;
@@ -304,7 +301,7 @@ public final class ChatController implements Disposable {
    */
   public void answer(String requestId, boolean allow, @Nullable String message, boolean interrupt,
     @Nullable Map<String, String> answers, @Nullable Integer suggestion) {
-    this.setState(State.WORKING);
+    this.status.set(State.WORKING);
     this.connection.ifLive(session -> session.answer(requestId,
       new PermissionAnswer(allow, message, interrupt, answers != null ? answers : Map.of(), suggestion)));
   }
@@ -340,7 +337,7 @@ public final class ChatController implements Disposable {
 
   /** Starts the agent again if its last start failed, e.g. once the settings that broke it changed. */
   public void retryFailedStart() {
-    if (this.startFailed && this.state == State.STOPPED) {
+    if (this.startFailed && this.status.get() == State.STOPPED) {
       this.restart();
     }
   }
@@ -355,13 +352,13 @@ public final class ChatController implements Disposable {
   public boolean switchAgent(AgentBackend target) {
     CompletableFuture<Void> done = new CompletableFuture<>();
     State previous;
-    synchronized (this.stateLock) {
-      previous = this.state;
+    synchronized (this.status) {
+      previous = this.status.get();
       if (!this.canSwitch() || target.id().equals(this.backend.id())) {
         return false;
       }
       this.switching = done;
-      this.setState(State.STARTING);
+      this.status.set(State.STARTING);
     }
     Async.inBackground(() -> {
       try {
@@ -376,12 +373,12 @@ public final class ChatController implements Disposable {
   private void switchTo(AgentBackend target, State previous) {
     AgentBackend from = this.backend;
     if (!target.canStart()) {
-      this.setState(this.stateAfterRejectedSwitch(previous));
+      this.status.set(this.stateAfterRejectedSwitch(previous));
       this.view.post(new Notice(TakoBundle.message("error.switch.unavailable", target.displayName())));
       return;
     }
     ThreadPast past = this.conversation.past(from.displayName(), target.displayName());
-    synchronized (this.stateLock) {
+    synchronized (this.status) {
       if (this.isDisposed) {
         return;
       }
@@ -389,13 +386,13 @@ public final class ChatController implements Disposable {
         past.write(this.host.pastFile());
       } catch (IOException e) {
         LOG.warn("Could not save the conversation before switching agents", e);
-        this.setState(this.stateAfterRejectedSwitch(previous));
+        this.status.set(this.stateAfterRejectedSwitch(previous));
         this.view.post(new Notice(TakoBundle.message("error.switch.save", e.getMessage())));
         return;
       }
     }
     this.connection.stop();
-    synchronized (this.stateLock) {
+    synchronized (this.status) {
       if (this.isDisposed) {
         return;
       }
@@ -432,7 +429,7 @@ public final class ChatController implements Disposable {
         this.postError(message);
       }
     }
-    if (this.isDisposed || this.state == State.STOPPED) {
+    if (this.isDisposed || this.status.get() == State.STOPPED) {
       this.connection.stop();
     }
   }
@@ -480,7 +477,7 @@ public final class ChatController implements Disposable {
    * agents that give its history only while running may hold some the thread has not seen.
    */
   public boolean hasConversation() {
-    return !this.conversation.isEmpty() || (this.record.sessionId != null && this.state == State.STOPPED);
+    return !this.conversation.isEmpty() || (this.record.sessionId != null && this.status.get() == State.STOPPED);
   }
 
   /**
@@ -488,14 +485,14 @@ public final class ChatController implements Disposable {
    * nor has a prompt on its way to the agent.
    */
   public boolean canSwitch() {
-    State current = this.state;
+    State current = this.status.get();
     return !this.isDisposed && this.opened.isDone() && this.switching.isDone() && this.rewinding.isDone()
       && !this.queue.isRunning() && (current == State.IDLE || current == State.STOPPED);
   }
 
   /** Whether a prompt is on its way to the agent, or the agent works on one or waits for an answer. */
   public boolean hasPromptInFlight() {
-    return this.queue.isRunning() || this.state.isInTurn();
+    return this.queue.isRunning() || this.status.get().isInTurn();
   }
 
   /**
@@ -503,12 +500,12 @@ public final class ChatController implements Disposable {
    * and instructions again. Only while the agent is idle. The chat keeps its timeline and the last turn's error.
    */
   public void restartSession() {
-    if (this.state != State.IDLE || !this.switching.isDone()) {
+    if (this.status.get() != State.IDLE || !this.switching.isDone()) {
       return;
     }
     Async.inBackground(() -> {
       this.rewinding.join();
-      if (this.state != State.IDLE) {
+      if (this.status.get() != State.IDLE) {
         return;
       }
       this.keepsTimeline = true;
@@ -553,7 +550,7 @@ public final class ChatController implements Disposable {
 
   /** This thread's agent, or another thread's, working in the repository. */
   private @Nullable ThreadGit.Busy busyIn(String topLevel) {
-    if (this.state.isInTurn()) {
+    if (this.status.get().isInTurn()) {
       return new ThreadGit.Busy(Blocker.AGENT_BUSY, this.backend.displayName());
     }
     String other = this.host.busyThreadIn(topLevel);
@@ -571,7 +568,7 @@ public final class ChatController implements Disposable {
   }
 
   public State state() {
-    return this.state;
+    return this.status.get();
   }
 
   /** The text the agent wrote since the last prompt. */
@@ -611,15 +608,7 @@ public final class ChatController implements Disposable {
    * @return the state then
    */
   public State awaitSettled(long timeoutMillis) throws InterruptedException {
-    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
-    synchronized (this.stateLock) {
-      long left = deadline - System.nanoTime();
-      while (this.state.isBusy() && !this.isDisposed && left > 0) {
-        TimeUnit.NANOSECONDS.timedWait(this.stateLock, left);
-        left = deadline - System.nanoTime();
-      }
-      return this.state;
-    }
+    return this.status.awaitSettled(timeoutMillis);
   }
 
   /**
@@ -627,28 +616,14 @@ public final class ChatController implements Disposable {
    * thread closed.
    */
   public CompletableFuture<State> settled() {
-    synchronized (this.stateLock) {
-      return this.settled.copy();
-    }
-  }
-
-  /** Under {@link #stateLock}: wakes the waiters on a change of {@link #state}. */
-  private void stateChanged() {
-    this.stateLock.notifyAll();
-    if (this.state.isBusy() && !this.isDisposed) {
-      if (this.settled.isDone()) {
-        this.settled = new CompletableFuture<>();
-      }
-    } else {
-      this.settled.complete(this.state);
-    }
+    return this.status.settled();
   }
 
   @Override
   public void dispose() {
-    synchronized (this.stateLock) {
+    synchronized (this.status) {
       this.isDisposed = true;
-      this.stateChanged();
+      this.status.close();
     }
     this.stash(false);
     if (this.setup != null) {
@@ -700,26 +675,6 @@ public final class ChatController implements Disposable {
     }
   }
 
-  /** The agent is ready. A prompt sent to it meanwhile already made the thread work, which stays so. */
-  private void idleIfStarting() {
-    synchronized (this.stateLock) {
-      if (this.state != State.STARTING) {
-        return;
-      }
-      this.state = State.IDLE;
-      this.stateChanged();
-    }
-    Async.onEdt(this.host::stateChanged);
-  }
-
-  private void setState(State state) {
-    synchronized (this.stateLock) {
-      this.state = state;
-      this.stateChanged();
-    }
-    Async.onEdt(this.host::stateChanged);
-  }
-
   private void launch(@Nullable String resumeSessionId) {
     this.launch(resumeSessionId, false);
   }
@@ -736,7 +691,7 @@ public final class ChatController implements Disposable {
     AgentLaunch launch = new AgentLaunch(workDirectory, resumeSessionId, this.record.model, this.record.mode,
       this.record.effort, this.host.additionalDirectories(), EnvironmentUtil.getEnvironmentMap(),
       this.host.toolsUrl());
-    this.setState(State.STARTING);
+    this.status.set(State.STARTING);
     this.startFailed = false;
     AgentSession session;
     try {
@@ -763,9 +718,9 @@ public final class ChatController implements Disposable {
       if (prompt != null) {
         this.submit(prompt);
       } else if (!forPrompt && this.deferredSubmits.get() == 0 && this.setup != null) {
-        this.setup.settle(this::idleIfStarting);
+        this.setup.settle(this.status::idleIfStarting);
       } else if (!forPrompt && this.deferredSubmits.get() == 0) {
-        this.idleIfStarting();
+        this.status.idleIfStarting();
       }
     });
   }
@@ -877,13 +832,13 @@ public final class ChatController implements Disposable {
     if (session == null) {
       this.launch(this.record.sessionId, true).handle((ready, error) -> null).join();
       session = this.connection.live();
-      if (session == null || this.state == State.STOPPED || this.isDisposed) {
+      if (session == null || this.status.get() == State.STOPPED || this.isDisposed) {
         return;
       }
     }
     if (!this.queue.dispatch(turn, steer)) {
-      if (this.state == State.STARTING && !this.queue.isRunning()) {
-        this.setState(State.IDLE);
+      if (this.status.get() == State.STARTING && !this.queue.isRunning()) {
+        this.status.set(State.IDLE);
       }
       return;
     }
@@ -987,7 +942,7 @@ public final class ChatController implements Disposable {
   public void rewind(List<String> prompts, boolean files) {
     CompletableFuture<Void> done = new CompletableFuture<>();
     synchronized (this.rewindLock) {
-      boolean idle = this.state == State.IDLE || this.state == State.STOPPED;
+      boolean idle = this.status.get() == State.IDLE || this.status.get() == State.STOPPED;
       if (!this.rewinding.isDone() || !this.switching.isDone() || !idle || prompts.isEmpty() || this.isDisposed) {
         this.view.post(new Rewound(false, this.isDisposed || prompts.isEmpty()
           ? null
@@ -1024,7 +979,7 @@ public final class ChatController implements Disposable {
         return new Rewound(false, blocker);
       }
     }
-    this.setState(State.STARTING);
+    this.status.set(State.STARTING);
     this.connection.stop();
     if (this.isDisposed) {
       return new Rewound(false, null);
@@ -1058,7 +1013,7 @@ public final class ChatController implements Disposable {
     String filesError = null;
     if (commit != null) {
       try {
-        this.setState(State.WORKING);
+        this.status.set(State.WORKING);
         String blocker = this.checkpoints.blocker(folder);
         if (blocker != null) {
           throw new Worktrees.GitException(blocker);
@@ -1157,10 +1112,10 @@ public final class ChatController implements Disposable {
       case AgentEvent.Busy busy -> {
         this.turnRunning = true;
         this.queue.busy();
-        this.setState(State.WORKING);
+        this.status.set(State.WORKING);
       }
       case AgentEvent.Interrupted interrupted -> this.queue.interrupted();
-      case AgentEvent.PermissionCancelled cancelled -> this.setState(State.WORKING);
+      case AgentEvent.PermissionCancelled cancelled -> this.status.set(State.WORKING);
       case AgentEvent.Text text -> {
         if (text.parentId() == null && !text.text().isBlank()) {
           synchronized (this.answer) {
@@ -1244,18 +1199,18 @@ public final class ChatController implements Disposable {
    * needs a look.
    */
   private void queueChanged(Queue snapshot) {
-    State current = this.state;
+    State current = this.status.get();
     if (snapshot.running() && (current == State.IDLE || current == State.STOPPED || current == State.STARTING)) {
-      this.setState(State.WORKING);
+      this.status.set(State.WORKING);
     } else if (!snapshot.running() && (current == State.WORKING || current == State.WAITING)) {
-      this.setState(State.IDLE);
+      this.status.set(State.IDLE);
       Async.onEdt(() -> this.host.needsLook(false));
     }
     this.view.post(snapshot);
   }
 
   private void onPermission(String requestId, PermissionPrompt prompt) {
-    this.setState(State.WAITING);
+    this.status.set(State.WAITING);
     this.view.post(new Permission(requestId, prompt));
     String agent = this.backend.displayName();
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
@@ -1275,7 +1230,7 @@ public final class ChatController implements Disposable {
       this.setup.dropHeld();
     }
     this.error = error;
-    this.setState(State.STOPPED);
+    this.status.set(State.STOPPED);
     this.queue.stopped();
   }
 
@@ -1328,7 +1283,7 @@ public final class ChatController implements Disposable {
     public void held(@Nullable String failure) {
       this.error = failure != null ? TakoBundle.message("setup.failed", failure) : null;
       ChatController.this.error = this.error;
-      ChatController.this.setState(failure != null ? State.WAITING : State.WORKING);
+      ChatController.this.status.set(failure != null ? State.WAITING : State.WORKING);
     }
 
     @Override
