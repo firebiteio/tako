@@ -50,7 +50,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
   }
 
   private boolean start(String threadId, int forkPrompts, String question) {
-    return this.service.startSideChat(threadId, forkPrompts, new Submit(question, List.of(), List.of()));
+    return this.service.sideChats().start(threadId, forkPrompts, new Submit(question, List.of(), List.of()));
   }
 
   private List<ThreadStore.Record> sideChatsOf(ThreadStore.Record main) {
@@ -204,8 +204,8 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     this.service.archive(main.id);
     this.service.select(main.id);
 
-    this.service.openSideChat(side.id);
-    this.service.openSideChat(side.id);
+    this.service.sideChats().open(side.id);
+    this.service.sideChats().open(side.id);
 
     assertFalse(side.archived);
     assertNotNull(this.service.controller(side.id));
@@ -215,8 +215,8 @@ public class SideChatServiceTest extends BasePlatformTestCase {
     ThreadStore.Record thread = this.thread();
     thread.archived = true;
 
-    this.service.openSideChat(thread.id);
-    this.service.openSideChat("gone");
+    this.service.sideChats().open(thread.id);
+    this.service.sideChats().open("gone");
 
     assertTrue(thread.archived);
     assertNull(this.service.controller(thread.id));

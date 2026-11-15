@@ -337,7 +337,7 @@ private fun ThreadState.regenerateTitle() {
   this.workspace.scope.launch {
     val workspace = this@regenerateTitle.workspace
     val canTitle = try {
-      withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(this@regenerateTitle.id, shown) }
+      withContext(Dispatchers.IO) { workspace.service.titles().canRegenerate(this@regenerateTitle.id, shown) }
     } catch (e: CancellationException) {
       this@regenerateTitle.titling = false
       throw e

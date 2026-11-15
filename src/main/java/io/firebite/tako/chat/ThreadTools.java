@@ -503,7 +503,7 @@ final class ThreadTools implements McpTools {
   private String watch(JsonObject arguments) throws McpToolException {
     PullRequestWatcher.Started started;
     try {
-      started = this.service.watcher().start(this.threadId, Json.string(arguments, "url"), true);
+      started = this.service.watches().watcher().start(this.threadId, Json.string(arguments, "url"), true);
     } catch (WatchException e) {
       throw new McpToolException(e.getMessage());
     }
@@ -534,7 +534,7 @@ final class ThreadTools implements McpTools {
   }
 
   private String unwatch() {
-    String stopped = this.service.watcher().stop(this.threadId);
+    String stopped = this.service.watches().watcher().stop(this.threadId);
     JsonObject result = new JsonObject();
     result.addProperty("watching", false);
     if (stopped != null) {

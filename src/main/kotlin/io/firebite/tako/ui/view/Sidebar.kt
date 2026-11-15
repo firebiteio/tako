@@ -152,7 +152,7 @@ fun Sidebar(workspace: Workspace, narrow: Boolean, modifier: Modifier) {
           SessionsMenu(workspace)
         }
       }
-      IconBtn(Icons.addProject, t("sidebar.add.project")) { workspace.service.addProject() }
+      IconBtn(Icons.addProject, t("sidebar.add.project")) { workspace.service.folders().add() }
       IconBtn(Icons.add, t("common.new.thread")) { workspace.newThreadHere() }
     }
     if (workspace.searching) {
@@ -398,7 +398,7 @@ private fun ProjectGroup(workspace: Workspace, project: ProjectItem, sorted: Lis
     Tip(project.path) {
       Row(Modifier.fillMaxWidth().height(28.dp).hoverClick(alpha = 0.6f, interaction = interaction) {
         workspace.collapsedProjects[project.path] = !collapsed
-        workspace.service.collapseProject(project.path, !collapsed)
+        workspace.service.folders().collapse(project.path, !collapsed)
       }.padding(horizontal = 6.dp), verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(6.dp)) {
         val color = if (hovered || (collapsed && hasActive)) colors.fg else colors.muted
@@ -414,7 +414,7 @@ private fun ProjectGroup(workspace: Workspace, project: ProjectItem, sorted: Lis
           }
           if (!project.primary) {
             IconBtn(Icons.remove, t("sidebar.project.remove"), iconSize = 14.dp) {
-              workspace.service.removeProject(project.path)
+              workspace.service.folders().remove(project.path)
             }
           }
         } else if (threads.size + benches.size > 0) {
@@ -582,7 +582,7 @@ private fun ThreadMenu(workspace: Workspace, thread: ThreadState, page: MenuPage
   var canTitle by remember(thread) { mutableStateOf(false) }
   LaunchedEffect(thread) {
     val shown = thread.turns.isNotEmpty()
-    canTitle = withContext(Dispatchers.IO) { workspace.service.canRegenerateTitle(thread.id, shown) }
+    canTitle = withContext(Dispatchers.IO) { workspace.service.titles().canRegenerate(thread.id, shown) }
   }
   val service = workspace.service
   val entries = workspace.threadActions(thread).map { action ->

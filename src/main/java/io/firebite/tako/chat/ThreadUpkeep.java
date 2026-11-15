@@ -139,7 +139,7 @@ public final class ThreadUpkeep {
     for (ThreadStore.Record record : this.store.all()) {
       GitInfo.PullRequest known = record.pullRequest;
       if (!record.archived && record.workPath != null && known != null && !isClosed(known)) {
-        asks.add(new Ask(record, known, List.of(record.workPath, this.service.folderOf(record.projectPath))));
+        asks.add(new Ask(record, known, List.of(record.workPath, this.service.folders().folderOf(record.projectPath))));
       }
     }
     if (asks.isEmpty() || !this.refreshing.compareAndSet(false, true)) {

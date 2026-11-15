@@ -20,12 +20,12 @@ fun watchButton(pr: GitInfo.PullRequest?, watching: String?, starting: Boolean):
 /** Starts or stops watching the thread's pull request. Ignored while a start runs. */
 fun ThreadState.toggleWatch() {
   if (this.watching != null) {
-    this.workspace.service.unwatchPullRequest(this.id)
+    this.workspace.service.watches().stop(this.id)
     return
   }
   if (this.watchStarting) {
     return
   }
   this.watchStarting = true
-  this.workspace.service.watchPullRequest(this.id).thenRun { this.watchStarting = false }
+  this.workspace.service.watches().start(this.id).thenRun { this.watchStarting = false }
 }

@@ -230,7 +230,7 @@ class Workspace(val service: ChatService, val project: Project) {
   /** Opens the menu of sessions to resume once the IDE found them. */
   fun showHistory() {
     this.scope.launch {
-      this@Workspace.sessions = withContext(Dispatchers.IO) { this@Workspace.service.history() }
+      this@Workspace.sessions = withContext(Dispatchers.IO) { this@Workspace.service.sessions().history() }
     }
   }
 
@@ -242,7 +242,7 @@ class Workspace(val service: ChatService, val project: Project) {
 
   /** Asks the IDE which threads' sessions mention the query. */
   suspend fun searchSessions(query: String) {
-    val hits = withContext(Dispatchers.IO) { this@Workspace.service.search(query) }
+    val hits = withContext(Dispatchers.IO) { this@Workspace.service.sessions().search(query) }
     this.searchHits = query to hits
   }
 
@@ -250,7 +250,7 @@ class Workspace(val service: ChatService, val project: Project) {
   fun showUsage() {
     this.usage = null
     this.usageOpen = true
-    this.scope.launch { this@Workspace.usage = withContext(Dispatchers.IO) { this@Workspace.service.usage() } }
+    this.scope.launch { this@Workspace.usage = withContext(Dispatchers.IO) { this@Workspace.service.sessions().usage() } }
   }
 
   fun newThreadHere() {
@@ -275,7 +275,7 @@ class Workspace(val service: ChatService, val project: Project) {
   /** Has the thread's agent write a title from the conversation the chat holds. */
   fun regenerateTitle(thread: ThreadState) {
     thread.titling = true
-    this.service.regenerateTitle(thread.id, thread.conversation()).thenRun { thread.titling = false }
+    this.service.titles().regenerate(thread.id, thread.conversation()).thenRun { thread.titling = false }
   }
 
   /** Runs a git action from the thread's header. The thread counts as running one until it ended or was cancelled. */

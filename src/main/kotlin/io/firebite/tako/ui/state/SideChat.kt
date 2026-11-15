@@ -101,7 +101,7 @@ fun ThreadState.startSideChat(question: String, contexts: List<ContextItem> = em
   }
   // Before the main agent started its capabilities are unknown; a fork it can't make falls back to an excerpt.
   val canFork = main.info?.capabilities?.fork != false
-  val started = this.workspace.service.startSideChat(main.id, if (canFork) main.settledPrompts() else 0,
+  val started = this.workspace.service.sideChats().start(main.id, if (canFork) main.settledPrompts() else 0,
     Submit(question, contexts, images))
   main.startingSideChat = started
   return started
@@ -125,7 +125,7 @@ fun Workspace.showSideChat(id: String, started: Boolean) {
   if (main.isActive) {
     side.requestFocus()
   }
-  this.service.openSideChat(side.id)
+  this.service.sideChats().open(side.id)
 }
 
 /** The header button: shows the latest side chat, starts the first one, or hides the pane. */

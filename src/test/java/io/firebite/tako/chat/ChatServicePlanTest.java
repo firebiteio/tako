@@ -93,7 +93,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
   public void testPlanThreadCopiesTheSourceButNotItsPlanMode() {
     ThreadStore.Record source = this.source("/work/here");
 
-    ThreadStore.Record record = this.service.planThread(source, PLAN, null);
+    ThreadStore.Record record = this.service.plans().create(source, PLAN, null);
 
     assertEquals("Implement Add dark mode", record.title);
     assertEquals("claude", record.agent());
@@ -114,7 +114,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     GitWorktree.Worktree worktree = new GitWorktree.Worktree(Path.of("/repo.worktrees/add-dark-mode"), "add-dark-mode",
       Path.of("/repo"));
 
-    ThreadStore.Record record = this.service.planThread(source, PLAN, worktree);
+    ThreadStore.Record record = this.service.plans().create(source, PLAN, worktree);
 
     assertEquals(worktree.folder().toString(), record.workPath);
     assertNotNull(record.pendingSetup);
@@ -126,7 +126,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     ThreadStore.Record source = this.source(null);
     source.mode = "acceptEdits";
 
-    assertEquals("acceptEdits", this.service.planThread(source, PLAN, null).mode);
+    assertEquals("acceptEdits", this.service.plans().create(source, PLAN, null).mode);
   }
 
   public void testPlanThreadLeavesPlanModeTheSettingsWouldStartIn() {
@@ -134,21 +134,21 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     ThreadStore.Record source = this.source(null);
     source.mode = "";
 
-    assertEquals("default", this.service.planThread(source, PLAN, null).mode);
+    assertEquals("default", this.service.plans().create(source, PLAN, null).mode);
   }
 
   public void testPlanThreadOfALegacyThreadRunsClaude() {
     ThreadStore.Record source = this.source(null);
     source.agent = null;
 
-    assertEquals("claude", this.service.planThread(source, PLAN, null).agent);
+    assertEquals("claude", this.service.plans().create(source, PLAN, null).agent);
   }
 
   public void testPlanThreadWithoutAHeadingOrWithAHugeOneHasAShortTitle() {
     ThreadStore.Record source = this.source(null);
 
-    assertEquals("Implement plan", this.service.planThread(source, "1. do it", null).title);
-    String title = this.service.planThread(source, "# " + "🎨".repeat(500), null).title;
+    assertEquals("Implement plan", this.service.plans().create(source, "1. do it", null).title);
+    String title = this.service.plans().create(source, "# " + "🎨".repeat(500), null).title;
     assertTrue(title, title.length() <= 40);
     assertTrue(title, title.startsWith("Implement 🎨"));
   }
@@ -158,7 +158,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     ThreadStore.Record source = this.source(null);
     source.projectPath = folder;
 
-    ThreadStore.Record record = this.service.planThread(source, PLAN, null);
+    ThreadStore.Record record = this.service.plans().create(source, PLAN, null);
 
     assertEquals(folder, record.projectPath);
     assertNotNull(this.store.findProject(folder));
@@ -169,7 +169,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     String folder = Files.createTempDirectory("tako-plan").toString();
     ThreadStore.Record source = this.source(folder);
 
-    String id = await(this.service.implementPlan(source.id, PLAN, false));
+    String id = await(this.service.plans().implement(source.id, PLAN, false));
 
     assertNotNull(id);
     ThreadStore.Record record = this.store.find(id);
@@ -184,8 +184,8 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
   public void testImplementingTwiceStartsTwoThreads() throws Exception {
     ThreadStore.Record source = this.source(Files.createTempDirectory("tako-plan").toString());
 
-    String first = await(this.service.implementPlan(source.id, PLAN, false));
-    String second = await(this.service.implementPlan(source.id, PLAN, false));
+    String first = await(this.service.plans().implement(source.id, PLAN, false));
+    String second = await(this.service.plans().implement(source.id, PLAN, false));
 
     assertNotNull(first);
     assertNotNull(second);
@@ -193,7 +193,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
   }
 
   public void testImplementingThePlanOfAnUnknownThreadStartsNothing() {
-    CompletableFuture<@Nullable String> future = this.service.implementPlan("gone", PLAN, false);
+    CompletableFuture<@Nullable String> future = this.service.plans().implement("gone", PLAN, false);
 
     assertTrue(future.isDone());
     assertNull(future.getNow("started"));
@@ -206,8 +206,8 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     ThreadStore.Record source = this.source(folder.toString());
     Set<String> ids = this.ids();
 
-    assertNull(await(this.service.implementPlan(source.id, PLAN, true)));
-    assertNull(await(this.service.implementPlan(source.id, PLAN, false)));
+    assertNull(await(this.service.plans().implement(source.id, PLAN, true)));
+    assertNull(await(this.service.plans().implement(source.id, PLAN, false)));
     assertEquals(ids, this.ids());
   }
 
@@ -215,7 +215,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     ThreadStore.Record source = this.source(Files.createTempDirectory("tako-no-git").toString());
     Set<String> ids = this.ids();
 
-    assertNull(await(this.service.implementPlan(source.id, PLAN, true)));
+    assertNull(await(this.service.plans().implement(source.id, PLAN, true)));
     assertEquals(ids, this.ids());
   }
 
@@ -226,7 +226,7 @@ public class ChatServicePlanTest extends BasePlatformTestCase {
     git(repository, "-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "start");
     ThreadStore.Record source = this.source(repository.toString());
 
-    String id = await(this.service.implementPlan(source.id, PLAN, true));
+    String id = await(this.service.plans().implement(source.id, PLAN, true));
 
     assertNotNull(id);
     Path worktree = Path.of(this.store.find(id).workPath);

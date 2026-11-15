@@ -90,7 +90,7 @@ final class TakoStatusWidget implements StatusBarWidget, StatusBarWidget.TextPre
   }
 
   private void refreshCost() {
-    this.todayCost = this.service.todayCost();
+    this.todayCost = this.service.sessions().todayCost();
     Async.onEdt(this::refresh);
   }
 

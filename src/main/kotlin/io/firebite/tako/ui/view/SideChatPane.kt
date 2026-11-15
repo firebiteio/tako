@@ -40,7 +40,7 @@ fun SideChatPane(main: ThreadState, side: ThreadState, markdown: ChatMarkdown, a
   val workspace = main.workspace
   LaunchedEffect(side) {
     side.unread = false
-    workspace.service.openSideChat(side.id)
+    workspace.service.sideChats().open(side.id)
   }
   Column(modifier.background(colors.bg)) {
     Row(Modifier.fillMaxWidth().height(40.dp).padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,

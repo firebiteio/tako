@@ -17,7 +17,7 @@ fun ThreadState.implementElsewhere(plan: TurnItem.Plan, worktree: Boolean) {
     return
   }
   this.implementing = true
-  this.workspace.service.implementPlan(this.id, plan.plan, worktree).whenComplete { created, _ ->
+  this.workspace.service.plans().implement(this.id, plan.plan, worktree).whenComplete { created, _ ->
     this.implementing = false
     if (created != null) {
       this.onImplementedElsewhere(plan)
@@ -34,6 +34,6 @@ fun ThreadState.onImplementedElsewhere(plan: TurnItem.Plan) {
 /** Asks where to save the plan as Markdown, then opens the file. */
 fun ThreadState.savePlan(plan: TurnItem.Plan) {
   if (plan.plan.isNotBlank()) {
-    this.workspace.service.savePlan(this.id, plan.plan)
+    this.workspace.service.plans().save(this.id, plan.plan)
   }
 }
