@@ -42,8 +42,11 @@ repositories {
 
 dependencies {
   intellijPlatform {
-    val localIde = providers.gradleProperty("tako.platformLocalPath")
-    if (!localIde.orNull.isNullOrBlank()) {
+    // Distributable builds compile against platformVersion: a newer local IDE links APIs sinceBuild lacks.
+    val distTasks = setOf("assemble", "build", "buildPlugin", "signPlugin", "publishPlugin", "verifyPlugin")
+    val distBuild = gradle.startParameter.taskNames.any { it.substringAfterLast(':') in distTasks }
+    val localIde = providers.gradleProperty("tako.platformLocalPath").orNull.takeUnless { distBuild }
+    if (!localIde.isNullOrBlank()) {
       local(localIde)
     } else {
       intellijIdea(providers.gradleProperty("platformVersion"))
