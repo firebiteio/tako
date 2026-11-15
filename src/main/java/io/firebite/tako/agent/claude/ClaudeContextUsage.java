@@ -30,7 +30,7 @@ final class ClaudeContextUsage {
       Json.optionalNumber(usage, "totalTokens"),
       Json.optionalNumber(usage, "maxTokens"),
       Json.optionalNumber(usage, "autoCompactThreshold"),
-      usage.has("isAutoCompactEnabled") ? Json.bool(usage, "isAutoCompactEnabled") : null,
+      Json.optionalBool(usage, "isAutoCompactEnabled"),
       categories, memoryFiles, mcpServers(usage),
       messages == null
         ? null

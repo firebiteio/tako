@@ -1,10 +1,7 @@
 package io.firebite.tako.chat.watch;
 
 import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 import io.firebite.tako.ide.project.Forge;
 import io.firebite.tako.json.Json;
 import java.util.ArrayList;
@@ -95,9 +92,10 @@ public record PullRequestStatus(
     }
     List<Review> reviews = new ArrayList<>();
     List<Comment> comments = new ArrayList<>();
-    notes(url, parseArray(notesJson), reviews, comments);
+    notes(url, Json.parseArray(notesJson), reviews, comments);
     return new PullRequestStatus(Forge.GITLAB, (int) Json.number(request, "iid"), url, text(request, "title"), state,
-      text(request, "sha"), text(request, "target_branch"), mergeable, jobs(parseArray(jobsJson)), reviews, comments);
+      text(request, "sha"), text(request, "target_branch"), mergeable, jobs(Json.parseArray(jobsJson)), reviews,
+      comments);
   }
 
   /**
@@ -194,19 +192,11 @@ public record PullRequestStatus(
 
   private static List<Comment> comments(@Nullable String json) {
     List<Comment> comments = new ArrayList<>();
-    JsonArray array = parseArray(json);
-    if (array == null) {
-      return comments;
-    }
-    for (JsonElement element : array) {
-      if (!element.isJsonObject()) {
-        continue;
-      }
-      JsonObject item = element.getAsJsonObject();
+    for (JsonObject item : Json.objects(Json.parseArray(json))) {
       Long id = Json.optionalNumber(item, "id");
       if (id != null) {
         comments.add(new Comment(id, text(Json.object(item, "user"), "login"), text(item, "path"),
-          optionalInt(item, "line"), optionalInt(item, "original_line"), text(item, "body"),
+          Json.optionalInt(item, "line"), Json.optionalInt(item, "original_line"), text(item, "body"),
           text(item, "html_url")));
       }
     }
@@ -216,7 +206,7 @@ public record PullRequestStatus(
   /** GitLab lists only each job's latest run. A failure that may fail does not count, as GitLab merges anyway. */
   private static List<Check> jobs(@Nullable JsonArray array) {
     List<Check> checks = new ArrayList<>();
-    for (JsonObject job : objects(array)) {
+    for (JsonObject job : Json.objects(array)) {
       String status = text(job, "status");
       Outcome outcome;
       if (GITLAB_RUNNING.contains(status)) {
@@ -233,7 +223,7 @@ public record PullRequestStatus(
 
   /** Splits the notes, newest first, into reviews, oldest first, and comments on the diff. */
   private static void notes(String url, @Nullable JsonArray array, List<Review> reviews, List<Comment> comments) {
-    for (JsonObject note : objects(array)) {
+    for (JsonObject note : Json.objects(array)) {
       Long id = Json.optionalNumber(note, "id");
       if (id == null) {
         continue;
@@ -254,39 +244,10 @@ public record PullRequestStatus(
         continue;
       }
       String path = Json.string(position, "new_path");
-      Integer line = optionalInt(position, "new_line");
+      Integer line = Json.optionalInt(position, "new_line");
       comments.add(new Comment(id, author, path != null ? path : text(position, "old_path"),
-        line != null ? line : optionalInt(position, "old_line"), null, body, url + "#note_" + id));
+        line != null ? line : Json.optionalInt(position, "old_line"), null, body, url + "#note_" + id));
     }
-  }
-
-  private static List<JsonObject> objects(@Nullable JsonArray array) {
-    List<JsonObject> objects = new ArrayList<>();
-    if (array != null) {
-      for (JsonElement element : array) {
-        if (element.isJsonObject()) {
-          objects.add(element.getAsJsonObject());
-        }
-      }
-    }
-    return objects;
-  }
-
-  private static @Nullable JsonArray parseArray(@Nullable String json) {
-    if (json == null || json.isBlank()) {
-      return null;
-    }
-    try {
-      JsonElement element = JsonParser.parseString(json);
-      return element.isJsonArray() ? element.getAsJsonArray() : null;
-    } catch (JsonParseException e) {
-      return null;
-    }
-  }
-
-  private static @Nullable Integer optionalInt(JsonObject item, String key) {
-    Long value = Json.optionalNumber(item, key);
-    return value == null ? null : value.intValue();
   }
 
   private static String text(@Nullable JsonObject object, String key) {

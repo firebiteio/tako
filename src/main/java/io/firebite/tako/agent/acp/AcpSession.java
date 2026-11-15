@@ -363,9 +363,7 @@ final class AcpSession implements AgentSession, JsonRpcConnection.Handler {
     this.emit(new AgentEvent.Busy());
     this.connection.request("session/prompt", params).whenComplete((response, error) -> {
       this.translator.flush().forEach(this::emit);
-      String stopReason = response != null && response.isJsonObject()
-        ? Json.string(response.getAsJsonObject(), "stopReason")
-        : null;
+      String stopReason = Json.string(Json.asObject(response), "stopReason");
       if ("cancelled".equals(stopReason)) {
         this.emit(new AgentEvent.Interrupted());
       }

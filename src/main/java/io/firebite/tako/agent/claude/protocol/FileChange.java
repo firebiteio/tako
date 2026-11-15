@@ -4,6 +4,7 @@ import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import io.firebite.tako.json.Json;
+import java.util.Objects;
 import org.jetbrains.annotations.Nullable;
 
 /**
@@ -30,12 +31,12 @@ public record FileChange(
     int added = 0;
     int removed = 0;
     for (JsonElement hunk : patch) {
-      JsonArray lines = hunk.isJsonObject() ? Json.array(hunk.getAsJsonObject(), "lines") : null;
+      JsonArray lines = Json.array(Json.asObject(hunk), "lines");
       if (lines == null) {
         continue;
       }
       for (JsonElement line : lines) {
-        String text = line.isJsonPrimitive() ? line.getAsString() : "";
+        String text = Objects.requireNonNullElse(Json.asString(line), "");
         if (text.startsWith("+")) {
           added++;
         } else if (text.startsWith("-")) {

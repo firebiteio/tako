@@ -100,13 +100,13 @@ public final class AcpBackend implements AgentBackend {
       JsonObject params = new JsonObject();
       params.addProperty("protocolVersion", AcpSession.PROTOCOL_VERSION);
       JsonElement initialized = connection.await("initialize", params, LIST_TIMEOUT_SECONDS);
-      JsonObject capabilities = Json.object(Json.object(initialized.getAsJsonObject(), "agentCapabilities"),
+      JsonObject capabilities = Json.object(Json.object(Json.asObject(initialized), "agentCapabilities"),
         "sessionCapabilities");
       if (Json.object(capabilities, "list") == null) {
         return sessions;
       }
       JsonElement listed = connection.await("session/list", Json.of("cwd", projectPath), LIST_TIMEOUT_SECONDS);
-      for (JsonObject session : Json.objects(listed.isJsonObject() ? listed.getAsJsonObject() : null, "sessions")) {
+      for (JsonObject session : Json.objects(Json.asObject(listed), "sessions")) {
         String title = Json.string(session, "title");
         if (title != null && !title.isBlank() && sessions.size() < limit) {
           sessions.add(new AgentSessionInfo(String.valueOf(Json.string(session, "sessionId")), title,

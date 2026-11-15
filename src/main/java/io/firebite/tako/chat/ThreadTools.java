@@ -28,6 +28,7 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
 import java.util.concurrent.TimeUnit;
@@ -430,7 +431,7 @@ final class ThreadTools implements McpTools {
     }
     List<ThreadStore.Record> records = new ArrayList<>();
     for (JsonElement id : ids) {
-      records.add(this.other(id.isJsonPrimitive() ? id.getAsString() : ""));
+      records.add(this.other(Objects.requireNonNullElse(Json.asString(id), "")));
     }
     String until = Json.string(arguments, "until");
     boolean isAny = "any".equals(until);

@@ -111,11 +111,8 @@ final class AcpTranslator {
     String path = !locations.isEmpty() ? Json.string(locations.getFirst(), "path") : null;
     switch (kind(Json.string(toolCall, "kind"))) {
       case COMMAND -> {
-        JsonElement command = input.get("command");
-        if (command != null && command.isJsonArray()) {
-          List<String> parts = new ArrayList<>();
-          command.getAsJsonArray().forEach(part -> parts.add(part.getAsString()));
-          input.addProperty("command", String.join(" ", parts));
+        if (Json.array(input, "command") != null) {
+          input.addProperty("command", String.join(" ", Json.strings(input, "command")));
         } else if (Json.string(input, "command") == null && title != null) {
           input.addProperty("command", title);
         }

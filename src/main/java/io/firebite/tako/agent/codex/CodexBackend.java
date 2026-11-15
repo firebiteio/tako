@@ -98,7 +98,7 @@ public final class CodexBackend implements AgentBackend {
       JsonObject params = Json.of("cwd", projectPath);
       params.addProperty("limit", limit);
       JsonElement listed = connection.await("thread/list", params, LIST_TIMEOUT_SECONDS);
-      for (JsonObject thread : Json.objects(listed.isJsonObject() ? listed.getAsJsonObject() : null, "data")) {
+      for (JsonObject thread : Json.objects(Json.asObject(listed), "data")) {
         String name = Json.string(thread, "name");
         String preview = Json.string(thread, "preview");
         String title = name != null && !name.isBlank() ? name : preview != null && !preview.isBlank() ? preview : null;
@@ -155,7 +155,7 @@ public final class CodexBackend implements AgentBackend {
         params.addProperty("cursor", cursor);
       }
       JsonElement page = connection.await("thread/turns/list", params, LIST_TIMEOUT_SECONDS);
-      JsonObject result = page.isJsonObject() ? page.getAsJsonObject() : null;
+      JsonObject result = Json.asObject(page);
       turns.addAll(Json.objects(result, "data"));
       cursor = Json.string(result, "nextCursor");
     } while (cursor != null && !cursor.isEmpty() && cursors.add(cursor));

@@ -1,6 +1,5 @@
 package io.firebite.tako.agent.claude.transcript;
 
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.claude.protocol.CliMessage;
@@ -251,11 +250,8 @@ public final class SessionStore {
     if (message == null) {
       return null;
     }
-    JsonElement content = message.get("content");
-    String text = null;
-    if (content != null && content.isJsonPrimitive()) {
-      text = content.getAsString();
-    } else {
+    String text = Json.string(message, "content");
+    if (text == null) {
       for (JsonObject block : Json.objects(message, "content")) {
         if ("text".equals(Json.string(block, "type"))) {
           text = Json.string(block, "text");

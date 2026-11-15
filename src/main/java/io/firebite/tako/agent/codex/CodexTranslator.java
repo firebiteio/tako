@@ -73,7 +73,7 @@ final class CodexTranslator {
           : contentText(Json.array(Json.object(item, "result"), "content")), error != null, null));
       }
       case "dynamicToolCall" -> events.add(new AgentEvent.ToolFinished(id,
-        contentText(Json.array(item, "contentItems")), item.has("success") && !Json.bool(item, "success"), null));
+        contentText(Json.array(item, "contentItems")), Boolean.FALSE.equals(Json.optionalBool(item, "success")), null));
       case "webSearch", "imageView", "collabAgentToolCall" -> events.add(new AgentEvent.ToolFinished(id, "", false,
         null));
       default -> {
@@ -188,16 +188,11 @@ final class CodexTranslator {
 
   private static boolean isLimit(@Nullable JsonObject error) {
     JsonElement info = error == null ? null : error.get("codexErrorInfo");
-    if (info == null) {
-      return false;
-    }
-    if (info.isJsonPrimitive()) {
-      String code = info.getAsString();
+    String code = Json.asString(info);
+    if (code != null) {
       return "usageLimitExceeded".equals(code) || "rateLimitExceeded".equals(code);
     }
-    JsonObject failedAttempts = info.isJsonObject()
-      ? Json.object(info.getAsJsonObject(), "responseTooManyFailedAttempts")
-      : null;
+    JsonObject failedAttempts = Json.object(Json.asObject(info), "responseTooManyFailedAttempts");
     return Json.number(failedAttempts, "httpStatusCode") == TOO_MANY_REQUESTS;
   }
 
@@ -298,7 +293,7 @@ final class CodexTranslator {
     }
     List<String> parts = new ArrayList<>();
     for (JsonElement element : content) {
-      JsonObject part = element.isJsonObject() ? element.getAsJsonObject() : new JsonObject();
+      JsonObject part = Json.asObject(element);
       String text = Json.string(part, TEXT);
       parts.add(text != null ? text : "[" + Json.string(part, TYPE) + "]");
     }

@@ -134,9 +134,9 @@ final class ClaudeTranslator {
       return null;
     }
     JsonObject body = message.body();
-    JsonElement content = body == null ? null : body.get("content");
-    if (content != null && content.isJsonPrimitive()) {
-      return content.getAsString();
+    String plain = Json.string(body, "content");
+    if (plain != null) {
+      return plain;
     }
     for (JsonObject block : Json.objects(body, "content")) {
       if (TEXT.equals(Json.string(block, "type"))) {
@@ -149,10 +149,10 @@ final class ClaudeTranslator {
   private static void user(JsonObject json, @Nullable FileChange change, boolean replaying, List<AgentEvent> events) {
     JsonObject body = Json.object(json, "message");
     boolean isPrompt = replaying && Json.string(json, PARENT_TOOL_USE_ID) == null;
-    JsonElement content = body == null ? null : body.get("content");
-    if (content != null && content.isJsonPrimitive()) {
+    String plain = Json.string(body, "content");
+    if (plain != null) {
       if (isPrompt) {
-        prompt(content.getAsString(), List.of(), events);
+        prompt(plain, List.of(), events);
       }
       return;
     }
@@ -214,7 +214,7 @@ final class ClaudeTranslator {
         }
       }
       case "api_retry" -> events.add(new AgentEvent.Retrying(
-        optionalInt(json, "attempt"), null));
+        Json.optionalInt(json, "attempt"), null));
       case "compact_boundary" -> events.add(new AgentEvent.Compacted());
       case "task_started", "task_progress", "task_updated", "task_notification" -> {
         AgentEvent.TaskUpdated task = task(json, subtype);
@@ -244,8 +244,8 @@ final class ClaudeTranslator {
       String type = Json.string(item, "type");
       if ("workflow_agent".equals(type) && Json.isNumber(item, "index")) {
         agents.add(new AgentEvent.WorkflowAgent((int) Json.number(item, "index"), Json.string(item, "label"),
-          Json.string(item, "state"), Json.string(item, "model"), optionalInt(item, "toolCalls"),
-          Json.optionalNumber(item, "tokens"), optionalInt(item, "phaseIndex"),
+          Json.string(item, "state"), Json.string(item, "model"), Json.optionalInt(item, "toolCalls"),
+          Json.optionalNumber(item, "tokens"), Json.optionalInt(item, "phaseIndex"),
           Json.string(item, "phaseTitle"), Json.string(item, "error"), Json.string(item, "resultPreview"),
           Json.string(item, "promptPreview")));
       } else if ("workflow_log".equals(type) && Json.string(item, "message") != null) {
@@ -255,8 +255,8 @@ final class ClaudeTranslator {
     return new AgentEvent.TaskUpdated(taskId, Json.string(json, "tool_use_id"),
       taskType(Json.string(json, "task_type")),
       Json.string(json, "description"), Json.string(json, "subagent_type"), Json.string(json, "prompt"),
-      json.has("is_backgrounded") ? Json.bool(json, "is_backgrounded") : null, status, Json.string(json, "summary"),
-      optionalInt(usage, "tool_uses"), Json.optionalNumber(usage, "total_tokens"),
+      Json.optionalBool(json, "is_backgrounded"), status, Json.string(json, "summary"),
+      Json.optionalInt(usage, "tool_uses"), Json.optionalNumber(usage, "total_tokens"),
       Json.string(json, "last_tool_name"),
       Json.isNumber(patch, "end_time") && Json.number(patch, "end_time") > 0 ? Json.number(patch, "end_time") : null,
       "task_notification".equals(subtype), agents, logs);
@@ -322,22 +322,19 @@ final class ClaudeTranslator {
     if (content == null) {
       return "";
     }
-    if (content.isJsonPrimitive()) {
-      return content.getAsString();
+    String plain = Json.asString(content);
+    if (plain != null) {
+      return plain;
     }
     if (!content.isJsonArray()) {
       return "";
     }
     List<String> parts = new ArrayList<>();
     for (JsonElement element : content.getAsJsonArray()) {
-      JsonObject part = element.isJsonObject() ? element.getAsJsonObject() : new JsonObject();
+      JsonObject part = Json.asObject(element);
       String type = Json.string(part, "type");
       parts.add(TEXT.equals(type) ? String.valueOf(Json.string(part, TEXT)) : "[" + type + "]");
     }
     return String.join("\n", parts);
-  }
-
-  private static @Nullable Integer optionalInt(@Nullable JsonObject object, String key) {
-    return Json.isNumber(object, key) ? (int) Json.number(object, key) : null;
   }
 }

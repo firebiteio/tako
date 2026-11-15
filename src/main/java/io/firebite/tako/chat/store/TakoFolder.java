@@ -5,11 +5,10 @@ import com.google.gson.GsonBuilder;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
-import com.google.gson.JsonParseException;
-import com.google.gson.JsonParser;
 import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.diagnostic.Logger;
 import io.firebite.tako.ide.context.PastedText;
+import io.firebite.tako.json.Json;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
@@ -137,41 +136,46 @@ public final class TakoFolder {
   private static void merge(Path source, Path target, String array, String key) throws IOException {
     JsonObject from = read(source);
     JsonObject into = read(target);
-    if (from == null || into == null || !from.has(array) || !from.get(array).isJsonArray()) {
+    JsonArray imported = Json.array(from, array);
+    if (into == null || imported == null) {
       return;
     }
-    JsonArray merged = into.has(array) && into.get(array).isJsonArray() ? into.getAsJsonArray(array) : new JsonArray();
+    JsonArray existing = Json.array(into, array);
+    JsonArray merged = existing != null ? existing : new JsonArray();
     Set<String> present = new HashSet<>();
     for (JsonElement element : merged) {
       present.add(keyOf(element, key));
     }
-    for (JsonElement element : from.getAsJsonArray(array)) {
+    for (JsonElement element : imported) {
       if (present.add(keyOf(element, key))) {
         merged.add(element);
       }
     }
     into.add(array, merged);
-    if (!into.has("activeId") && from.has("activeId")) {
+    if (!into.has("activeId") && from != null && from.has("activeId")) {
       into.add("activeId", from.get("activeId"));
     }
     AtomicFiles.write(target, GSON.toJson(into));
   }
 
   private static String keyOf(JsonElement element, String key) {
-    if (!element.isJsonObject() || !element.getAsJsonObject().has(key)) {
-      return element.toString();
-    }
-    return element.getAsJsonObject().get(key).getAsString().replace('\\', '/').toLowerCase();
+    String value = Json.string(Json.asObject(element), key);
+    return value == null ? element.toString() : value.replace('\\', '/').toLowerCase();
   }
 
   private static @Nullable JsonObject read(Path file) {
+    String text;
     try {
-      JsonElement element = JsonParser.parseString(Files.readString(file, StandardCharsets.UTF_8));
-      return element.isJsonObject() ? element.getAsJsonObject() : null;
-    } catch (IOException | JsonParseException e) {
+      text = Files.readString(file, StandardCharsets.UTF_8);
+    } catch (IOException e) {
       LOG.warn("Could not read " + file + " to import it", e);
       return null;
     }
+    JsonObject object = Json.parseObject(text);
+    if (object == null) {
+      LOG.warn("Could not import " + file + ": not a JSON object");
+    }
+    return object;
   }
 
   private static void copyMissing(Path source, Path target) throws IOException {

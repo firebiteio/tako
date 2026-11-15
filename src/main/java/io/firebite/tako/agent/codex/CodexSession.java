@@ -76,7 +76,7 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
         return this.connection.request("account/read", new JsonObject());
       })
       .thenCompose(account -> {
-        JsonObject result = account.isJsonObject() ? account.getAsJsonObject() : new JsonObject();
+        JsonObject result = Json.asObject(account);
         if (Json.object(result, "account") == null && Json.bool(result, "requiresOpenaiAuth")) {
           throw new CompletionException(new AgentException(TakoBundle.message("error.codex.not.signed.in")));
         }
@@ -310,8 +310,7 @@ final class CodexSession implements AgentSession, JsonRpcConnection.Handler {
     this.emit(new AgentEvent.SessionStarted(this.threadId, Json.string(started, "cwd"), resolvedModel, this.mode,
       null));
     List<AgentInfo.Model> models = new ArrayList<>();
-    JsonObject list = modelList.isJsonObject() ? modelList.getAsJsonObject() : new JsonObject();
-    for (JsonObject model : Json.objects(list, "data")) {
+    for (JsonObject model : Json.objects(Json.asObject(modelList), "data")) {
       if (Json.bool(model, "hidden")) {
         continue;
       }

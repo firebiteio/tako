@@ -1,7 +1,5 @@
 package io.firebite.tako.agent.claude;
 
-import com.google.gson.JsonArray;
-import com.google.gson.JsonElement;
 import com.google.gson.JsonObject;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.util.SystemInfo;
@@ -305,13 +303,9 @@ public final class ClaudeBackend implements AgentBackend {
     for (JsonObject model : Json.objects(initialized, "models")) {
       String value = String.valueOf(Json.string(model, "value"));
       String displayName = Json.string(model, "displayName");
-      List<String> efforts = new ArrayList<>();
-      JsonArray levels = Json.array(model, "supportedEffortLevels");
-      if (Json.bool(model, "supportsEffort") && levels != null) {
-        for (JsonElement level : levels) {
-          efforts.add(level.getAsString());
-        }
-      }
+      List<String> efforts = Json.bool(model, "supportsEffort")
+        ? Json.strings(model, "supportedEffortLevels")
+        : new ArrayList<>();
       models.add(new AgentInfo.Model(value, displayName != null && !displayName.isEmpty() ? displayName : value,
         Json.string(model, "description"), Json.string(model, "resolvedModel"), efforts));
     }
