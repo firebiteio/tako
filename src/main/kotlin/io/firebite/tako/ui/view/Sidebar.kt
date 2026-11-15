@@ -522,7 +522,8 @@ private fun SubThreadRow(workspace: Workspace, thread: ThreadState, narrow: Bool
         workspace.setSidebar(false)
       }
     }) {
-    Row(Modifier.fillMaxWidth().height(28.dp).padding(horizontal = 6.dp),
+    Row(Modifier.fillMaxWidth().height(28.dp)
+      .padding(start = 6.dp, end = 6.dp + if (hovered) rowActionsWidth else 0.dp),
       verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
       Box(Modifier.size(14.dp), contentAlignment = Alignment.Center) {
         StatusIcon(status.kind, thread, statusColor(status.kind))
@@ -718,7 +719,8 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
         if (extra == null) {
           Text(sub, color = subColor, style = tinyStyle, maxLines = 1, overflow = TextOverflow.Ellipsis)
         } else {
-          Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+          Row(Modifier.padding(end = if (hovered) rowActionsWidth else 0.dp),
+            verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Text(sub, Modifier.weight(1f, fill = false), color = subColor, style = tinyStyle, maxLines = 1,
               overflow = TextOverflow.Ellipsis)
             extra()
@@ -733,6 +735,9 @@ private fun ThreadRow(workspace: Workspace, thread: ThreadState, narrow: Boolean
     menu?.let { page -> ThreadMenu(workspace, thread, page) { menu = it } }
   }
 }
+
+/** The room [RowActions] takes: three small buttons and their gaps. A row keeps its fold pill clear of it. */
+private val rowActionsWidth = 22.dp * 3 + 2.dp * 2
 
 /** The thread menu, archive or restore, and close, shown over a row's end while the mouse is on it. */
 @Composable
