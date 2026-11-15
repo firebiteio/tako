@@ -5,3 +5,4 @@ build/
 !.idea/icon_dark.svg
 .intellijPlatform/
 *.iml
+.kotlin/
