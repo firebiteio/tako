@@ -1,6 +1,6 @@
 package io.firebite.tako.ide.context;
 
-import com.intellij.openapi.application.PathManager;
+import io.firebite.tako.chat.store.TakoFolder;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.DirectoryStream;
@@ -30,9 +30,9 @@ public final class PastedText {
     return text.length() >= FILE_THRESHOLD || text.getBytes(StandardCharsets.UTF_8).length >= FILE_THRESHOLD;
   }
 
-  /** Where pasted files go: the IDE's system folder, so per user and outside every project. */
+  /** Where pasted files go: the {@link TakoFolder}, so per user and outside every project. */
   public static Path folder() {
-    return Path.of(PathManager.getSystemPath(), "tako", "pasted");
+    return TakoFolder.get().resolve("pasted");
   }
 
   /** Creates {@code directory}, open only to its owner where the file system has POSIX permissions. */

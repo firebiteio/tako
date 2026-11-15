@@ -2,7 +2,6 @@ package io.firebite.tako.chat.store;
 
 import com.google.gson.Gson;
 import com.google.gson.JsonParseException;
-import com.intellij.openapi.application.PathManager;
 import com.intellij.openapi.components.Service;
 import com.intellij.openapi.diagnostic.Logger;
 import com.intellij.openapi.project.Project;
@@ -43,7 +42,7 @@ public final class PromptStash {
   private boolean isWritable = true;
 
   public PromptStash(Project project) {
-    this(Path.of(PathManager.getSystemPath(), "tako", "stash-" + project.getLocationHash() + ".json"),
+    this(TakoFolder.get().resolve("stash-" + project.getLocationHash() + ".json"),
       PastedText.folder());
   }
 
