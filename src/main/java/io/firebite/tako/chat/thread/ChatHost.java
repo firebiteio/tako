@@ -7,7 +7,8 @@ import org.jetbrains.annotations.Nullable;
 
 /** What a thread tells the service it lives in. Called on the EDT. */
 public interface ChatHost {
-  void setTitle(String title);
+  /** The thread's first prompt went out, to name the thread after. */
+  void setTitle(String prompt);
 
   /** The agent waits for the person, e.g. on a permission prompt. */
   void requestAttention(String reason);

@@ -227,14 +227,34 @@ public final class ClaudeBackend implements AgentBackend {
 
   @Override
   public String ask(Path workDirectory, String prompt) throws AgentException {
+    return this.ask(workDirectory, null, prompt);
+  }
+
+  /** Passes the instructions as the system prompt, in a file, since an argument would need quoting on Windows. */
+  @Override
+  public String ask(Path workDirectory, @Nullable String instructions, String prompt) throws AgentException {
     ChatSettings.Data settings = ChatSettings.state();
     String executable = executable(settings, this.environment);
+    Path systemPrompt = null;
     try {
+      if (instructions != null) {
+        systemPrompt = Files.createTempFile("tako-ask-system", ".txt");
+        Files.writeString(systemPrompt, instructions, StandardCharsets.UTF_8);
+      }
       ClaudeLaunch command = ClaudeLaunch.ask(executable, settings.authMode,
-        settings.authMode == AuthMode.API_KEY ? ApiKeyStore.load() : null, askSettings(), this.environment);
+        settings.authMode == AuthMode.API_KEY ? ApiKeyStore.load() : null, askSettings(),
+        systemPrompt == null ? null : systemPrompt.toString(), this.environment);
       return Processes.run(command.command(), workDirectory, command.environment(), prompt, ASK_TIMEOUT_SECONDS);
     } catch (IllegalStateException | IOException e) {
       throw new AgentException(e.getMessage(), e);
+    } finally {
+      if (systemPrompt != null) {
+        try {
+          Files.deleteIfExists(systemPrompt);
+        } catch (IOException e) {
+          LOG.debug("Could not delete " + systemPrompt, e);
+        }
+      }
     }
   }
 

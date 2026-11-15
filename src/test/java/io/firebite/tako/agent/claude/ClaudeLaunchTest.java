@@ -59,11 +59,19 @@ public class ClaudeLaunchTest {
 
   @Test
   public void askUsesASmallModelWithoutToolsOrSavedSession() {
-    ClaudeLaunch launch = ClaudeLaunch.ask("claude", AuthMode.API_KEY, "sk-test", "C:/tmp/ask.json", Map.of());
+    ClaudeLaunch launch = ClaudeLaunch.ask("claude", AuthMode.API_KEY, "sk-test", "C:/tmp/ask.json", null, Map.of());
 
     assertEquals(List.of("claude", "-p", "--model", "haiku", "--tools", "", "--strict-mcp-config",
       "--no-session-persistence", "--settings", "C:/tmp/ask.json", "--output-format", "text"), launch.command());
     assertEquals("sk-test", launch.environment().get("ANTHROPIC_API_KEY"));
+  }
+
+  @Test
+  public void askReplacesTheSystemPromptFromAFile() {
+    ClaudeLaunch launch = ClaudeLaunch.ask("claude", AuthMode.CLI_LOGIN, null, "C:/tmp/ask.json", "C:/tmp/system.txt",
+      Map.of());
+
+    assertTrue(String.join(" ", launch.command()).endsWith("--system-prompt-file C:/tmp/system.txt"));
   }
 
   @Test(expected = IllegalStateException.class)

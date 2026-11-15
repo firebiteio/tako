@@ -871,8 +871,7 @@ public final class ChatController implements Disposable {
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
       this.isTitled = true;
-      String title = ThreadTitles.fromPrompt(typed);
-      Async.onEdt(() -> this.host.setTitle(title));
+      Async.onEdt(() -> this.host.setTitle(typed));
     }
     if (steer) {
       session.steer(sent, images, turn).thenAccept(isTaken -> {

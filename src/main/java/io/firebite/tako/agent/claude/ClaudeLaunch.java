@@ -49,13 +49,15 @@ public record ClaudeLaunch(
    * session.
    *
    * @param settingsFile extra settings for the call, e.g. ones that turn off hooks
+   * @param systemPromptFile replaces Claude Code's system prompt, null to keep it
    * @throws IllegalStateException in API key mode without a key
    */
   public static ClaudeLaunch ask(String executable, AuthMode authMode, @Nullable String apiKey, String settingsFile,
-    Map<String, String> baseEnvironment) {
-    return new ClaudeLaunch(List.of(executable, "-p", "--model", ASK_MODEL, "--tools", "", "--strict-mcp-config",
-      "--no-session-persistence", "--settings", settingsFile, "--output-format", "text"),
-      environment(authMode, apiKey, baseEnvironment));
+    @Nullable String systemPromptFile, Map<String, String> baseEnvironment) {
+    List<String> command = new ArrayList<>(List.of(executable, "-p", "--model", ASK_MODEL, "--tools", "",
+      "--strict-mcp-config", "--no-session-persistence", "--settings", settingsFile, "--output-format", "text"));
+    addFlag(command, "--system-prompt-file", systemPromptFile);
+    return new ClaudeLaunch(List.copyOf(command), environment(authMode, apiKey, baseEnvironment));
   }
 
   private static Map<String, String> environment(AuthMode authMode, @Nullable String apiKey,

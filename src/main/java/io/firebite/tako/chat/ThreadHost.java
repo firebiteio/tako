@@ -6,6 +6,7 @@ import io.firebite.tako.agent.AgentInfo;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.chat.thread.ChatController;
 import io.firebite.tako.chat.thread.ChatHost;
+import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.project.GitCommands;
 import java.io.IOException;
@@ -29,12 +30,16 @@ final class ThreadHost implements ChatHost {
     this.record = record;
   }
 
-  /** The first prompt's title, unless the thread is gone or already has a name, e.g. one the person gave it. */
+  /**
+   * Titles the thread with the first prompt's start, then has the agent name it, unless the thread is gone or already
+   * has a name, e.g. one the person gave it.
+   */
   @Override
-  public void setTitle(String title) {
+  public void setTitle(String prompt) {
     if (this.isListed() && ThreadStore.Record.DEFAULT_TITLE.equals(this.record.title)) {
-      this.record.title = title;
+      this.record.title = ThreadTitles.fromPrompt(prompt);
       this.service.postUpdate(this.record);
+      this.service.titles().nameFromPrompt(this.record.id, prompt);
     }
   }
 

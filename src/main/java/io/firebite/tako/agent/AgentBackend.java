@@ -78,4 +78,12 @@ public interface AgentBackend {
   default String ask(Path workDirectory, String prompt) throws AgentException {
     throw new UnsupportedOperationException(this.displayName() + " cannot answer one-shot prompts");
   }
+
+  /**
+   * Like {@link #ask(Path, String)}, with instructions the agent follows over its own where it can, e.g. as the
+   * system prompt. Else they lead the prompt.
+   */
+  default String ask(Path workDirectory, String instructions, String prompt) throws AgentException {
+    return this.ask(workDirectory, instructions + "\n\n" + prompt);
+  }
 }

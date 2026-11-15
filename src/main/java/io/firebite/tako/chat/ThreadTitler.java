@@ -86,6 +86,37 @@ public final class ThreadTitler {
     return done;
   }
 
+  /**
+   * Has the thread's agent name it from its first prompt in the background, as the Claude app does, and saves the
+   * title. Does nothing when the agent has no one-shot call. Keeps the thread as it is if it was removed or got
+   * another title meanwhile, and on failure, since the prompt already gave it a title.
+   */
+  void nameFromPrompt(String id, String prompt) {
+    ThreadStore.Record record = this.store.find(id);
+    if (record == null) {
+      return;
+    }
+    String folder = this.service.workFolder(record);
+    String oldTitle = record.title;
+    AgentBackend backend = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap());
+    Async.inBackground(() -> {
+      try {
+        if (!backend.canAsk()) {
+          return;
+        }
+        String title = ask(backend, folder, null, List.of(new ThreadTitles.Message(true, prompt)));
+        Async.onEdt(() -> {
+          if (this.store.find(id) == record && oldTitle.equals(record.title)) {
+            record.title = title;
+            this.service.postUpdate(record);
+          }
+        });
+      } catch (AgentException | RuntimeException e) {
+        LOG.info("Could not name thread " + id + " from its prompt", e);
+      }
+    });
+  }
+
   private static String ask(AgentBackend backend, String folder, @Nullable String sessionId,
     List<ThreadTitles.Message> shown) throws AgentException {
     List<ThreadTitles.Message> conversation = shown;
@@ -97,7 +128,7 @@ public final class ThreadTitler {
     if (prompt == null) {
       throw new AgentException(TakoBundle.message("error.title.no.conversation"));
     }
-    String title = ThreadTitles.title(backend.ask(Path.of(folder), prompt));
+    String title = ThreadTitles.title(backend.ask(Path.of(folder), ThreadTitles.INSTRUCTIONS, prompt));
     if (title == null) {
       throw new AgentException(TakoBundle.message("error.title.blank"));
     }

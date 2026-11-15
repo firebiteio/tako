@@ -25,7 +25,7 @@ public class ThreadTitlesTest {
     assertTrue(prompt.contains("First request:\nFix the login bug\n"));
     assertFalse(prompt.contains("message 2\n"));
     assertTrue(prompt.contains("Agent: message 3\nDeveloper: message 4\n"));
-    assertTrue(prompt.endsWith("Developer: message 8\n"));
+    assertTrue(prompt.endsWith("Developer: message 8\n</conversation>\n"));
   }
 
   @Test
@@ -34,7 +34,7 @@ public class ThreadTitlesTest {
       new ThreadTitles.Message(false, "Done")));
 
     assertEquals(1, prompt.split("Add dark mode", -1).length - 1);
-    assertTrue(prompt.endsWith("Latest messages:\nAgent: Done\n"));
+    assertTrue(prompt.endsWith("Latest messages:\nAgent: Done\n</conversation>\n"));
   }
 
   @Test
