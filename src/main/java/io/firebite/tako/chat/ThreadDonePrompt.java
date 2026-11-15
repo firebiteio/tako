@@ -22,13 +22,13 @@ final class ThreadDonePrompt {
       .append(", agent ").append(agent).append(") is done with the prompt you handed it. State: ")
       .append(state.name().toLowerCase(Locale.ROOT)).append(".\n");
     if (error != null && !error.isBlank()) {
-      text.append("Error: ").append(ChatController.cut(error.strip(), ERROR_LENGTH)).append('\n');
+      text.append("Error: ").append(Texts.cut(error.strip(), ERROR_LENGTH)).append('\n');
     }
     String plain = answer.strip();
     if (plain.isEmpty()) {
       return text.append("It wrote no answer.").toString();
     }
-    text.append("\nIts answer:\n").append(ChatController.cut(plain, ANSWER_LENGTH));
+    text.append("\nIts answer:\n").append(Texts.cut(plain, ANSWER_LENGTH));
     if (plain.length() > ANSWER_LENGTH) {
       text.append("\n\nThe answer is cut to ").append(ANSWER_LENGTH).append(" of its ").append(plain.length())
         .append(" characters. get_thread gives all of it.");

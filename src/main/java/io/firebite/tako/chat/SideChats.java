@@ -2,7 +2,7 @@ package io.firebite.tako.chat;
 
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.chat.store.ThreadStore;
-import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.context.ContextItem;
 import java.util.ArrayList;
 import java.util.List;
@@ -30,7 +30,7 @@ public final class SideChats {
 
   /** The title of a side chat asked {@code question}; a blank one leaves it for the first prompt to name. */
   public static String title(String question) {
-    return question.isBlank() ? ThreadStore.Record.DEFAULT_TITLE : ChatController.titleOf(question);
+    return question.isBlank() ? ThreadStore.Record.DEFAULT_TITLE : ThreadTitles.fromPrompt(question);
   }
 
   /** The main thread of a side chat while it exists, else the thread itself. */

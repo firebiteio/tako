@@ -1,6 +1,7 @@
 package io.firebite.tako.chat.thread;
 
 import io.firebite.tako.agent.AgentEvent;
+import io.firebite.tako.chat.Texts;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -9,6 +10,7 @@ import org.jetbrains.annotations.Nullable;
 
 /** The prompt that asks an agent to name a thread, and the title read from its answer. */
 public final class ThreadTitles {
+  private static final int TITLE_LENGTH = 40;
   private static final int RECENT_MESSAGES = 6;
   private static final int MESSAGE_LENGTH = 800;
   private static final String LABEL = "title:";
@@ -52,16 +54,21 @@ public final class ThreadTitles {
       }
       title = strip(title, "\"'`*#_. ");
       if (!title.isBlank()) {
-        return ChatController.titleOf(title);
+        return fromPrompt(title);
       }
     }
     return null;
   }
 
+  /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
+  public static String fromPrompt(String prompt) {
+    return Texts.cut(prompt.replace('\n', ' ').trim(), TITLE_LENGTH);
+  }
+
   /** A title the person typed on one line, cut to {@link #MANUAL_LENGTH} characters. Null if blank. */
   public static @Nullable String manual(String typed) {
     String title = WHITESPACE.matcher(typed).replaceAll(" ").strip();
-    return title.isEmpty() ? null : ChatController.cut(title, MANUAL_LENGTH);
+    return title.isEmpty() ? null : Texts.cut(title, MANUAL_LENGTH);
   }
 
   /** The prompts and the agent's own answers, without what its subagents said. */
@@ -78,7 +85,7 @@ public final class ThreadTitles {
   }
 
   private static String cut(String text) {
-    return ChatController.cut(text.strip(), MESSAGE_LENGTH);
+    return Texts.cut(text.strip(), MESSAGE_LENGTH);
   }
 
   private static String strip(String text, String characters) {

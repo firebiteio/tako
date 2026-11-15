@@ -3,6 +3,7 @@ package io.firebite.tako.ui.state
 import androidx.compose.foundation.text.input.clearText
 import com.intellij.openapi.diagnostic.logger
 import io.firebite.tako.chat.Orchestration
+import io.firebite.tako.chat.Texts
 import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.ui.bridge.message.thread.Submit
 import io.firebite.tako.ui.t
@@ -251,7 +252,7 @@ private fun listed(choices: List<Choice>): String =
   choices.take(MAX_LISTED_CHOICES).joinToString(", ") { it.value } +
     if (choices.size > MAX_LISTED_CHOICES) ", …" else ""
 
-private fun quoted(argument: String): String = ChatController.cut(argument.replace('\n', ' '), MAX_QUOTED)
+private fun quoted(argument: String): String = Texts.cut(argument.replace('\n', ' '), MAX_QUOTED)
 
 /** How many prompts a fork after the last finished answer keeps, as the timeline's fork button counts them. */
 fun ThreadState.forkPrompts(): Int? {

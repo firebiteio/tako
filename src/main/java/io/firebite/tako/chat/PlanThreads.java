@@ -11,7 +11,7 @@ import com.intellij.util.EnvironmentUtil;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.chat.store.ThreadStore;
-import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.GitWorktree;
@@ -146,7 +146,7 @@ public final class PlanThreads {
     this.service.folders().ensure(projectPath);
     String agent = source.agent();
     String title = Plans.title(plan);
-    ThreadStore.Record record = this.store.create(null, ChatController.titleOf(title != null
+    ThreadStore.Record record = this.store.create(null, ThreadTitles.fromPrompt(title != null
       ? TakoBundle.message("thread.implement.title", title)
       : TakoBundle.message("thread.implement.title.default")), projectPath, agent);
     String defaultMode = ClaudeBackend.ID.equals(agent) ? ChatSettings.state().claudeDefaults().mode() : "";

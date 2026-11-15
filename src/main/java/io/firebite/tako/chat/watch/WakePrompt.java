@@ -1,6 +1,6 @@
 package io.firebite.tako.chat.watch;
 
-import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.chat.Texts;
 import io.firebite.tako.ide.project.Forge;
 import java.util.ArrayList;
 import java.util.List;
@@ -142,7 +142,7 @@ public final class WakePrompt {
   /** The text on one line, without HTML comments, cut to {@link #BODY_LENGTH}. */
   static String body(String text) {
     String plain = WHITESPACE.matcher(HTML_COMMENT.matcher(text).replaceAll(" ")).replaceAll(" ").trim();
-    return ChatController.cut(plain, BODY_LENGTH);
+    return Texts.cut(plain, BODY_LENGTH);
   }
 
   private static String on(String sha) {

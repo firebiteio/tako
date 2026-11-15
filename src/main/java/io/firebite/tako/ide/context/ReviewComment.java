@@ -1,6 +1,6 @@
 package io.firebite.tako.ide.context;
 
-import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.chat.Texts;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
@@ -78,7 +78,7 @@ public final class ReviewComment {
     if (note != null) {
       text.append('\n').append(note);
     }
-    String label = place(target, lines) + ": " + ChatController.cut(trimmed.replaceAll("\\s+", " "), LABEL_COMMENT);
+    String label = place(target, lines) + ": " + Texts.cut(trimmed.replaceAll("\\s+", " "), LABEL_COMMENT);
     return ContextItem.create(ContextItem.Kind.REVIEW, label, text.toString());
   }
 

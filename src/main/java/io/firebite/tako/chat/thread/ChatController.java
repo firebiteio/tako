@@ -64,7 +64,6 @@ import org.jetbrains.annotations.Nullable;
 /** One chat thread. It owns its agent session and does what the chat asks of it. */
 public final class ChatController implements Disposable {
   private static final Logger LOG = Logger.getInstance(ChatController.class);
-  private static final int TITLE_LENGTH = 40;
   private static final long CONTEXT_TIMEOUT_SECONDS = 10;
   private static final int SCRATCHPAD_FILES = 50;
   /** {@link #handoffTurn} while no prompt carries the handoff. */
@@ -937,7 +936,7 @@ public final class ChatController implements Disposable {
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
       this.isTitled = true;
-      String title = titleOf(typed);
+      String title = ThreadTitles.fromPrompt(typed);
       Async.onEdt(() -> this.host.setTitle(title));
     }
     if (steer) {
@@ -979,23 +978,6 @@ public final class ChatController implements Disposable {
       handoff = PromptComposer.rebase(handoff, folder, this.record.workPath);
     }
     return PromptComposer.withHandoff(prompt, handoff);
-  }
-
-  /** The prompt's first {@link #TITLE_LENGTH} characters on one line, as a thread's title. */
-  public static String titleOf(String prompt) {
-    return cut(prompt.replace('\n', ' ').trim(), TITLE_LENGTH);
-  }
-
-  /** The text, or its start and an ellipsis in {@code length} characters. Does not split a surrogate pair. */
-  public static String cut(String text, int length) {
-    if (text.length() <= length) {
-      return text;
-    }
-    int end = length - 1;
-    if (Character.isHighSurrogate(text.charAt(end - 1))) {
-      end--;
-    }
-    return text.substring(0, end) + "…";
   }
 
   /**

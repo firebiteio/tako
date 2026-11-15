@@ -1,6 +1,6 @@
 package io.firebite.tako.ui.state
 
-import io.firebite.tako.chat.thread.ChatController
+import io.firebite.tako.chat.Texts
 import io.firebite.tako.ui.bridge.message.workspace.LimitItem
 import io.firebite.tako.ui.clock
 import io.firebite.tako.ui.dateTime
@@ -45,5 +45,5 @@ fun moment(millis: Long, now: Long): String {
 
 private fun promptPreview(prompt: String): String {
   val line = prompt.lineSequence().firstOrNull { it.isNotBlank() }?.trim() ?: ""
-  return ChatController.cut(line, PROMPT_PREVIEW)
+  return Texts.cut(line, PROMPT_PREVIEW)
 }

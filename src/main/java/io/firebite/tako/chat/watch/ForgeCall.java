@@ -1,7 +1,7 @@
 package io.firebite.tako.chat.watch;
 
 import com.intellij.openapi.diagnostic.Logger;
-import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.chat.Texts;
 import io.firebite.tako.ide.project.Forge;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
@@ -100,7 +100,7 @@ public final class ForgeCall {
   private static String firstLine(String text) {
     for (String line : text.split("\\R")) {
       if (!line.isBlank()) {
-        return ChatController.cut(line.trim(), MESSAGE_LENGTH);
+        return Texts.cut(line.trim(), MESSAGE_LENGTH);
       }
     }
     return "";

@@ -10,7 +10,7 @@ import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.agent.EditPreview;
 import io.firebite.tako.chat.store.ThreadStore;
-import io.firebite.tako.chat.thread.ChatController;
+import io.firebite.tako.chat.thread.ThreadTitles;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
@@ -179,7 +179,7 @@ final class Benches {
     String commit, Map<String, String> environment) {
     ThreadStore.Bench bench = new ThreadStore.Bench();
     bench.id = UUID.randomUUID().toString();
-    String title = ChatController.titleOf(request.prompt().text());
+    String title = ThreadTitles.fromPrompt(request.prompt().text());
     bench.title = title.isEmpty() ? TakoBundle.message("bench.untitled") : title;
     bench.projectPath = projectPath;
     bench.repository = slashes(repository);
