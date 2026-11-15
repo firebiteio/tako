@@ -53,7 +53,8 @@ final class FileCheckpoints {
   }
 
   /** The checkpoint of the prompt after the first {@code prompts}, if it was {@code prompt}. */
-  @Nullable String find(String folder, int prompts, String prompt) {
+  @Nullable
+  String find(String folder, int prompts, String prompt) {
     return Checkpoints.find(Path.of(folder), this.record.id, prompts, prompt, EnvironmentUtil.getEnvironmentMap());
   }
 
@@ -61,7 +62,8 @@ final class FileCheckpoints {
    * Why the files in the folder must not be put back now: a git action or another thread's agent works in its
    * repository. Null when nothing does.
    */
-  @Nullable String blocker(String folder) {
+  @Nullable
+  String blocker(String folder) {
     if (ThreadGit.hasActions(Path.of(folder))) {
       return TakoBundle.message("git.failed.running");
     }

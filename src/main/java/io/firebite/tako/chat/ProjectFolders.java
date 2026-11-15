@@ -35,7 +35,8 @@ public final class ProjectFolders {
   }
 
   /** The project folder a thread stores, null for the IDE project itself. */
-  @Nullable String threadPath(@Nullable String projectPath) {
+  @Nullable
+  String threadPath(@Nullable String projectPath) {
     return projectPath == null || ThreadStore.samePath(projectPath, this.project.getBasePath()) ? null : projectPath;
   }
 
