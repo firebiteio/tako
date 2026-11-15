@@ -11,7 +11,6 @@ import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
-import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.editor.Document;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.editor.SelectionModel;
@@ -77,7 +76,7 @@ public final class ReviewCommentAction extends AnAction implements DumbAware {
     if (viewer != null && target(event) != null) {
       return true;
     }
-    if (viewer instanceof UnifiedDiffViewer || event.getData(LangDataKeys.CONSOLE_VIEW) != null
+    if (viewer instanceof UnifiedDiffViewer || event.getData(AddToChatAction.CONSOLE_VIEW) != null
       || event.getData(AddToChatAction.TERMINAL_VIEW) != null) {
       return false;
     }

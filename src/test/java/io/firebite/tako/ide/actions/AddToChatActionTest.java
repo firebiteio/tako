@@ -5,7 +5,6 @@ import com.intellij.execution.ui.RunContentDescriptor;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.DataContext;
-import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.actionSystem.impl.SimpleDataContext;
 import com.intellij.openapi.editor.Editor;
@@ -69,7 +68,7 @@ public class AddToChatActionTest extends BasePlatformTestCase {
     this.consoleEditor.getSelectionModel().setSelection(13, 25);
     RunContentDescriptor run = new RunContentDescriptor(null, null, new JPanel(), "MyApp");
     try {
-      AnActionEvent event = this.event(this.consoleContext().add(LangDataKeys.RUN_CONTENT_DESCRIPTOR, run).build());
+      AnActionEvent event = this.event(this.consoleContext().add(AddToChatAction.RUN_CONTENT_DESCRIPTOR, run).build());
 
       assertTrue(event.getPresentation().isEnabledAndVisible());
       ContextItem item = AddToChatAction.outputSelection(event);
@@ -101,7 +100,7 @@ public class AddToChatActionTest extends BasePlatformTestCase {
     return SimpleDataContext.builder()
       .add(CommonDataKeys.PROJECT, this.getProject())
       .add(CommonDataKeys.EDITOR, this.consoleEditor)
-      .add(LangDataKeys.CONSOLE_VIEW, this.console);
+      .add(AddToChatAction.CONSOLE_VIEW, this.console);
   }
 
   private AnActionEvent event(DataContext context) {

@@ -1,12 +1,12 @@
 package io.firebite.tako.ide.actions;
 
+import com.intellij.execution.ui.ConsoleView;
 import com.intellij.execution.ui.RunContentDescriptor;
 import com.intellij.openapi.actionSystem.ActionUpdateThread;
 import com.intellij.openapi.actionSystem.AnAction;
 import com.intellij.openapi.actionSystem.AnActionEvent;
 import com.intellij.openapi.actionSystem.CommonDataKeys;
 import com.intellij.openapi.actionSystem.DataKey;
-import com.intellij.openapi.actionSystem.LangDataKeys;
 import com.intellij.openapi.actionSystem.PlatformDataKeys;
 import com.intellij.openapi.editor.Editor;
 import com.intellij.openapi.project.DumbAware;
@@ -27,6 +27,13 @@ import org.jetbrains.annotations.Nullable;
 public final class AddToChatAction extends AnAction implements DumbAware {
   /** The terminal plugin's {@code TerminalView.DATA_KEY}, by name so Tako runs without that plugin. */
   static final DataKey<Object> TERMINAL_VIEW = DataKey.create("TerminalView");
+  /**
+   * {@code LangDataKeys.CONSOLE_VIEW}, by name: 2026.3 untypes it in favor of {@code ExecutionDataKeys.CONSOLE_VIEW},
+   * which 2026.2 lacks.
+   */
+  static final DataKey<ConsoleView> CONSOLE_VIEW = DataKey.create("consoleView");
+  /** {@code LangDataKeys.RUN_CONTENT_DESCRIPTOR}, by name for the same reason. */
+  static final DataKey<RunContentDescriptor> RUN_CONTENT_DESCRIPTOR = DataKey.create("RUN_CONTENT_DESCRIPTOR");
 
   @Override
   public void actionPerformed(@NotNull AnActionEvent event) {
@@ -94,7 +101,7 @@ public final class AddToChatAction extends AnAction implements DumbAware {
     if (event.getData(TERMINAL_VIEW) != null) {
       return IdeContext.excerpt(TakoBundle.message("context.terminal"), "the terminal", text);
     }
-    RunContentDescriptor run = event.getData(LangDataKeys.RUN_CONTENT_DESCRIPTOR);
+    RunContentDescriptor run = event.getData(RUN_CONTENT_DESCRIPTOR);
     String name = run == null ? null : run.getDisplayName();
     return name == null || name.isEmpty()
       ? IdeContext.excerpt(TakoBundle.message("context.console"), "the console", text)
@@ -104,7 +111,7 @@ public final class AddToChatAction extends AnAction implements DumbAware {
   /** The terminal, in its tool window or an editor tab, or a run or debug console. No file stands behind them. */
   private static boolean isOutput(AnActionEvent event) {
     return event.getData(TERMINAL_VIEW) != null
-      || (event.getData(LangDataKeys.CONSOLE_VIEW) != null && event.getData(CommonDataKeys.EDITOR) != null);
+      || (event.getData(CONSOLE_VIEW) != null && event.getData(CommonDataKeys.EDITOR) != null);
   }
 
   /**
@@ -117,7 +124,7 @@ public final class AddToChatAction extends AnAction implements DumbAware {
       text = event.getData(PlatformDataKeys.PREDEFINED_TEXT);
     } else {
       Editor editor = event.getData(CommonDataKeys.EDITOR);
-      text = editor == null || event.getData(LangDataKeys.CONSOLE_VIEW) == null
+      text = editor == null || event.getData(CONSOLE_VIEW) == null
         ? null
         : editor.getSelectionModel().getSelectedText();
     }
