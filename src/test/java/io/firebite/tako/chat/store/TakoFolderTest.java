@@ -61,7 +61,8 @@ public class TakoFolderTest {
     assertEquals(2, merged.projects("D:/project", "project").size());
     assertEquals("Other project", new ThreadStore(newFolder.resolve("threads-2.json")).all().getFirst().title);
     assertTrue(Files.isRegularFile(newFolder.resolve("past").resolve(oldThread.id + ".json")));
-    assertTrue(Files.isRegularFile(newFolder.resolve(TakoFolder.MARKER)));  }
+    assertTrue(Files.isRegularFile(newFolder.resolve(TakoFolder.MARKER)));
+  }
 
   @Test
   public void importRunsOncePerVersion() throws Exception {

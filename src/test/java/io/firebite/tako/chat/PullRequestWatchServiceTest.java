@@ -89,7 +89,7 @@ public class PullRequestWatchServiceTest extends BasePlatformTestCase {
       tools.call(ThreadTools.WATCH, new JsonObject());
       fail("The watch started");
     } catch (McpToolException e) {
-      assertEquals("This thread's branch has no open GitHub pull request. Pass url.", e.getMessage());
+      assertEquals("This thread's branch has no open pull or merge request. Pass url.", e.getMessage());
     }
   }
 }
