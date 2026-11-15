@@ -65,6 +65,7 @@ import org.jetbrains.jewel.markdown.MarkdownBlock.BlockQuote
 import org.jetbrains.jewel.markdown.MarkdownBlock.CodeBlock.FencedCodeBlock
 import org.jetbrains.jewel.markdown.MarkdownBlock.CustomBlock
 import org.jetbrains.jewel.markdown.MarkdownBlock.Paragraph
+import org.jetbrains.jewel.markdown.extensions.LocalMarkdownStyling
 import org.jetbrains.jewel.markdown.extensions.MarkdownBlockProcessorExtension
 import org.jetbrains.jewel.markdown.extensions.MarkdownBlockRendererExtension
 import org.jetbrains.jewel.markdown.extensions.MarkdownProcessorExtension
@@ -437,7 +438,9 @@ fun ProvideChatMarkdown(project: Project, content: @Composable () -> Unit) {
 fun MarkdownText(markdown: ChatMarkdown, text: String, isFinal: Boolean, actions: CodeActions,
   modifier: Modifier = Modifier) {
   val highlighter = if (isFinal) LocalCodeHighlighter.current else NoOpCodeHighlighter
-  CompositionLocalProvider(LocalCodeHighlighter provides highlighter) {
+  // Older Jewel copies the renderer into a plain DefaultMarkdownBlockRenderer unless the local styling is its own.
+  CompositionLocalProvider(LocalCodeHighlighter provides highlighter,
+    LocalMarkdownStyling provides markdown.renderer.rootStyling) {
     Markdown(text, modifier, selectable = true, onUrlClick = actions::openUrl, processor = markdown.processor,
       blockRenderer = markdown.renderer)
   }
