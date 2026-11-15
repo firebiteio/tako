@@ -66,8 +66,6 @@ public final class ChatController implements Disposable {
   private static final Logger LOG = Logger.getInstance(ChatController.class);
   private static final long CONTEXT_TIMEOUT_SECONDS = 10;
   private static final int SCRATCHPAD_FILES = 50;
-  /** {@link #handoffTurn} while no prompt carries the handoff. */
-  private static final int NO_HANDOFF = Integer.MIN_VALUE;
   /** How long a switch waits for the new agent to start. */
   private static final long SWITCH_TIMEOUT_SECONDS = 120;
   /** How long a stopped agent's start may take to fail after the switch gave up on it. */
@@ -81,10 +79,6 @@ public final class ChatController implements Disposable {
   private volatile AgentBackend backend;
   /** Done unless {@link #switchAgent} is switching, so a prompt sent meanwhile goes to the new agent. */
   private volatile CompletableFuture<Void> switching = CompletableFuture.completedFuture(null);
-  /** The turn whose prompt carries the handoff to the agent the thread switched to, until that turn ended. */
-  private final AtomicInteger handoffTurn = new AtomicInteger(NO_HANDOFF);
-  /** The agent took the prompt of {@link #handoffTurn}, so the next turn end tells whether the handoff arrived. */
-  private volatile boolean handoffTaken;
   /** The person stopped the running turn, whose end then counts as one without an error for the handoff. */
   private volatile boolean isInterrupted;
   /** The last launch failed, so {@link #retryFailedStart} starts the agent again. */
@@ -96,6 +90,7 @@ public final class ChatController implements Disposable {
   private final AtomicReference<Submit> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
   private final Conversation conversation = new Conversation();
+  private final HandoffTracker handoff;
   private final ChatGit git;
   private final ChatAttachments attachments;
   private final ChatDiffs diffs;
@@ -149,6 +144,7 @@ public final class ChatController implements Disposable {
     this.isTitled = record.sessionId != null && !record.sideChat
       || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
     this.changes = new TurnChanges(project);
+    this.handoff = new HandoffTracker(record, this.conversation);
     ThreadStore.PendingSetup pending = record.pendingSetup;
     this.setup = pending == null
       ? null
@@ -418,8 +414,7 @@ public final class ChatController implements Disposable {
       }
       this.promptsSent = 0;
       this.turnRunning = false;
-      this.handoffTurn.set(NO_HANDOFF);
-      this.handoffTaken = false;
+      this.handoff.reset();
       this.keepsTimeline = true;
       this.conversation.restore(past);
     }
@@ -779,7 +774,7 @@ public final class ChatController implements Disposable {
    * Sends a prompt, starting the agent if it is not running. While a turn runs, the prompt waits in the queue or, if
    * asked and the agent can, steers that turn. Call on the EDT.
    *
-   * @param turn    the chat's number for this prompt's turn, which {@link #showTurnDiff} names later
+   * @param turn    the chat's number for this prompt's turn, which {@link ChatDiffs#showTurnDiff} names later
    * @param prompts how many prompts the session got before this one, which names its file checkpoint
    * @return what became of it: sent, queued or steering
    */
@@ -931,7 +926,7 @@ public final class ChatController implements Disposable {
   private void promptNow(AgentSession session, String typed, String prompt, List<ImageAttachment> images, int turn,
     boolean steer) {
     this.error = null;
-    String sent = this.withHandoff(typed, prompt, turn);
+    String sent = this.handoff.withHandoff(typed, prompt, turn, this.projectPath(), this.projectFolder());
     this.conversation.send(turn, typed, images.size());
     Async.onEdt(this.host::activity);
     if (!this.isTitled && !typed.startsWith("/")) {
@@ -948,9 +943,7 @@ public final class ChatController implements Disposable {
           session.prompt(sent, images, turn);
           return;
         }
-        if (turn == this.handoffTurn.get()) {
-          this.handoffTurn.set(NO_HANDOFF);
-        }
+        this.handoff.refused(turn);
         QueuedPrompts.Entry next = this.queue.settle();
         if (next != null) {
           this.deliver(next.turn(), next.prompt(), false, null);
@@ -960,24 +953,6 @@ public final class ChatController implements Disposable {
       session.prompt(sent, images, turn);
     }
     this.queue.refresh();
-  }
-
-  /**
-   * The prompt with the handoff to the agent the thread switched to, while it has not arrived yet. Only one prompt at a
-   * time carries it, and no slash command.
-   */
-  private String withHandoff(String typed, String prompt, int turn) {
-    String from = this.record.handoffFrom;
-    if (from == null || typed.startsWith("/") || !this.handoffTurn.compareAndSet(NO_HANDOFF, turn)) {
-      return prompt;
-    }
-    Handoff.Facts facts = new Handoff.Facts(from, this.projectPath(), this.record.branch, this.record.worktree);
-    String handoff = Handoff.text(this.conversation.handoffInput(), facts, Handoff.MAX_TOKENS);
-    String folder = this.projectFolder();
-    if (this.record.workPath != null && folder != null) {
-      handoff = PromptComposer.rebase(handoff, folder, this.record.workPath);
-    }
-    return PromptComposer.withHandoff(prompt, handoff);
   }
 
   /**
@@ -1226,9 +1201,7 @@ public final class ChatController implements Disposable {
     }
     boolean isLate = this.queue.taken(taken.key(), taken.startsTurn());
     this.conversation.take(taken.key());
-    if (taken.key() == this.handoffTurn.get()) {
-      this.handoffTaken = true;
-    }
+    this.handoff.taken(taken.key());
     if (taken.startsTurn()) {
       this.changes.startTurn(taken.key());
       synchronized (this.answer) {
@@ -1248,13 +1221,9 @@ public final class ChatController implements Disposable {
     this.turnRunning = false;
     boolean wasInterrupted = this.isInterrupted;
     this.isInterrupted = false;
-    if (this.handoffTaken) {
-      this.handoffTaken = false;
-      this.handoffTurn.set(NO_HANDOFF);
-      if (ended.error() == null || wasInterrupted) {
-        this.record.handoffFrom = null;
-        this.recordChanged();
-      }
+    if (this.handoff.turnEnded(ended.error() == null || wasInterrupted)) {
+      this.record.handoffFrom = null;
+      this.recordChanged();
     }
     this.error = ended.error();
     this.refreshContext();
@@ -1301,8 +1270,7 @@ public final class ChatController implements Disposable {
   /** The queued prompts wait for the next prompt sent, which starts the agent again. */
   private void stopped(@Nullable String error) {
     this.turnRunning = false;
-    this.handoffTurn.set(NO_HANDOFF);
-    this.handoffTaken = false;
+    this.handoff.reset();
     if (this.setup != null) {
       this.setup.dropHeld();
     }
