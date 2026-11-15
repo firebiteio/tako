@@ -184,7 +184,7 @@ public final class ChatController implements Disposable {
       try {
         String resume = this.record.sessionId;
         String projectPath = this.projectPath();
-        this.conversation.restore(this.readPast());
+        this.conversation.restore(ThreadPast.readSaved(this.host.pastFile(), this.record.agentSwitches));
         boolean replayed = false;
         if (resume != null && projectPath != null) {
           switch (this.backend.history(projectPath, resume)) {
@@ -455,21 +455,6 @@ public final class ChatController implements Disposable {
   /** The state before a switch that did not happen, unless the agent stopped meanwhile. */
   private State stateAfterRejectedSwitch(State previous) {
     return this.connection.live() == null ? State.STOPPED : previous;
-  }
-
-  /** What the earlier agents did, without segments of a switch whose record never got saved. */
-  private ThreadPast readPast() {
-    Path file = this.host.pastFile();
-    ThreadPast past = ThreadPast.read(file);
-    if (past.segments().size() > this.record.agentSwitches) {
-      past = past.firstSegments(this.record.agentSwitches);
-      try {
-        past.write(file);
-      } catch (IOException e) {
-        LOG.warn("Could not drop an unsaved agent switch from " + file, e);
-      }
-    }
-    return past;
   }
 
   /**

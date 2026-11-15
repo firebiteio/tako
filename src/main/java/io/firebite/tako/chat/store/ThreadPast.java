@@ -81,6 +81,24 @@ public record ThreadPast(
     }
   }
 
+  /**
+   * Like {@link #read}, without the segments past the first {@code switches}, which a switch wrote before its record
+   * got saved. Drops them from the file too.
+   */
+  public static ThreadPast readSaved(Path file, int switches) {
+    ThreadPast past = read(file);
+    if (past.segments().size() <= switches) {
+      return past;
+    }
+    past = past.firstSegments(switches);
+    try {
+      past.write(file);
+    } catch (IOException e) {
+      LOG.warn("Could not drop an unsaved agent switch from " + file, e);
+    }
+    return past;
+  }
+
   public void write(Path file) throws IOException {
     AtomicFiles.write(file, GSON.toJson(this));
   }
