@@ -245,9 +245,14 @@ public sealed interface ChatMessage {
   ) {
   }
 
+  /** @param start the agent failed to start, so the error goes once it starts */
   record Error(
-    String text
+    String text,
+    boolean start
   ) implements WorkspaceMessage, ThreadMessage {
+    public Error(String text) {
+      this(text, false);
+    }
   }
 
   /** Something the person should know that does not fail the turn. */

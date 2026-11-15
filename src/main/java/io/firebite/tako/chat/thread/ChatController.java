@@ -103,6 +103,8 @@ public final class ChatController implements Disposable {
   private volatile boolean handoffTaken;
   /** The person stopped the running turn, whose end then counts as one without an error for the handoff. */
   private volatile boolean isInterrupted;
+  /** The last launch failed, so {@link #retryFailedStart} starts the agent again. */
+  private volatile boolean startFailed;
   private final AgentConnection connection = new AgentConnection();
   private final TurnChanges changes;
   /** Done once {@link #open} launched the agent, so a prompt sent meanwhile does not launch a second one. */
@@ -351,6 +353,13 @@ public final class ChatController implements Disposable {
       this.rewinding.join();
       this.launch(this.record.sessionId);
     });
+  }
+
+  /** Starts the agent again if its last start failed, e.g. once the settings that broke it changed. */
+  public void retryFailedStart() {
+    if (this.startFailed && this.state == State.STOPPED) {
+      this.restart();
+    }
   }
 
   /**
@@ -807,22 +816,20 @@ public final class ChatController implements Disposable {
       this.record.effort, this.host.additionalDirectories(), EnvironmentUtil.getEnvironmentMap(),
       this.host.toolsUrl());
     this.setState(State.STARTING);
+    this.startFailed = false;
     AgentSession session;
     try {
       session = this.connection.replace(this.backend, launch,
         this.keepsTimeline ? new Listener(false, resumeSessionId) : new Listener(true, null));
     } catch (AgentException e) {
-      this.stopped(e.getMessage());
-      this.postError(e.getMessage());
+      this.startFailed(e.getMessage());
       return CompletableFuture.completedFuture(null);
     }
     this.keepsTimeline = false;
     return session.initialize().whenComplete((info, error) -> {
       if (error != null) {
-        String message = TakoBundle.message("error.agent.not.started", this.backend.displayName(),
-          AgentException.messageOf(error));
-        this.stopped(message);
-        this.postError(message);
+        this.startFailed(TakoBundle.message("error.agent.not.started", this.backend.displayName(),
+          AgentException.messageOf(error)));
         return;
       }
       this.host.started(info);
@@ -1607,6 +1614,12 @@ public final class ChatController implements Disposable {
 
   private void recordChanged() {
     Async.onEdt(this.host::recordChanged);
+  }
+
+  private void startFailed(String message) {
+    this.stopped(message);
+    this.startFailed = true;
+    this.view.post(new ChatMessage.Error(message, true));
   }
 
   private void postError(String text) {

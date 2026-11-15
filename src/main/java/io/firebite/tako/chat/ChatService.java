@@ -300,6 +300,15 @@ public final class ChatService implements Disposable {
     }
   }
 
+  /** Starts again every open thread whose agent failed to start, after the settings that may have broken it changed. */
+  public static void retryFailedStartsInOpenProjects() {
+    for (Project project : ProjectManager.getInstance().getOpenProjects()) {
+      for (ChatController controller : ChatService.getInstance(project).controllers.values()) {
+        controller.retryFailedStart();
+      }
+    }
+  }
+
   private void showInitialState() {
     this.post(new ChatMessage.Project(this.project.getBasePath(), this.project.getName()));
     this.postSettings();

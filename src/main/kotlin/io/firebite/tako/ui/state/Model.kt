@@ -180,7 +180,9 @@ data class LiveContext(val used: Long, val at: Long)
 class PendingImage(val image: ImageAttachment)
 
 /** A dismissible alert above a thread, or above the whole chat. */
-class Alert(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null)
+/** @param start tells that the agent failed to start, so the alert goes once it starts */
+class Alert(val text: String, val actionLabel: String? = null, val action: (() -> Unit)? = null,
+  val start: Boolean = false)
 
 /** A run of a bench to start; absent fields follow the thread's own agent and model. */
 data class RunPlan(val agent: String? = null, val model: String? = null)

@@ -14,6 +14,7 @@ import com.intellij.util.ui.FormBuilder;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.agent.claude.ClaudeLaunch;
+import io.firebite.tako.chat.ChatService;
 import java.util.Arrays;
 import java.util.List;
 import javax.swing.JComponent;
@@ -88,7 +89,12 @@ public final class ClaudeCodeConfigurable implements Configurable {
     String key = this.currentApiKey();
     if (this.loadedApiKey != null && !key.equals(this.loadedApiKey)) {
       this.loadedApiKey = key;
-      ApplicationManager.getApplication().executeOnPooledThread(() -> ApiKeyStore.save(key));
+      ApplicationManager.getApplication().executeOnPooledThread(() -> {
+        ApiKeyStore.save(key);
+        ApplicationManager.getApplication().invokeLater(ChatService::retryFailedStartsInOpenProjects);
+      });
+    } else {
+      ChatService.retryFailedStartsInOpenProjects();
     }
   }
 

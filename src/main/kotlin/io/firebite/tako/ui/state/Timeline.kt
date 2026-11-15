@@ -401,6 +401,7 @@ fun ThreadState.onInit(info: AgentInfo, projectRoot: String?) {
   }
   this.info = info
   this.stopped = false
+  this.alerts.removeAll { it.start }
   this.commands = info.commands
   val wanted = info.model ?: ""
   val models = info.models
@@ -483,10 +484,11 @@ fun ThreadState.onSetup(setup: ChatMessage.Setup) {
   }
 }
 
-fun ThreadState.onError(text: String) {
+/** @param start the agent failed to start, so the alert goes once it starts */
+fun ThreadState.onError(text: String, start: Boolean) {
   this.setBusy(false)
   this.failed = true
-  this.showAlert(text)
+  this.alerts.add(Alert(text, start = start))
 }
 
 /**
