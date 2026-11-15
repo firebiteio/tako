@@ -138,7 +138,7 @@ private fun ApprovalDrawer(thread: ThreadState, approval: Approval) {
     }
     Actions {
       if (prompt.canDiff) {
-        OutlineButton(t("approvals.diff"), icon = Icons.diff) { thread.controller?.showProposedEdit(approval.requestId) }
+        OutlineButton(t("approvals.diff"), icon = Icons.diff) { thread.controller?.diffs()?.showProposedEdit(approval.requestId) }
       }
       MoreButton(thread, approval)
       OutlineButton(t("approvals.decline")) { thread.deny(approval, "The user declined this tool call.") }

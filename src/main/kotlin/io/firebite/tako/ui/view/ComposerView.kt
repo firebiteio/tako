@@ -217,13 +217,13 @@ private class ComposerPaste(private val thread: ThreadState) : PasteProvider {
     }
     if (!clipboard.areDataFlavorsAvailable(DataFlavor.stringFlavor) &&
       clipboard.areDataFlavorsAvailable(DataFlavor.imageFlavor)) {
-      this.thread.controller?.pasteImage()
+      this.thread.controller?.attachments()?.pasteImage()
       return
     }
     val text = clipboard.getContents<String>(DataFlavor.stringFlavor) ?: return
     val controller = this.thread.controller
     if (controller != null && PastedText.isLarge(text)) {
-      val item = controller.pasteText(text) ?: return
+      val item = controller.attachments().pasteText(text) ?: return
       insertText(this.thread, "")
       this.thread.addContext(item, null)
       return
@@ -391,7 +391,7 @@ private fun Composer(thread: ThreadState) {
           for (item in thread.contexts.toList()) {
             MentionChip(item) {
               thread.contexts.remove(item)
-              thread.controller?.discardPaste(item)
+              thread.controller?.attachments()?.discardPaste(item)
             }
           }
         }
@@ -416,7 +416,7 @@ private fun Composer(thread: ThreadState) {
           ContextMeter(thread)
           val info = thread.info
           if (info == null || info.capabilities.images) {
-            IconBtn(Icons.attach, t("composer.attach")) { thread.controller?.pickImages() }
+            IconBtn(Icons.attach, t("composer.attach")) { thread.controller?.attachments()?.pickImages() }
           }
           SendButton(thread)
         }
@@ -484,7 +484,7 @@ private suspend fun updateMention(thread: ThreadState, suggestions: Suggestions,
   suggestions.mention = Mention(before.length - raw.length - 1, selection.start, query)
   delay(MENTION_DEBOUNCE_MILLIS)
   val controller = thread.controller ?: return
-  val files = withContext(Dispatchers.IO) { controller.findFiles(query) }
+  val files = withContext(Dispatchers.IO) { controller.attachments().findFiles(query) }
   val threads = mentionThreads(thread, query)
   suggestions.isMention = true
   suggestions.files = files

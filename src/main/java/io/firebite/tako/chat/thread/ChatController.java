@@ -2,17 +2,8 @@ package io.firebite.tako.chat.thread;
 
 import com.intellij.ide.trustedProjects.TrustedProjects;
 import com.intellij.openapi.Disposable;
-import com.intellij.openapi.application.ApplicationManager;
-import com.intellij.openapi.application.ModalityState;
 import com.intellij.openapi.diagnostic.Logger;
-import com.intellij.openapi.fileChooser.FileChooser;
-import com.intellij.openapi.fileChooser.FileChooserDescriptor;
-import com.intellij.openapi.fileChooser.FileChooserDescriptorFactory;
-import com.intellij.openapi.fileEditor.FileDocumentManager;
-import com.intellij.openapi.ide.CopyPasteManager;
 import com.intellij.openapi.project.Project;
-import com.intellij.openapi.vfs.VfsUtil;
-import com.intellij.openapi.vfs.VirtualFile;
 import com.intellij.util.EnvironmentUtil;
 import com.intellij.util.concurrency.AppExecutorUtil;
 import io.firebite.tako.TakoBundle;
@@ -24,13 +15,11 @@ import io.firebite.tako.agent.AgentLaunch;
 import io.firebite.tako.agent.AgentListener;
 import io.firebite.tako.agent.AgentSession;
 import io.firebite.tako.agent.ContextUsage;
-import io.firebite.tako.agent.EditPreview;
 import io.firebite.tako.agent.ImageAttachment;
 import io.firebite.tako.agent.PermissionAnswer;
 import io.firebite.tako.agent.PermissionPrompt;
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.chat.git.Blocker;
-import io.firebite.tako.chat.git.GitActionFlow;
 import io.firebite.tako.chat.git.GitDrafts;
 import io.firebite.tako.chat.git.ThreadGit;
 import io.firebite.tako.chat.store.PromptStash;
@@ -38,22 +27,12 @@ import io.firebite.tako.chat.store.ThreadPast;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ContextItem;
-import io.firebite.tako.ide.context.IdeContext;
-import io.firebite.tako.ide.context.Images;
-import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.context.PromptComposer;
-import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
-import io.firebite.tako.ide.project.Checkpoints;
-import io.firebite.tako.ide.project.FileIndex;
-import io.firebite.tako.ide.project.ForgeCli;
 import io.firebite.tako.ide.project.GitCommands;
-import io.firebite.tako.ide.project.GitDiffs;
-import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.ui.bridge.message.ChatError;
 import io.firebite.tako.ui.bridge.message.thread.ChatContextUsage;
-import io.firebite.tako.ui.bridge.message.thread.ChatImage;
 import io.firebite.tako.ui.bridge.message.thread.Context;
 import io.firebite.tako.ui.bridge.message.thread.Event;
 import io.firebite.tako.ui.bridge.message.thread.Exit;
@@ -67,11 +46,7 @@ import io.firebite.tako.ui.bridge.message.thread.Rewound;
 import io.firebite.tako.ui.bridge.message.thread.Setup;
 import io.firebite.tako.ui.bridge.message.thread.SetupPhase;
 import io.firebite.tako.ui.bridge.message.thread.Submit;
-import java.awt.Image;
-import java.awt.datatransfer.DataFlavor;
-import java.io.File;
 import java.io.IOException;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -91,12 +66,7 @@ public final class ChatController implements Disposable {
   private static final Logger LOG = Logger.getInstance(ChatController.class);
   private static final int TITLE_LENGTH = 40;
   private static final long CONTEXT_TIMEOUT_SECONDS = 10;
-  private static final int FILE_MATCHES = 30;
-  private static final long PULL_REQUEST_INTERVAL_MILLIS = 120_000;
-  private static final String PASTED_IMAGE_NAME = "pasted-image.png";
   private static final int SCRATCHPAD_FILES = 50;
-  /** How long a snapshot or restore waits for the editors to be saved, which a modal dialog holds up. */
-  private static final long SAVE_TIMEOUT_SECONDS = 2;
   /** {@link #handoffTurn} while no prompt carries the handoff. */
   private static final int NO_HANDOFF = Integer.MIN_VALUE;
   /** How long a switch waits for the new agent to start. */
@@ -127,7 +97,10 @@ public final class ChatController implements Disposable {
   private final AtomicReference<Submit> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
   private final Conversation conversation = new Conversation();
-  private final ThreadGit git;
+  private final ChatGit git;
+  private final ChatAttachments attachments;
+  private final ChatDiffs diffs;
+  private final FileCheckpoints checkpoints;
   private final Object heldLock = new Object();
   /** Done once the prompts held for a git action went out. Guarded by {@link #heldLock}. */
   private CompletableFuture<Void> held = CompletableFuture.completedFuture(null);
@@ -155,7 +128,6 @@ public final class ChatController implements Disposable {
   private volatile @Nullable String error;
   private volatile @Nullable String workingDirectory;
   private volatile @Nullable String scratchpadPath;
-  private volatile long lastPullRequestCheck;
   private volatile boolean isTitled;
   /** Set by {@link #restartSession} until the next launch, whose session's past the chat already shows. */
   private volatile boolean keepsTimeline;
@@ -182,10 +154,11 @@ public final class ChatController implements Disposable {
     this.setup = pending == null
       ? null
       : new WorktreeSetup(pending, new SetupListener(), this::isTrusted, WorktreeSetup.TIMEOUT_MILLIS);
-    this.git = new ThreadGit(() -> {
-      String folder = this.gitFolder();
-      return folder == null ? null : Path.of(folder);
-    }, EnvironmentUtil.getEnvironmentMap(), this::busyIn, ForgeCli::of);
+    this.git = new ChatGit(record, this::gitFolder, () -> this.isDisposed, this::recordChanged, this::busyIn);
+    this.attachments = new ChatAttachments(project, view, this::projectPath);
+    this.diffs = new ChatDiffs(project, view, record, this.changes, this.connection::live,
+      () -> this.backend.displayName(), this::gitFolder);
+    this.checkpoints = new FileCheckpoints(record, host);
   }
 
   /** Whether the IDE trusts the thread's project, and its project folder when that is another one than the IDE's. */
@@ -551,46 +524,9 @@ public final class ChatController implements Disposable {
     });
   }
 
-  /**
-   * Re-reads branch and worktree, which is local and cheap. Asks for the pull request only when the branch changed or
-   * the last lookup is older than {@link #PULL_REQUEST_INTERVAL_MILLIS}. A thread in a folder of its own keeps its pull
-   * request when none is found and it is not on another branch, e.g. once the merge deleted the branch, so auto archive
-   * still sees how it ended. Call off the EDT.
-   */
+  /** Re-reads the thread's branch, worktree and maybe pull request, see {@link ChatGit#refresh}. Call off the EDT. */
   public void refreshGit() {
-    String directory = this.gitFolder();
-    if (directory == null || this.isDisposed) {
-      return;
-    }
-    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
-    GitInfo info = GitInfo.local(Path.of(directory), environment);
-    boolean branchChanged = !Objects.equals(info.branch(), this.record.branch);
-    GitInfo.PullRequest pullRequest = this.record.pullRequest;
-    long now = System.currentTimeMillis();
-    if (info.branch() == null) {
-      pullRequest = null;
-    } else if (branchChanged || now - this.lastPullRequestCheck > PULL_REQUEST_INTERVAL_MILLIS) {
-      this.lastPullRequestCheck = now;
-      pullRequest = GitInfo.pullRequest(Path.of(directory), environment);
-    }
-    boolean isOtherBranch = info.branch() != null && branchChanged;
-    if (pullRequest == null && this.record.workPath != null && !isOtherBranch) {
-      pullRequest = this.record.pullRequest;
-    }
-    if (!branchChanged && Objects.equals(info.worktree(), this.record.worktree)
-      && Objects.equals(pullRequest, this.record.pullRequest)) {
-      return;
-    }
-    this.record.branch = info.branch();
-    this.record.worktree = info.worktree();
-    this.record.pullRequest = pullRequest;
-    this.recordChanged();
-  }
-
-  /** Like {@link #refreshGit}, and asks for the pull request whenever it last did. Call off the EDT. */
-  public void refreshGitNow() {
-    this.lastPullRequestCheck = 0;
-    this.refreshGit();
+    this.git.refresh();
   }
 
   /** The folder git actions work on: where the agent says it works, else the thread's folder. */
@@ -598,25 +534,16 @@ public final class ChatController implements Disposable {
     return this.workingDirectory != null ? this.workingDirectory : this.projectPath();
   }
 
-  /**
-   * The thread's git actions and the state they act on. Asks the forge nothing, except for the pull request of a
-   * branch checked out since the last {@link #refreshGit}. Runs git, so call off the EDT.
-   *
-   * @see #checkForge
-   */
-  public ThreadGit.Menu gitMenu() {
-    ThreadGit.Menu menu = this.git.menu(this.record.pullRequest, this.record.branch);
-    String branch = menu.status().branch();
-    if (branch == null || branch.equals(this.record.branch)) {
-      return menu;
-    }
-    this.refreshGit();
-    return this.git.menu(this.record.pullRequest, this.record.branch);
+  public ChatGit git() {
+    return this.git;
   }
 
-  /** Learns whether gh or glab can create the menu's pull request. Asks the forge, so call off the EDT. */
-  public void checkForge(ThreadGit.Menu menu) {
-    this.git.checkForge(menu);
+  public ChatAttachments attachments() {
+    return this.attachments;
+  }
+
+  public ChatDiffs diffs() {
+    return this.diffs;
   }
 
   /**
@@ -626,8 +553,8 @@ public final class ChatController implements Disposable {
    * @return completes on the EDT once it ran or the person cancelled it
    */
   public CompletableFuture<Void> runGitAction(ThreadGit.Option option, GitCommands.Status status) {
-    return GitActionFlow.start(this.project, this.git, option, status,
-      this.conversation(GitDrafts.MAX_CONVERSATION), this.backend, this::refreshGitNow);
+    return this.git.runAction(this.project, option, status, this.conversation(GitDrafts.MAX_CONVERSATION),
+      this.backend);
   }
 
   /** This thread's agent, or another thread's, working in the repository. */
@@ -679,24 +606,9 @@ public final class ChatController implements Disposable {
     this.view.post(new Context(item, prefill));
   }
 
-  /** Reads image files in the background and attaches them to the composer. */
+  /** See {@link ChatAttachments#attachFiles}. */
   public void attachFiles(List<Path> files) {
-    Async.inBackground(() -> this.readImages(files));
-  }
-
-  private void readImages(List<Path> files) {
-    for (Path file : files) {
-      try {
-        ImageAttachment image = Images.fromFile(file);
-        if (image == null) {
-          this.postError(TakoBundle.message("error.image.unsupported", file.getFileName()));
-        } else {
-          this.view.post(new ChatImage(image));
-        }
-      } catch (IOException e) {
-        this.postError(TakoBundle.message("error.image.read", file.getFileName(), e.getMessage()));
-      }
-    }
+    this.attachments.attachFiles(files);
   }
 
   /**
@@ -1086,40 +998,6 @@ public final class ChatController implements Disposable {
     return text.substring(0, end) + "…";
   }
 
-  /** Shows what the tool call a permission prompt is about would change. */
-  public void showProposedEdit(String requestId) {
-    Async.inBackground(() -> {
-      AgentSession session = this.connection.live();
-      EditPreview preview = session == null ? null : session.proposedEdit(requestId);
-      if (preview == null) {
-        this.postError(TakoBundle.message("error.no.diff"));
-        return;
-      }
-      String title = TakoBundle.message("diff.title", this.backend.displayName(),
-        Path.of(preview.filePath()).getFileName());
-      ReviewTarget target = ReviewTarget.proposed(this.record.id, IdeFiles.absolute(this.project, preview.filePath()));
-      Async.onEdt(() -> IdeFiles.showDiff(this.project, preview, title, target));
-    });
-  }
-
-  /**
-   * Shows what the turn changed.
-   *
-   * @param turn the chat's number for the turn's prompt
-   * @param path one file of the turn, or all of them when null
-   */
-  public void showTurnDiff(int turn, @Nullable String path) {
-    Async.inBackground(() -> {
-      List<EditPreview> previews = this.changes.previews(turn, path);
-      if (previews.isEmpty()) {
-        this.postError(TakoBundle.message("error.no.turn.changes"));
-        return;
-      }
-      Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews,
-        preview -> ReviewTarget.turn(this.record.id, IdeFiles.absolute(this.project, preview.filePath()))));
-    });
-  }
-
   /**
    * Snapshots the files for the prompt about to be sent, when the agent is idle. A prompt sent during a turn gets no
    * snapshot, since the turn may have half changed the files, and older ones of its number and later go.
@@ -1129,25 +1007,17 @@ public final class ChatController implements Disposable {
     if (!this.canRewind || folder == null || prompts < 0 || this.isDisposed) {
       return;
     }
-    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
-    if (!idle) {
-      Checkpoints.forget(Path.of(folder), this.record.id, prompts, environment);
-      return;
-    }
-    try {
-      this.saveDocuments();
-      Checkpoints.capture(Path.of(folder), this.record.id, prompts, typed, environment);
-    } catch (Worktrees.GitException e) {
-      LOG.debug("No file checkpoint for thread " + this.record.id, e);
+    if (idle) {
+      this.checkpoints.capture(folder, prompts, typed);
+    } else {
+      this.checkpoints.forget(folder, prompts);
     }
   }
 
   /** Whether the files can go back to when the prompt after the first {@code prompts} was sent. Runs git. */
   public boolean hasCheckpoint(int prompts, String prompt) {
     String folder = this.projectPath();
-    return folder != null
-      && Checkpoints.find(Path.of(folder), this.record.id, prompts, prompt,
-        EnvironmentUtil.getEnvironmentMap()) != null;
+    return folder != null && this.checkpoints.find(folder, prompts, prompt) != null;
   }
 
   /**
@@ -1183,32 +1053,16 @@ public final class ChatController implements Disposable {
     });
   }
 
-  /**
-   * Why the files in the folder must not be put back now: a git action or another thread's agent works in its
-   * repository. Null when nothing does. Runs git.
-   */
-  private @Nullable String filesBlocker(String folder, Map<String, String> environment) {
-    if (ThreadGit.hasActions(Path.of(folder))) {
-      return TakoBundle.message("git.failed.running");
-    }
-    String topLevel = GitCommands.topLevel(Path.of(folder), environment);
-    String other = topLevel == null ? null : this.host.busyThreadIn(topLevel);
-    return other == null ? null : TakoBundle.message("error.rewind.folder.busy", other);
-  }
-
   private Rewound rewindNow(List<String> prompts, boolean files) {
     int kept = prompts.size() - 1;
     String folder = this.projectPath();
-    Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     String commit = null;
     if (files) {
-      commit = folder == null
-        ? null
-        : Checkpoints.find(Path.of(folder), this.record.id, kept, prompts.getLast(), environment);
+      commit = folder == null ? null : this.checkpoints.find(folder, kept, prompts.getLast());
       if (commit == null) {
         return new Rewound(false, TakoBundle.message("error.rewind.no.checkpoint"));
       }
-      String blocker = this.filesBlocker(folder, environment);
+      String blocker = this.checkpoints.blocker(folder);
       if (blocker != null) {
         return new Rewound(false, blocker);
       }
@@ -1248,17 +1102,17 @@ public final class ChatController implements Disposable {
     if (commit != null) {
       try {
         this.setState(State.WORKING);
-        String blocker = this.filesBlocker(folder, environment);
+        String blocker = this.checkpoints.blocker(folder);
         if (blocker != null) {
           throw new Worktrees.GitException(blocker);
         }
-        this.restoreFiles(folder, commit, environment);
+        this.checkpoints.restore(folder, commit);
       } catch (Worktrees.GitException | RuntimeException e) {
         filesError = TakoBundle.message("error.rewind.files", Objects.toString(e.getMessage(), e.toString()));
       }
     }
     if (folder != null) {
-      Checkpoints.forget(Path.of(folder), this.record.id, kept + 1, environment);
+      this.checkpoints.forget(folder, kept + 1);
     }
     rewound = this.replayRewound(rewound, folder);
     if (this.isDisposed) {
@@ -1293,157 +1147,6 @@ public final class ChatController implements Disposable {
       }
     }
     return sessionId;
-  }
-
-  /**
-   * Writes unsaved editor changes to disk, so a snapshot or restore sees what the person sees. Waits for the EDT at
-   * most {@link #SAVE_TIMEOUT_SECONDS}, then goes on with what is on disk.
-   */
-  private void saveDocuments() {
-    CompletableFuture<Void> saved = new CompletableFuture<>();
-    ApplicationManager.getApplication().invokeLater(() -> {
-      FileDocumentManager.getInstance().saveAllDocuments();
-      saved.complete(null);
-    }, ModalityState.defaultModalityState());
-    try {
-      saved.get(SAVE_TIMEOUT_SECONDS, TimeUnit.SECONDS);
-    } catch (TimeoutException | ExecutionException e) {
-      LOG.debug("Editors not saved, e.g. while a dialog is open", e);
-    } catch (InterruptedException e) {
-      Thread.currentThread().interrupt();
-    }
-  }
-
-  /** Saves the editors, puts the files back and lets the IDE see the changed ones. */
-  private void restoreFiles(String folder, String commit, Map<String, String> environment)
-    throws Worktrees.GitException {
-    this.saveDocuments();
-    List<File> refreshed = new ArrayList<>();
-    for (Path path : Checkpoints.restore(Path.of(folder), this.record.id, commit, environment)) {
-      Path existing = path;
-      while (existing != null && !Files.exists(existing)) {
-        existing = existing.getParent();
-      }
-      if (existing != null) {
-        refreshed.add(existing.toFile());
-      }
-    }
-    if (!refreshed.isEmpty()) {
-      VfsUtil.markDirtyAndRefresh(true, false, true, refreshed.toArray(new File[0]));
-    }
-  }
-
-  /** What the thread's checkout can show a diff of, or null without a folder. Reads git, so call off the EDT. */
-  public @Nullable GitDiffs.Sources gitDiffSources() throws Worktrees.GitException {
-    String directory = this.gitFolder();
-    return directory == null ? null : GitDiffs.sources(Path.of(directory), EnvironmentUtil.getEnvironmentMap());
-  }
-
-  /** Shows what the source changed in the thread's checkout. Works in any state, since it only reads git. */
-  public void showGitDiff(GitDiffs.Source source) {
-    Async.inBackground(() -> {
-      String directory = this.gitFolder();
-      if (directory == null) {
-        return;
-      }
-      Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
-      GitDiffs.Changes changes;
-      try {
-        changes = GitDiffs.changes(Path.of(directory), source, environment);
-      } catch (Worktrees.GitException e) {
-        this.postError(TakoBundle.message("error.git.diff", e.getMessage()));
-        return;
-      }
-      if (changes.files().isEmpty()) {
-        this.postError(switch (source) {
-          case GitDiffs.Uncommitted uncommitted -> TakoBundle.message("error.git.diff.empty.uncommitted");
-          case GitDiffs.Branch branch -> TakoBundle.message("error.git.diff.empty.branch");
-          case GitDiffs.Commit commit -> TakoBundle.message("error.git.diff.empty.commit");
-        });
-        return;
-      }
-      String before = changes.beforeName() != null ? changes.beforeName() : TakoBundle.message("diff.git.empty");
-      String after = changes.afterName() != null ? changes.afterName() : TakoBundle.message("diff.git.working.tree");
-      Async.onEdt(() -> IdeFiles.showGitDiffs(this.project, changes, before, after, environment));
-    });
-  }
-
-  /** Attaches the clipboard's image, if it holds one. Must run on the EDT. */
-  public void pasteImage() {
-    Image image;
-    try {
-      image = CopyPasteManager.getInstance().getContents(DataFlavor.imageFlavor);
-    } catch (RuntimeException e) {
-      image = null;
-    }
-    if (image == null) {
-      return;
-    }
-    Image clipboardImage = image;
-    Async.inBackground(() -> {
-      try {
-        this.view.post(new ChatImage(Images.fromImage(clipboardImage, PASTED_IMAGE_NAME)));
-      } catch (IOException e) {
-        this.postError(TakoBundle.message("error.clipboard.image", e.getMessage()));
-      }
-    });
-  }
-
-  /**
-   * Writes a large paste to a file in {@link PastedText#folder()}, which every launch passes as an additional
-   * directory, so the agent reads it instead of the prompt carrying it. Writes right away, so the file is attached
-   * before the next key is handled.
-   *
-   * @return the file as context, or null after showing why it could not be written
-   */
-  public @Nullable ContextItem pasteText(String text) {
-    try {
-      return IdeContext.file(PastedText.write(PastedText.folder(), text));
-    } catch (IOException e) {
-      this.postError(TakoBundle.message("error.paste.text", e.getMessage()));
-      return null;
-    }
-  }
-
-  /** Deletes the file of a pasted text chip removed before sending. Other chips are left alone. */
-  public void discardPaste(ContextItem item) {
-    Path file = PastedText.fileOf(item, PastedText.folder());
-    if (file == null) {
-      return;
-    }
-    Async.inBackground(() -> {
-      try {
-        Files.deleteIfExists(file);
-      } catch (IOException e) {
-        LOG.debug("Could not delete " + file, e);
-      }
-    });
-  }
-
-  /** Asks for image files to attach. The chooser opens once the current event is handled. */
-  public void pickImages() {
-    Async.onEdt(this::chooseImages);
-  }
-
-  private void chooseImages() {
-    FileChooserDescriptor descriptor = FileChooserDescriptorFactory.multiFiles()
-      .withTitle(TakoBundle.message("dialog.attach.images.title"))
-      .withFileFilter(file -> Images.isImageFile(file.getName()));
-    List<Path> paths = new ArrayList<>();
-    for (VirtualFile file : FileChooser.chooseFiles(descriptor, this.project, null)) {
-      paths.add(file.toNioPath());
-    }
-    this.attachFiles(paths);
-  }
-
-  /** Project files matching an {@code @} mention. Lists the folder, so call off the EDT. */
-  public List<FileIndex.Match> findFiles(String query) {
-    String directory = this.projectPath();
-    if (directory == null) {
-      return List.of();
-    }
-    List<String> entries = FileIndex.entries(Path.of(directory), EnvironmentUtil.getEnvironmentMap());
-    return FileIndex.search(entries, query, FILE_MATCHES);
   }
 
   /**
@@ -1581,8 +1284,7 @@ public final class ChatController implements Disposable {
       this.record.firstTurnMillis = ended.durationMs();
       this.recordChanged();
     }
-    this.lastPullRequestCheck = 0;
-    Async.inBackground(this::refreshGit);
+    Async.inBackground(this.git::refreshNow);
     return this.queue.turnEnded(ended.error() != null);
   }
 

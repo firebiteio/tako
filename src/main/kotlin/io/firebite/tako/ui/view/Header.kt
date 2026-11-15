@@ -204,12 +204,12 @@ private fun DiffSourcesButton(thread: ThreadState) {
           entries = withContext(Dispatchers.IO) {
             var error: String? = null
             val sources = try {
-              controller.gitDiffSources()
+              controller.diffs().gitDiffSources()
             } catch (e: Exception) {
               error = e.message ?: e.javaClass.simpleName
               null
             }
-            diffMenu(sources, error, System.currentTimeMillis()) { controller.showGitDiff(it) }
+            diffMenu(sources, error, System.currentTimeMillis()) { controller.diffs().showGitDiff(it) }
           }
         } finally {
           loading = false
@@ -290,15 +290,15 @@ private suspend fun readGitMenu(thread: ThreadState) {
   val controller = thread.controller ?: return
   val read = ++thread.gitMenuReads
   try {
-    val local = withContext(Dispatchers.IO) { controller.gitMenu() }
+    val local = withContext(Dispatchers.IO) { controller.git().menu() }
     if (read != thread.gitMenuReads) {
       return
     }
     thread.gitMenu = local
     if (local.waitsForForge()) {
       val checked = withContext(Dispatchers.IO) {
-        controller.checkForge(local)
-        controller.gitMenu()
+        controller.git().checkForge(local)
+        controller.git().menu()
       }
       if (read == thread.gitMenuReads) {
         thread.gitMenu = checked

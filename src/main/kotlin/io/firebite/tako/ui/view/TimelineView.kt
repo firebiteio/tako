@@ -566,7 +566,7 @@ fun ChangesCard(thread: ThreadState, turn: Turn) {
       if (!turn.replayed) {
         val (interaction, hovered) = rememberHover()
         val color = if (hovered) colors.fg else colors.muted
-        Row(Modifier.height(26.dp).hoverClick(interaction = interaction) { thread.controller?.showTurnDiff(turn.no, null) }
+        Row(Modifier.height(26.dp).hoverClick(interaction = interaction) { thread.controller?.diffs()?.showTurnDiff(turn.no, null) }
           .padding(horizontal = 8.dp), verticalAlignment = Alignment.CenterVertically,
           horizontalArrangement = Arrangement.spacedBy(6.dp)) {
           Ico(Icons.diff, size = 14.dp, tint = color)
@@ -581,7 +581,7 @@ fun ChangesCard(thread: ThreadState, turn: Turn) {
             if (turn.replayed) {
               IdeFiles.open(thread.workspace.project, change.path, 1)
             } else {
-              thread.controller?.showTurnDiff(turn.no, change.path)
+              thread.controller?.diffs()?.showTurnDiff(turn.no, change.path)
             }
           }.padding(horizontal = 6.dp, vertical = 5.dp), verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.spacedBy(8.dp)) {

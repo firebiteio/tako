@@ -207,9 +207,9 @@ public class ChatControllerTest extends BasePlatformTestCase {
   }
 
   public void testGitDiffsOutsideGitTellWhy() throws Exception {
-    assertThrows(Worktrees.GitException.class, () -> this.controller.gitDiffSources());
+    assertThrows(Worktrees.GitException.class, () -> this.controller.diffs().gitDiffSources());
 
-    this.controller.showGitDiff(new GitDiffs.Uncommitted());
+    this.controller.diffs().showGitDiff(new GitDiffs.Uncommitted());
 
     assertTrue(this.awaitPost(ChatError.class).text().startsWith("Could not read the changes: "));
   }
@@ -220,22 +220,22 @@ public class ChatControllerTest extends BasePlatformTestCase {
     git(folder, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "--allow-empty", "-m",
       "empty");
 
-    GitDiffs.Sources sources = this.controller.gitDiffSources();
+    GitDiffs.Sources sources = this.controller.diffs().gitDiffSources();
     assertEquals(0, sources.uncommitted());
     assertEquals(1, sources.commits().size());
 
-    this.controller.showGitDiff(new GitDiffs.Uncommitted());
+    this.controller.diffs().showGitDiff(new GitDiffs.Uncommitted());
     assertEquals("No uncommitted changes.", this.awaitPost(ChatError.class).text());
-    this.controller.showGitDiff(sources.commits().get(0));
+    this.controller.diffs().showGitDiff(sources.commits().get(0));
     assertEquals("The commit changed no files.", this.awaitPost(ChatError.class).text());
     git(folder, "branch", "-m", "feature");
     git(folder, "branch", "main");
     git(folder, "-c", "user.email=test@example.com", "-c", "user.name=Test", "commit", "-q", "--allow-empty", "-m",
       "also empty");
-    GitDiffs.Branch branch = this.controller.gitDiffSources().branch();
-    this.controller.showGitDiff(branch);
+    GitDiffs.Branch branch = this.controller.diffs().gitDiffSources().branch();
+    this.controller.diffs().showGitDiff(branch);
     assertEquals("The branch changed no files.", this.awaitPost(ChatError.class).text());
-    this.controller.showGitDiff(new GitDiffs.Commit("0".repeat(40), "0000000", "gone", 0));
+    this.controller.diffs().showGitDiff(new GitDiffs.Commit("0".repeat(40), "0000000", "gone", 0));
     assertTrue(this.awaitPost(ChatError.class).text().startsWith("Could not read the changes: "));
   }
 

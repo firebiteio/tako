@@ -89,7 +89,7 @@ fun ThreadState.removeQueued(queued: QueuedPrompt) {
   val prompt = controller.unqueue(queued.no) ?: return
   this.queued.remove(queued)
   for (item in prompt.context) {
-    controller.discardPaste(item)
+    controller.attachments().discardPaste(item)
   }
 }
 
