@@ -1,6 +1,8 @@
 package io.firebite.tako.chat.thread;
 
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.thread.Queue;
+import io.firebite.tako.ui.bridge.message.thread.QueueItem;
+import io.firebite.tako.ui.bridge.message.thread.Submit;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -34,7 +36,7 @@ public final class QueuedPrompts {
    * @param canSteer the agent can take prompts into the running turn
    * @return what to do with it now
    */
-  public synchronized Action offer(int turn, ChatMessage.Submit prompt, Delivery delivery, boolean canSteer) {
+  public synchronized Action offer(int turn, Submit prompt, Delivery delivery, boolean canSteer) {
     if (this.isClosed) {
       return Action.SEND;
     }
@@ -144,7 +146,7 @@ public final class QueuedPrompts {
   }
 
   /** Takes a held prompt out of the queue, e.g. to edit it. Null when it is not held (any more). */
-  public synchronized ChatMessage.@Nullable Submit take(int turn) {
+  public synchronized @Nullable Submit take(int turn) {
     Entry entry = this.find(turn);
     if (this.isClosed || entry == null || entry.status != Status.HELD) {
       return null;
@@ -239,7 +241,7 @@ public final class QueuedPrompts {
   }
 
   /** The prompt the agent has not taken yet, or null. */
-  public synchronized ChatMessage.@Nullable Submit promptOf(int turn) {
+  public synchronized @Nullable Submit promptOf(int turn) {
     Entry entry = this.find(turn);
     return entry == null ? null : entry.prompt;
   }
@@ -307,8 +309,8 @@ public final class QueuedPrompts {
   }
 
   /** Empties and closes the queue. @return the queued prompts the chat showed, in order */
-  public synchronized List<ChatMessage.Submit> drain() {
-    List<ChatMessage.Submit> prompts = new ArrayList<>();
+  public synchronized List<Submit> drain() {
+    List<Submit> prompts = new ArrayList<>();
     for (Entry entry : this.entries) {
       if (entry.isShown) {
         prompts.add(entry.prompt);
@@ -329,14 +331,14 @@ public final class QueuedPrompts {
   }
 
   /** What the chat shows. */
-  public synchronized ChatMessage.Queue snapshot() {
-    List<ChatMessage.QueueItem> items = new ArrayList<>();
+  public synchronized Queue snapshot() {
+    List<QueueItem> items = new ArrayList<>();
     for (Entry entry : this.entries) {
       if (entry.isShown) {
-        items.add(new ChatMessage.QueueItem(entry.turn, entry.status));
+        items.add(new QueueItem(entry.turn, entry.status));
       }
     }
-    return new ChatMessage.Queue(items, this.isHeld && !items.isEmpty(), this.isRunning);
+    return new Queue(items, this.isHeld && !items.isEmpty(), this.isRunning);
   }
 
   /** Shown prompts back to held, the others forgotten, the queue held, nothing running. */
@@ -420,7 +422,7 @@ public final class QueuedPrompts {
 
   /** Hears every change, under the queue's lock: it must not block or call back into the queue. */
   public interface Listener {
-    void changed(ChatMessage.Queue snapshot);
+    void changed(Queue snapshot);
   }
 
   /** How the person wants a prompt sent while a turn runs. */
@@ -470,12 +472,12 @@ public final class QueuedPrompts {
    */
   public static final class Entry {
     private final int turn;
-    private final ChatMessage.Submit prompt;
+    private final Submit prompt;
     private final boolean isShown;
     private Status status;
     private boolean isDispatched;
 
-    private Entry(int turn, ChatMessage.Submit prompt, Status status, boolean isShown) {
+    private Entry(int turn, Submit prompt, Status status, boolean isShown) {
       this.turn = turn;
       this.prompt = prompt;
       this.status = status;
@@ -486,7 +488,7 @@ public final class QueuedPrompts {
       return this.turn;
     }
 
-    public ChatMessage.Submit prompt() {
+    public Submit prompt() {
       return this.prompt;
     }
   }

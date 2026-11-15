@@ -8,7 +8,8 @@ import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.project.SetupOutput;
 import io.firebite.tako.ide.project.SetupScript;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.thread.Setup;
+import io.firebite.tako.ui.bridge.message.thread.SetupPhase;
 import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
@@ -59,7 +60,7 @@ public final class WorktreeSetup {
   private final ArrayDeque<Held> held = new ArrayDeque<>();
 
   /** Null until the first start. */
-  private ChatMessage.@Nullable SetupPhase phase;
+  private @Nullable SetupPhase phase;
   /** Counts the starts; what an older one still reports is ignored. */
   private int run;
   private boolean isCancelled;
@@ -91,10 +92,10 @@ public final class WorktreeSetup {
 
   /** Runs the setup in the background. Does nothing while it runs, once it is through or after {@link #dispose}. */
   public synchronized void start() {
-    if (this.isDisposed || (this.phase != null && this.phase != ChatMessage.SetupPhase.FAILED)) {
+    if (this.isDisposed || (this.phase != null && this.phase != SetupPhase.FAILED)) {
       return;
     }
-    this.phase = ChatMessage.SetupPhase.RUNNING;
+    this.phase = SetupPhase.RUNNING;
     int token = ++this.run;
     this.isCancelled = false;
     this.step = 0;
@@ -115,7 +116,7 @@ public final class WorktreeSetup {
 
   /** Runs the setup again after it failed; otherwise does nothing. */
   public synchronized void retry() {
-    if (this.phase == ChatMessage.SetupPhase.FAILED) {
+    if (this.phase == SetupPhase.FAILED) {
       this.start();
     }
   }
@@ -133,7 +134,7 @@ public final class WorktreeSetup {
   private boolean cancel(boolean onlyHeld) {
     Process running;
     synchronized (this) {
-      if (this.phase != ChatMessage.SetupPhase.RUNNING || this.isCancelled || (onlyHeld && this.held.isEmpty())) {
+      if (this.phase != SetupPhase.RUNNING || this.isCancelled || (onlyHeld && this.held.isEmpty())) {
         return false;
       }
       this.isCancelled = true;
@@ -147,14 +148,14 @@ public final class WorktreeSetup {
   public void skip() {
     Process running;
     synchronized (this) {
-      if (this.phase != ChatMessage.SetupPhase.RUNNING && this.phase != ChatMessage.SetupPhase.FAILED
+      if (this.phase != SetupPhase.RUNNING && this.phase != SetupPhase.FAILED
         || this.isDisposed) {
         return;
       }
       this.run++;
       running = this.process;
       this.process = null;
-      this.end(ChatMessage.SetupPhase.SKIPPED);
+      this.end(SetupPhase.SKIPPED);
     }
     kill(running);
   }
@@ -203,18 +204,18 @@ public final class WorktreeSetup {
   }
 
   private @Nullable String failure() {
-    return this.phase == ChatMessage.SetupPhase.FAILED ? this.error : null;
+    return this.phase == SetupPhase.FAILED ? this.error : null;
   }
 
   /** Whether prompts wait for a setup that failed. */
   public synchronized boolean holdsFailed() {
-    return this.phase == ChatMessage.SetupPhase.FAILED && !this.held.isEmpty();
+    return this.phase == SetupPhase.FAILED && !this.held.isEmpty();
   }
 
   /** Whether the chat shows the setup's card. */
   public synchronized boolean showsCard() {
     return this.isShown
-      && (this.phase == ChatMessage.SetupPhase.RUNNING || this.phase == ChatMessage.SetupPhase.FAILED);
+      && (this.phase == SetupPhase.RUNNING || this.phase == SetupPhase.FAILED);
   }
 
   /** Forgets the held prompts, e.g. when the agent's process ended, which ends the chat's turn. */
@@ -407,7 +408,7 @@ public final class WorktreeSetup {
 
   /** Whether output of {@code started} still counts: it is the running command of the running setup. */
   private boolean isCurrent(int token, Process started) {
-    return token == this.run && this.process == started && this.phase == ChatMessage.SetupPhase.RUNNING;
+    return token == this.run && this.process == started && this.phase == SetupPhase.RUNNING;
   }
 
   private synchronized void appendOutput(int token, Process started, CharBuffer chars) {
@@ -429,7 +430,7 @@ public final class WorktreeSetup {
 
   private synchronized void flushOutput(int token) {
     this.flush = null;
-    if (!this.isDisposed && token == this.run && this.phase == ChatMessage.SetupPhase.RUNNING) {
+    if (!this.isDisposed && token == this.run && this.phase == SetupPhase.RUNNING) {
       this.post();
     }
   }
@@ -442,7 +443,7 @@ public final class WorktreeSetup {
 
   /** A cancelled setup fails as cancelled, whatever its command did, and tells no one. */
   private void failLocked(String reason, boolean notifies) {
-    this.phase = ChatMessage.SetupPhase.FAILED;
+    this.phase = SetupPhase.FAILED;
     this.error = this.isCancelled ? TakoBundle.message("setup.error.cancelled") : reason;
     boolean tells = notifies && !this.isCancelled;
     this.endedAt = System.currentTimeMillis();
@@ -463,12 +464,12 @@ public final class WorktreeSetup {
     if (this.isCancelled) {
       this.failLocked(TakoBundle.message("setup.error.cancelled"), false);
     } else {
-      this.end(ChatMessage.SetupPhase.DONE);
+      this.end(SetupPhase.DONE);
     }
   }
 
   /** Ends the setup for good and lets the held prompts go. */
-  private void end(ChatMessage.SetupPhase result) {
+  private void end(SetupPhase result) {
     this.phase = result;
     this.endedAt = System.currentTimeMillis();
     if (this.isShown) {
@@ -503,7 +504,7 @@ public final class WorktreeSetup {
     this.cancelFlush();
     this.lastPost = System.currentTimeMillis();
     this.isShown = true;
-    this.listener.changed(new ChatMessage.Setup(this.phase, this.step, this.steps, this.command, this.output.text(),
+    this.listener.changed(new Setup(this.phase, this.step, this.steps, this.command, this.output.text(),
       this.error, this.startedAt, this.endedAt));
   }
 
@@ -531,7 +532,7 @@ public final class WorktreeSetup {
 
   /** What the setup tells its thread. Called with the setup's lock held, so keep it short and non blocking. */
   public interface Listener {
-    void changed(ChatMessage.Setup setup);
+    void changed(Setup setup);
 
     /** Prompts wait for the setup that runs, or with {@code failure} for the person, because it failed. */
     void held(@Nullable String failure);

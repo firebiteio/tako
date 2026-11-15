@@ -10,7 +10,7 @@ import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.mcp.McpToolException;
 import io.firebite.tako.settings.ChatSettings;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.thread.Submit;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -50,7 +50,7 @@ public class SideChatServiceTest extends BasePlatformTestCase {
   }
 
   private boolean start(String threadId, int forkPrompts, String question) {
-    return this.service.startSideChat(threadId, forkPrompts, new ChatMessage.Submit(question, List.of(), List.of()));
+    return this.service.startSideChat(threadId, forkPrompts, new Submit(question, List.of(), List.of()));
   }
 
   private List<ThreadStore.Record> sideChatsOf(ThreadStore.Record main) {

@@ -64,7 +64,29 @@ import io.firebite.tako.ide.project.Worktrees;
 import io.firebite.tako.mcp.McpServer;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.ChatError;
+import io.firebite.tako.ui.bridge.message.ThreadMessage;
+import io.firebite.tako.ui.bridge.message.WorkspaceMessage;
+import io.firebite.tako.ui.bridge.message.thread.ChatImage;
+import io.firebite.tako.ui.bridge.message.thread.Context;
+import io.firebite.tako.ui.bridge.message.thread.Notice;
+import io.firebite.tako.ui.bridge.message.thread.Submit;
+import io.firebite.tako.ui.bridge.message.usage.Usage;
+import io.firebite.tako.ui.bridge.message.workspace.AgentOption;
+import io.firebite.tako.ui.bridge.message.workspace.Agents;
+import io.firebite.tako.ui.bridge.message.workspace.ChatProject;
+import io.firebite.tako.ui.bridge.message.workspace.ProjectItem;
+import io.firebite.tako.ui.bridge.message.workspace.Projects;
+import io.firebite.tako.ui.bridge.message.workspace.RunChanges;
+import io.firebite.tako.ui.bridge.message.workspace.Select;
+import io.firebite.tako.ui.bridge.message.workspace.SessionItem;
+import io.firebite.tako.ui.bridge.message.workspace.Settings;
+import io.firebite.tako.ui.bridge.message.workspace.ShowSideChat;
+import io.firebite.tako.ui.bridge.message.workspace.ThreadAdded;
+import io.firebite.tako.ui.bridge.message.workspace.ThreadItem;
+import io.firebite.tako.ui.bridge.message.workspace.ThreadRemoved;
+import io.firebite.tako.ui.bridge.message.workspace.ThreadUpdated;
+import io.firebite.tako.ui.bridge.message.workspace.Threads;
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -255,7 +277,7 @@ public final class ChatService implements Disposable {
         return;
       }
       this.select(threadId);
-      this.post(new ChatMessage.Context(item, null), threadId);
+      this.post(new Context(item, null), threadId);
     });
   }
 
@@ -285,7 +307,7 @@ public final class ChatService implements Disposable {
   /** Tells the chat what the settings let it offer. */
   public void postSettings() {
     ChatSettings.Data settings = ChatSettings.state();
-    this.post(new ChatMessage.Settings(settings.parallelRuns, settings.steerWhileWorking));
+    this.post(new Settings(settings.parallelRuns, settings.steerWhileWorking));
   }
 
   /**
@@ -310,16 +332,16 @@ public final class ChatService implements Disposable {
   }
 
   private void showInitialState() {
-    this.post(new ChatMessage.Project(this.project.getBasePath(), this.project.getName()));
+    this.post(new ChatProject(this.project.getBasePath(), this.project.getName()));
     this.postSettings();
     this.postAgents();
     this.postProjects();
     this.benches.post();
-    List<ChatMessage.ThreadItem> items = new ArrayList<>();
+    List<ThreadItem> items = new ArrayList<>();
     for (ThreadStore.Record record : this.store.all()) {
       items.add(record.toItem());
     }
-    this.post(new ChatMessage.Threads(items));
+    this.post(new Threads(items));
 
     ThreadStore.Record active = this.store.find(this.store.activeId());
     if (active == null || active.archived || this.store.isSnoozeHidden(active)) {
@@ -357,14 +379,14 @@ public final class ChatService implements Disposable {
   private void postProjects() {
     List<ThreadStore.ProjectFolder> folders = this.projects();
     Async.inBackground(() -> {
-      List<ChatMessage.ProjectItem> items = new ArrayList<>();
+      List<ProjectItem> items = new ArrayList<>();
       for (int i = 0; i < folders.size(); i++) {
         ThreadStore.ProjectFolder folder = folders.get(i);
         ProjectIcons.Icons icons = ProjectIcons.find(Path.of(folder.path));
-        items.add(new ChatMessage.ProjectItem(folder.path, folder.name, folder.collapsed, i == 0, icons.light(),
+        items.add(new ProjectItem(folder.path, folder.name, folder.collapsed, i == 0, icons.light(),
           icons.dark()));
       }
-      this.post(new ChatMessage.Projects(items));
+      this.post(new Projects(items));
     });
   }
 
@@ -391,7 +413,7 @@ public final class ChatService implements Disposable {
     }
     for (ThreadStore.Record record : this.store.all()) {
       if (!record.archived && ThreadStore.samePath(record.projectPath, path)) {
-        this.post(new ChatMessage.Error(TakoBundle.message("error.project.remove")));
+        this.post(new ChatError(TakoBundle.message("error.project.remove")));
         return;
       }
     }
@@ -422,7 +444,7 @@ public final class ChatService implements Disposable {
    *
    * @param prompt the text, context and images to send, or null to send nothing
    */
-  public void newThread(@Nullable String projectPath, @Nullable String agent, @Nullable ChatMessage.Submit prompt) {
+  public void newThread(@Nullable String projectPath, @Nullable String agent, @Nullable Submit prompt) {
     ThreadStore.Record record = this.newThread(null, null, this.threadPath(projectPath), agent);
     if (prompt != null) {
       this.post(prompt, record.id);
@@ -439,7 +461,7 @@ public final class ChatService implements Disposable {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
     String agentId = agent != null ? AgentRegistry.find(agent, environment).id() : AgentRegistry.defaultId(environment);
     ThreadStore.Record record = this.store.create(sessionId, title, projectPath, agentId);
-    this.post(new ChatMessage.ThreadAdded(record.toItem()));
+    this.post(new ThreadAdded(record.toItem()));
     this.select(record.id);
     return record;
   }
@@ -453,14 +475,14 @@ public final class ChatService implements Disposable {
     ThreadStore.Record main = SideChats.mainOf(this.store, record);
     if (main != record) {
       this.select(main.id);
-      this.post(new ChatMessage.ShowSideChat(record.id, false));
+      this.post(new ShowSideChat(record.id, false));
       return;
     }
     this.store.setActiveId(record.id);
     List<ThreadStore.Record> changed = this.unarchived(record);
     changed.addAll(this.seen(record));
     this.postUpdates(changed);
-    this.post(new ChatMessage.Select(record.id));
+    this.post(new Select(record.id));
     ChatController existing = this.controllers.get(record.id);
     if (existing != null) {
       Async.inBackground(existing::refreshGit);
@@ -471,7 +493,7 @@ public final class ChatService implements Disposable {
 
   /** Shows a new thread in the list and starts its agent without selecting it. */
   void openThread(ThreadStore.Record record) {
-    this.post(new ChatMessage.ThreadAdded(record.toItem()));
+    this.post(new ThreadAdded(record.toItem()));
     this.newController(record).open();
   }
 
@@ -492,7 +514,7 @@ public final class ChatService implements Disposable {
     record.workPath = spec.workPath();
     record.pendingSetup = spec.setup();
     this.store.save();
-    this.post(new ChatMessage.ThreadAdded(record.toItem()));
+    this.post(new ThreadAdded(record.toItem()));
     this.newController(record).open(spec.prompt());
     return record;
   }
@@ -611,7 +633,7 @@ public final class ChatService implements Disposable {
     }
     this.store.save();
     for (ThreadStore.Record record : new LinkedHashSet<>(records)) {
-      this.post(new ChatMessage.ThreadUpdated(record.toItem()));
+      this.post(new ThreadUpdated(record.toItem()));
     }
   }
 
@@ -666,7 +688,7 @@ public final class ChatService implements Disposable {
    * @param first       the side chat's first prompt, sent unless its text is blank, else put in its composer
    * @return false when there is no such thread, so no side chat starts
    */
-  public boolean startSideChat(String threadId, int forkPrompts, ChatMessage.Submit first) {
+  public boolean startSideChat(String threadId, int forkPrompts, Submit first) {
     ThreadStore.Record found = this.store.find(threadId);
     if (found == null) {
       return false;
@@ -705,13 +727,13 @@ public final class ChatService implements Disposable {
 
   /** Makes the side chat, else tells the main thread that it may start another. */
   private void createOrRelease(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
-    ChatMessage.Submit first, @Nullable ContextItem excerpt) {
+    Submit first, @Nullable ContextItem excerpt) {
     boolean isCreated = false;
     try {
       isCreated = this.createSideChat(main, sessionId, inheritedPrompts, first, excerpt);
     } finally {
       if (!isCreated) {
-        this.post(new ChatMessage.ShowSideChat(main.id, true));
+        this.post(new ShowSideChat(main.id, true));
       }
     }
   }
@@ -738,7 +760,7 @@ public final class ChatService implements Disposable {
    * @return whether it made one
    */
   private boolean createSideChat(ThreadStore.Record main, @Nullable String sessionId, int inheritedPrompts,
-    ChatMessage.Submit first, @Nullable ContextItem excerpt) {
+    Submit first, @Nullable ContextItem excerpt) {
     if (this.store.find(main.id) != main || main.archived) {
       return false;
     }
@@ -752,7 +774,7 @@ public final class ChatService implements Disposable {
     record.effort = main.effort;
     record.workPath = main.workPath;
     this.store.save();
-    this.post(new ChatMessage.ThreadAdded(record.toItem()));
+    this.post(new ThreadAdded(record.toItem()));
     List<ContextItem> context = new ArrayList<>(first.context());
     if (excerpt != null) {
       context.add(excerpt);
@@ -761,15 +783,15 @@ public final class ChatService implements Disposable {
     if (first.text().isBlank()) {
       controller.open();
       for (ContextItem item : context) {
-        this.post(new ChatMessage.Context(item, null), record.id);
+        this.post(new Context(item, null), record.id);
       }
       for (ImageAttachment image : first.images()) {
-        this.post(new ChatMessage.Image(image), record.id);
+        this.post(new ChatImage(image), record.id);
       }
     } else {
-      controller.open(new ChatMessage.Submit(first.text().strip(), context, first.images()));
+      controller.open(new Submit(first.text().strip(), context, first.images()));
     }
-    this.post(new ChatMessage.ShowSideChat(record.id, true));
+    this.post(new ShowSideChat(record.id, true));
     return true;
   }
 
@@ -847,7 +869,7 @@ public final class ChatService implements Disposable {
       try {
         forkId = backend.fork(folder, sessionId, prompts);
       } catch (AgentException e) {
-        this.post(new ChatMessage.Error(e.getMessage()));
+        this.post(new ChatError(e.getMessage()));
         return;
       }
       Async.onEdt(() -> {
@@ -858,7 +880,7 @@ public final class ChatService implements Disposable {
         record.effort = source.effort;
         record.workPath = source.workPath;
         this.store.save();
-        this.post(new ChatMessage.ThreadAdded(record.toItem()));
+        this.post(new ThreadAdded(record.toItem()));
         this.select(record.id);
       });
     });
@@ -928,9 +950,9 @@ public final class ChatService implements Disposable {
       return;
     }
     try {
-      this.post(new ChatMessage.ThreadAdded(record.toItem()));
+      this.post(new ThreadAdded(record.toItem()));
       this.store.setActiveId(record.id);
-      this.post(new ChatMessage.Select(record.id));
+      this.post(new Select(record.id));
       this.newController(record).open(Plans.implementPrompt(plan));
     } catch (RuntimeException e) {
       LOG.warn("Could not open the thread implementing the plan of thread " + source.id, e);
@@ -955,7 +977,7 @@ public final class ChatService implements Disposable {
   }
 
   private void failPlan(CompletableFuture<@Nullable String> done, String error) {
-    this.post(new ChatMessage.Error(error));
+    this.post(new ChatError(error));
     done.complete(null);
   }
 
@@ -1005,7 +1027,7 @@ public final class ChatService implements Disposable {
       VirtualFile file = IdeFiles.writeText(target.getFile().toPath(), Plans.fileText(plan));
       FileEditorManager.getInstance(this.project).openFile(file, true);
     } catch (IOException e) {
-      this.post(new ChatMessage.Error(TakoBundle.message("error.plan.save", Objects.toString(e.getMessage(), ""))));
+      this.post(new ChatError(TakoBundle.message("error.plan.save", Objects.toString(e.getMessage(), ""))));
     }
   }
 
@@ -1058,7 +1080,7 @@ public final class ChatService implements Disposable {
         }
         Async.onEdt(() -> {
           this.post(
-            new ChatMessage.Error(TakoBundle.message("error.title", Objects.toString(e.getMessage(), e.toString()))));
+            new ChatError(TakoBundle.message("error.title", Objects.toString(e.getMessage(), e.toString()))));
           done.complete(null);
         });
       }
@@ -1227,7 +1249,7 @@ public final class ChatService implements Disposable {
         this.withdrawTools(id);
         this.shownSideChats.remove(id);
         this.store.remove(id);
-        this.post(new ChatMessage.ThreadRemoved(id));
+        this.post(new ThreadRemoved(id));
       }
     }
     if (activeId != null && ids.contains(activeId)) {
@@ -1299,7 +1321,7 @@ public final class ChatService implements Disposable {
       String text = failure;
       Async.onEdt(() -> {
         if (text != null) {
-          this.post(new ChatMessage.Notice(text), id);
+          this.post(new Notice(text), id);
         }
         done.complete(null);
       });
@@ -1443,7 +1465,7 @@ public final class ChatService implements Disposable {
   /** Tells the thread its agent cannot change now. */
   private void postBusy(ThreadStore.Record record) {
     String name = AgentRegistry.find(record.agent(), EnvironmentUtil.getEnvironmentMap()).displayName();
-    this.post(new ChatMessage.Notice(TakoBundle.message("error.switch.busy", name)), record.id);
+    this.post(new Notice(TakoBundle.message("error.switch.busy", name)), record.id);
   }
 
   /** Must run on the EDT. */
@@ -1476,12 +1498,12 @@ public final class ChatService implements Disposable {
   }
 
   /** What each run of the bench changed, in run order, or null for an unknown bench. Reads git, so call off the EDT. */
-  public @Nullable List<ChatMessage.RunChanges> compareBench(String benchId) {
+  public @Nullable List<RunChanges> compareBench(String benchId) {
     return this.benches.compare(benchId);
   }
 
   /** Cost and tokens of every session of the project folders. Reads the transcripts, so call off the EDT. */
-  public ChatMessage.Usage usage() {
+  public Usage usage() {
     return UsageReport.build(this.projects(), this.store, EnvironmentUtil.getEnvironmentMap());
   }
 
@@ -1489,40 +1511,40 @@ public final class ChatService implements Disposable {
    * Every agent's sessions in every project folder that no thread holds, newest first. Starts agents to ask, so call
    * off the EDT.
    */
-  public List<ChatMessage.SessionItem> history() {
+  public List<SessionItem> history() {
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
-    List<CompletableFuture<List<ChatMessage.SessionItem>>> lookups = new ArrayList<>();
+    List<CompletableFuture<List<SessionItem>>> lookups = new ArrayList<>();
     for (AgentBackend backend : AgentRegistry.backends(environment)) {
       for (ThreadStore.ProjectFolder folder : this.projects()) {
         lookups.add(CompletableFuture.supplyAsync(() -> {
-          List<ChatMessage.SessionItem> items = new ArrayList<>();
+          List<SessionItem> items = new ArrayList<>();
           for (AgentSessionInfo session : backend.sessions(folder.path, SESSION_LIST_LIMIT)) {
-            items.add(new ChatMessage.SessionItem(session.id(), session.title(), session.lastModified(), folder.path,
+            items.add(new SessionItem(session.id(), session.title(), session.lastModified(), folder.path,
               folder.name, backend.id(), backend.displayName()));
           }
           return items;
         }, AppExecutorUtil.getAppExecutorService()));
       }
     }
-    List<ChatMessage.SessionItem> found = new ArrayList<>();
-    for (CompletableFuture<List<ChatMessage.SessionItem>> lookup : lookups) {
-      for (ChatMessage.SessionItem item : lookup.join()) {
+    List<SessionItem> found = new ArrayList<>();
+    for (CompletableFuture<List<SessionItem>> lookup : lookups) {
+      for (SessionItem item : lookup.join()) {
         if (this.store.findBySession(item.id()) == null) {
           found.add(item);
         }
       }
     }
-    found.sort(Comparator.comparingLong(ChatMessage.SessionItem::lastModified).reversed());
+    found.sort(Comparator.comparingLong(SessionItem::lastModified).reversed());
     return found.subList(0, Math.min(SESSION_LIST_LIMIT, found.size()));
   }
 
   /** Tells the chat which agents a thread can run. */
   public void postAgents() {
-    List<ChatMessage.AgentOption> agents = new ArrayList<>();
+    List<AgentOption> agents = new ArrayList<>();
     for (AgentBackend backend : AgentRegistry.backends(EnvironmentUtil.getEnvironmentMap())) {
-      agents.add(new ChatMessage.AgentOption(backend.id(), backend.displayName()));
+      agents.add(new AgentOption(backend.id(), backend.displayName()));
     }
-    this.post(new ChatMessage.Agents(agents));
+    this.post(new Agents(agents));
   }
 
   private void refreshActiveGit() {
@@ -1596,17 +1618,17 @@ public final class ChatService implements Disposable {
 
   void postUpdate(ThreadStore.Record record) {
     this.store.save();
-    this.post(new ChatMessage.ThreadUpdated(record.toItem()));
+    this.post(new ThreadUpdated(record.toItem()));
   }
 
-  void post(ChatMessage.WorkspaceMessage message) {
+  void post(WorkspaceMessage message) {
     ChatPanel chatPanel = this.panel;
     if (chatPanel != null) {
       chatPanel.post(message);
     }
   }
 
-  void post(ChatMessage.ThreadMessage message, String threadId) {
+  void post(ThreadMessage message, String threadId) {
     ChatPanel chatPanel = this.panel;
     if (chatPanel != null) {
       chatPanel.post(message, threadId);
@@ -1658,7 +1680,7 @@ public final class ChatService implements Disposable {
     }
 
     @Override
-    public void post(ChatMessage.ThreadMessage message) {
+    public void post(ThreadMessage message) {
       ChatService.this.post(message, this.threadId);
     }
   }
@@ -1856,7 +1878,7 @@ public final class ChatService implements Disposable {
         case LOGGED_OUT -> TakoBundle.message("watch.stopped.logged.out", number, cli);
         case FAILURES -> TakoBundle.message("watch.stopped.failures", number, PullRequestWatcher.MAX_FAILURES, message);
       };
-      ChatService.this.post(new ChatMessage.Notice(text), record.id);
+      ChatService.this.post(new Notice(text), record.id);
       Async.onEdt(() -> ChatService.this.requestAttention(record, text));
     }
 
@@ -1864,7 +1886,7 @@ public final class ChatService implements Disposable {
     public void changed(ThreadStore.Record record) {
       Async.onEdt(() -> {
         if (ChatService.this.store.find(record.id) == record) {
-          ChatService.this.post(new ChatMessage.ThreadUpdated(record.toItem()));
+          ChatService.this.post(new ThreadUpdated(record.toItem()));
         }
       });
     }

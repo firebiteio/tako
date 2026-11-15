@@ -21,7 +21,40 @@ import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.git.ThreadGit
 import io.firebite.tako.ide.project.GitCommands
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.ChatError
+import io.firebite.tako.ui.bridge.message.ThreadMessage
+import io.firebite.tako.ui.bridge.message.WorkspaceMessage
+import io.firebite.tako.ui.bridge.message.thread.BenchFailed
+import io.firebite.tako.ui.bridge.message.thread.ChatContextUsage
+import io.firebite.tako.ui.bridge.message.thread.ChatImage
+import io.firebite.tako.ui.bridge.message.thread.Context
+import io.firebite.tako.ui.bridge.message.thread.Event
+import io.firebite.tako.ui.bridge.message.thread.Exit
+import io.firebite.tako.ui.bridge.message.thread.Init
+import io.firebite.tako.ui.bridge.message.thread.Notice
+import io.firebite.tako.ui.bridge.message.thread.Permission
+import io.firebite.tako.ui.bridge.message.thread.Queue
+import io.firebite.tako.ui.bridge.message.thread.QueueStashed
+import io.firebite.tako.ui.bridge.message.thread.Replay
+import io.firebite.tako.ui.bridge.message.thread.Rewound
+import io.firebite.tako.ui.bridge.message.thread.Setup
+import io.firebite.tako.ui.bridge.message.thread.Submit
+import io.firebite.tako.ui.bridge.message.usage.Usage
+import io.firebite.tako.ui.bridge.message.workspace.AgentOption
+import io.firebite.tako.ui.bridge.message.workspace.Agents
+import io.firebite.tako.ui.bridge.message.workspace.BenchItem
+import io.firebite.tako.ui.bridge.message.workspace.ChatBenches
+import io.firebite.tako.ui.bridge.message.workspace.ChatProject
+import io.firebite.tako.ui.bridge.message.workspace.ProjectItem
+import io.firebite.tako.ui.bridge.message.workspace.Projects
+import io.firebite.tako.ui.bridge.message.workspace.Select
+import io.firebite.tako.ui.bridge.message.workspace.SessionItem
+import io.firebite.tako.ui.bridge.message.workspace.Settings
+import io.firebite.tako.ui.bridge.message.workspace.ShowSideChat
+import io.firebite.tako.ui.bridge.message.workspace.ThreadAdded
+import io.firebite.tako.ui.bridge.message.workspace.ThreadRemoved
+import io.firebite.tako.ui.bridge.message.workspace.ThreadUpdated
+import io.firebite.tako.ui.bridge.message.workspace.Threads
 import io.firebite.tako.ui.samePath
 import io.firebite.tako.ui.t
 import kotlinx.coroutines.CoroutineScope
@@ -41,10 +74,10 @@ class Workspace(val service: ChatService, val project: Project) {
   val scope = CoroutineScope(SupervisorJob() + Dispatchers.EDT + ModalityState.any().asContextElement())
   var projectRoot by mutableStateOf("")
   var projectName by mutableStateOf("")
-  var projects by mutableStateOf<List<ChatMessage.ProjectItem>>(emptyList())
+  var projects by mutableStateOf<List<ProjectItem>>(emptyList())
   /** Folders the person folded in this session, ahead of what the IDE stored. */
   val collapsedProjects = mutableStateMapOf<String, Boolean>()
-  var agents by mutableStateOf<List<ChatMessage.AgentOption>>(emptyList())
+  var agents by mutableStateOf<List<AgentOption>>(emptyList())
   val threads = mutableStateMapOf<String, ThreadState>()
   var active by mutableStateOf<ThreadState?>(null)
   /** How much of the agent's rate-limit windows is used, e.g. "5h 42% · 7d 10%". */
@@ -53,7 +86,7 @@ class Workspace(val service: ChatService, val project: Project) {
   var parallelRuns by mutableStateOf(false)
   /** A prompt sent while the agent works steers its turn by default, instead of queuing. */
   var steers by mutableStateOf(false)
-  var benches by mutableStateOf<List<ChatMessage.BenchItem>>(emptyList())
+  var benches by mutableStateOf<List<BenchItem>>(emptyList())
   /** Benches the person folded; only this session remembers. */
   val collapsedBenches = mutableStateMapOf<String, Boolean>()
   /** Threads whose sub threads the list shows; folded by default, only this session remembers. */
@@ -73,10 +106,10 @@ class Workspace(val service: ChatService, val project: Project) {
   /** The threads whose sessions the IDE found mention a query, with that query. */
   var searchHits by mutableStateOf<Pair<String, Set<String>>>("" to emptySet())
   /** The sessions to resume, while their menu is open. */
-  var sessions by mutableStateOf<List<ChatMessage.SessionItem>?>(null)
+  var sessions by mutableStateOf<List<SessionItem>?>(null)
   var usageOpen by mutableStateOf(false)
   /** Null while the IDE reads the transcripts. */
-  var usage by mutableStateOf<ChatMessage.Usage?>(null)
+  var usage by mutableStateOf<Usage?>(null)
   var shownBench by mutableStateOf<String?>(null)
   /** Bumped to read the shown bench's worktrees again. */
   var benchLoads by mutableIntStateOf(0)
@@ -105,20 +138,20 @@ class Workspace(val service: ChatService, val project: Project) {
 
   fun agentName(id: String): String? = this.agents.firstOrNull { it.id == id }?.name
 
-  fun projectList(): List<ChatMessage.ProjectItem> {
+  fun projectList(): List<ProjectItem> {
     if (this.projects.isNotEmpty()) {
       return this.projects
     }
-    return listOf(ChatMessage.ProjectItem(this.projectRoot, this.projectName.ifEmpty { t("common.project") }, false,
+    return listOf(ProjectItem(this.projectRoot, this.projectName.ifEmpty { t("common.project") }, false,
       true, null, null))
   }
 
-  fun isCollapsed(project: ChatMessage.ProjectItem): Boolean = this.collapsedProjects[project.path] ?: project.collapsed
+  fun isCollapsed(project: ProjectItem): Boolean = this.collapsedProjects[project.path] ?: project.collapsed
 
-  fun projectOf(thread: ThreadState): ChatMessage.ProjectItem = this.projectAt(thread.projectPath)
+  fun projectOf(thread: ThreadState): ProjectItem = this.projectAt(thread.projectPath)
 
   /** The project folder at the path, or the first one when the path is in none of them. */
-  fun projectAt(path: String?): ChatMessage.ProjectItem {
+  fun projectAt(path: String?): ProjectItem {
     val projects = this.projectList()
     val wanted = path ?: this.projectRoot
     return projects.firstOrNull { samePath(it.path, wanted) } ?: projects[0]
@@ -257,56 +290,56 @@ class Workspace(val service: ChatService, val project: Project) {
     }
   }
 
-  fun receive(message: ChatMessage.WorkspaceMessage) {
+  fun receive(message: WorkspaceMessage) {
     when (message) {
-      is ChatMessage.Project -> {
+      is ChatProject -> {
         this.projectRoot = message.projectRoot ?: ""
         this.projectName = message.projectName
       }
-      is ChatMessage.Agents -> this.agents = message.items
-      is ChatMessage.Projects -> this.projects = message.items
-      is ChatMessage.Threads -> for (item in message.items) {
+      is Agents -> this.agents = message.items
+      is Projects -> this.projects = message.items
+      is Threads -> for (item in message.items) {
         this.threads.getOrPut(item.id) { ThreadState(this, item) }
       }
-      is ChatMessage.ThreadAdded -> this.threads.getOrPut(message.item.id) { ThreadState(this, message.item) }
-      is ChatMessage.ThreadUpdated -> this.threads.getOrPut(message.item.id) { ThreadState(this, message.item) }
+      is ThreadAdded -> this.threads.getOrPut(message.item.id) { ThreadState(this, message.item) }
+      is ThreadUpdated -> this.threads.getOrPut(message.item.id) { ThreadState(this, message.item) }
         .update(message.item)
-      is ChatMessage.ThreadRemoved -> this.removeThread(message.thread)
-      is ChatMessage.Select -> this.activate(this.threads[message.thread])
-      is ChatMessage.ShowSideChat -> this.showSideChat(message.thread, message.started)
-      is ChatMessage.Settings -> {
+      is ThreadRemoved -> this.removeThread(message.thread)
+      is Select -> this.activate(this.threads[message.thread])
+      is ShowSideChat -> this.showSideChat(message.thread, message.started)
+      is Settings -> {
         this.parallelRuns = message.parallelRuns
         this.steers = message.steers
       }
-      is ChatMessage.Benches -> {
+      is ChatBenches -> {
         this.benches = message.items
         if (this.shownBench != null && this.benches.none { it.id == this.shownBench }) {
           this.shownBench = null
         }
       }
-      is ChatMessage.Error -> this.alerts.add(Alert(message.text))
+      is ChatError -> this.alerts.add(Alert(message.text))
     }
   }
 
-  fun receive(message: ChatMessage.ThreadMessage, threadId: String) {
+  fun receive(message: ThreadMessage, threadId: String) {
     val thread = this.threads[threadId] ?: return
     when (message) {
-      is ChatMessage.Init -> thread.onInit(message.info, message.projectRoot)
-      is ChatMessage.Event -> thread.handleEvent(message.event)
-      is ChatMessage.Replay -> thread.replay(message.events)
-      is ChatMessage.Permission -> thread.addPermission(message.requestId, message.prompt)
-      is ChatMessage.Context -> thread.addContext(message.item, message.prefill)
-      is ChatMessage.Image -> thread.addImage(message.image)
-      is ChatMessage.ContextUsage -> thread.contextUsage = message.data
-      is ChatMessage.Exit -> thread.onExit(message.code, message.stderr)
-      is ChatMessage.Submit -> thread.startPrompt(message.text, message.context, message.images)
-      is ChatMessage.Queue -> thread.applyQueue(message)
-      is ChatMessage.QueueStashed -> thread.onQueueStashed(message.count)
-      is ChatMessage.BenchFailed -> thread.onBenchFailed(message.prompt, message.error)
-      is ChatMessage.Error -> thread.onError(message.text, message.start)
-      is ChatMessage.Notice -> thread.showAlert(message.text)
-      is ChatMessage.Setup -> thread.onSetup(message)
-      is ChatMessage.Rewound -> thread.onRewound(message.rewound, message.error)
+      is Init -> thread.onInit(message.info, message.projectRoot)
+      is Event -> thread.handleEvent(message.event)
+      is Replay -> thread.replay(message.events)
+      is Permission -> thread.addPermission(message.requestId, message.prompt)
+      is Context -> thread.addContext(message.item, message.prefill)
+      is ChatImage -> thread.addImage(message.image)
+      is ChatContextUsage -> thread.contextUsage = message.data
+      is Exit -> thread.onExit(message.code, message.stderr)
+      is Submit -> thread.startPrompt(message.text, message.context, message.images)
+      is Queue -> thread.applyQueue(message)
+      is QueueStashed -> thread.onQueueStashed(message.count)
+      is BenchFailed -> thread.onBenchFailed(message.prompt, message.error)
+      is ChatError -> thread.onError(message.text, message.start)
+      is Notice -> thread.showAlert(message.text)
+      is Setup -> thread.onSetup(message)
+      is Rewound -> thread.onRewound(message.rewound, message.error)
     }
   }
 
@@ -327,7 +360,7 @@ class Workspace(val service: ChatService, val project: Project) {
   }
 
   /** The bench the thread is a run of, with the run's number from 1. */
-  fun runOf(thread: ThreadState): Pair<ChatMessage.BenchItem, Int>? {
+  fun runOf(thread: ThreadState): Pair<BenchItem, Int>? {
     for (bench in this.benches) {
       val index = bench.threads.indexOf(thread.id)
       if (index >= 0) {

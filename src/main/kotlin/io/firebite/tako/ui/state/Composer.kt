@@ -8,7 +8,7 @@ import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.chat.BenchRequest
 import io.firebite.tako.chat.thread.QueuedPrompts
 import io.firebite.tako.chat.store.PromptStash
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Submit
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ide.context.ReviewComment
 import io.firebite.tako.ui.t
@@ -120,7 +120,7 @@ fun ThreadState.toggleStash(): Job {
       }
     }
   }
-  val draft = ChatMessage.Submit(this.input.text.toString(), this.contexts.toList(), this.images.map { it.image })
+  val draft = Submit(this.input.text.toString(), this.contexts.toList(), this.images.map { it.image })
   this.contexts.clear()
   this.images.clear()
   this.input.clearText()
@@ -169,7 +169,7 @@ private suspend fun <T> ThreadState.withStash(call: (PromptStash) -> T): T {
 }
 
 /** Puts a prompt back in the box: its context and images, and its text unless something new was typed. */
-internal fun ThreadState.putBack(prompt: ChatMessage.Submit) {
+internal fun ThreadState.putBack(prompt: Submit) {
   this.contexts.clear()
   this.contexts.addAll(prompt.context)
   this.images.clear()
@@ -507,14 +507,14 @@ private fun ThreadState.startBench(text: String): Boolean {
     return false
   }
   this.startingBench = true
-  val prompt = ChatMessage.Submit(text, this.contexts.toList(), this.images.map { it.image })
+  val prompt = Submit(text, this.contexts.toList(), this.images.map { it.image })
   this.workspace.service.createBench(BenchRequest(prompt, this.projectPath, this.id, this.runs.map { this.specOf(it) }))
   this.setBusy(true)
   return true
 }
 
 /** Gives a bench's prompt back to the thread it was typed in. An empty error means the person cancelled. */
-fun ThreadState.onBenchFailed(prompt: ChatMessage.Submit, error: String) {
+fun ThreadState.onBenchFailed(prompt: Submit, error: String) {
   this.startingBench = false
   this.setBusy(false)
   this.putBack(prompt)

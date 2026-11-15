@@ -11,7 +11,7 @@ import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.store.PromptStash
 import io.firebite.tako.ide.context.ContextItem
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.ThreadItem
 import kotlinx.coroutines.cancel
 
 class RewindTest : BasePlatformTestCase() {
@@ -22,7 +22,7 @@ class RewindTest : BasePlatformTestCase() {
   override fun setUp() {
     super.setUp()
     this.workspace = Workspace(ChatService.getInstance(this.project), this.project)
-    this.thread = ThreadState(this.workspace, ChatMessage.ThreadItem("thread", "Chat", false, 0, false, 0.0, 0, null,
+    this.thread = ThreadState(this.workspace, ThreadItem("thread", "Chat", false, 0, false, 0.0, 0, null,
       null, null, null, "claude", 0, null, null, false, false, 0, null, false, 0))
     this.thread.info = info(true)
     this.stash = PromptStash.getInstance(this.project)

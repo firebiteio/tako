@@ -51,7 +51,22 @@ import io.firebite.tako.ide.project.GitCommands;
 import io.firebite.tako.ide.project.GitDiffs;
 import io.firebite.tako.ide.project.GitInfo;
 import io.firebite.tako.ide.project.Worktrees;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.ChatError;
+import io.firebite.tako.ui.bridge.message.thread.ChatContextUsage;
+import io.firebite.tako.ui.bridge.message.thread.ChatImage;
+import io.firebite.tako.ui.bridge.message.thread.Context;
+import io.firebite.tako.ui.bridge.message.thread.Event;
+import io.firebite.tako.ui.bridge.message.thread.Exit;
+import io.firebite.tako.ui.bridge.message.thread.Init;
+import io.firebite.tako.ui.bridge.message.thread.Notice;
+import io.firebite.tako.ui.bridge.message.thread.Permission;
+import io.firebite.tako.ui.bridge.message.thread.Queue;
+import io.firebite.tako.ui.bridge.message.thread.QueueStashed;
+import io.firebite.tako.ui.bridge.message.thread.Replay;
+import io.firebite.tako.ui.bridge.message.thread.Rewound;
+import io.firebite.tako.ui.bridge.message.thread.Setup;
+import io.firebite.tako.ui.bridge.message.thread.SetupPhase;
+import io.firebite.tako.ui.bridge.message.thread.Submit;
 import java.awt.Image;
 import java.awt.datatransfer.DataFlavor;
 import java.io.File;
@@ -109,7 +124,7 @@ public final class ChatController implements Disposable {
   private final TurnChanges changes;
   /** Done once {@link #open} launched the agent, so a prompt sent meanwhile does not launch a second one. */
   private final CompletableFuture<Void> opened = new CompletableFuture<>();
-  private final AtomicReference<ChatMessage.Submit> firstPrompt = new AtomicReference<>();
+  private final AtomicReference<Submit> firstPrompt = new AtomicReference<>();
   private final StringBuilder answer = new StringBuilder();
   private final Conversation conversation = new Conversation();
   private final ThreadGit git;
@@ -186,16 +201,16 @@ public final class ChatController implements Disposable {
    * the worktree's setup is through, so it loads what the setup installed.
    */
   public void open() {
-    this.open((ChatMessage.Submit) null);
+    this.open((Submit) null);
   }
 
   /** Like {@link #open()}, then sends {@code prompt} as if typed, once the agent is ready. Keeps the thread's title. */
   public void open(@Nullable String prompt) {
-    this.open(prompt == null ? null : new ChatMessage.Submit(prompt, List.of(), List.of()));
+    this.open(prompt == null ? null : new Submit(prompt, List.of(), List.of()));
   }
 
   /** Like {@link #open(String)}, with the prompt's context and images. */
-  public void open(@Nullable ChatMessage.Submit prompt) {
+  public void open(@Nullable Submit prompt) {
     this.firstPrompt.set(prompt);
     if (prompt != null) {
       this.isTitled = true;
@@ -249,10 +264,10 @@ public final class ChatController implements Disposable {
    * During a rewind it is sent once the rewind is done.
    */
   public void submit(String prompt) {
-    this.submit(new ChatMessage.Submit(prompt, List.of(), List.of()));
+    this.submit(new Submit(prompt, List.of(), List.of()));
   }
 
-  private void submit(ChatMessage.Submit prompt) {
+  private void submit(Submit prompt) {
     if (this.state != State.WAITING) {
       this.setState(State.WORKING);
     }
@@ -288,8 +303,8 @@ public final class ChatController implements Disposable {
     }
     this.isInterrupted = true;
     if (this.queue.stop()) {
-      this.view.post(new ChatMessage.Event(new AgentEvent.Interrupted()));
-      this.view.post(new ChatMessage.Event(new AgentEvent.TurnEnded(null, null, null)));
+      this.view.post(new Event(new AgentEvent.Interrupted()));
+      this.view.post(new Event(new AgentEvent.TurnEnded(null, null, null)));
     }
     this.connection.ifLive(AgentSession::interrupt);
   }
@@ -314,7 +329,7 @@ public final class ChatController implements Disposable {
   }
 
   /**
-   * Answers a {@link ChatMessage.Permission}.
+   * Answers a {@link Permission}.
    *
    * @param answers    question → answer
    * @param suggestion the index of the suggestion approved with
@@ -394,7 +409,7 @@ public final class ChatController implements Disposable {
     AgentBackend from = this.backend;
     if (!target.canStart()) {
       this.setState(this.stateAfterRejectedSwitch(previous));
-      this.view.post(new ChatMessage.Notice(TakoBundle.message("error.switch.unavailable", target.displayName())));
+      this.view.post(new Notice(TakoBundle.message("error.switch.unavailable", target.displayName())));
       return;
     }
     ThreadPast past = this.conversation.past(from.displayName(), target.displayName());
@@ -407,7 +422,7 @@ public final class ChatController implements Disposable {
       } catch (IOException e) {
         LOG.warn("Could not save the conversation before switching agents", e);
         this.setState(this.stateAfterRejectedSwitch(previous));
-        this.view.post(new ChatMessage.Notice(TakoBundle.message("error.switch.save", e.getMessage())));
+        this.view.post(new Notice(TakoBundle.message("error.switch.save", e.getMessage())));
         return;
       }
     }
@@ -437,7 +452,7 @@ public final class ChatController implements Disposable {
       this.conversation.restore(past);
     }
     this.recordChanged();
-    this.view.post(new ChatMessage.Event(new AgentEvent.AgentSwitched(from.displayName(), target.displayName())));
+    this.view.post(new Event(new AgentEvent.AgentSwitched(from.displayName(), target.displayName())));
     if (this.isDisposed) {
       return;
     }
@@ -532,7 +547,7 @@ public final class ChatController implements Disposable {
       this.keepsTimeline = true;
       this.connection.stop();
       this.stopped(this.error);
-      this.view.post(new ChatMessage.Exit(0, ""));
+      this.view.post(new Exit(0, ""));
     });
   }
 
@@ -661,7 +676,7 @@ public final class ChatController implements Disposable {
   }
 
   public void addContext(ContextItem item, @Nullable String prefill) {
-    this.view.post(new ChatMessage.Context(item, prefill));
+    this.view.post(new Context(item, prefill));
   }
 
   /** Reads image files in the background and attaches them to the composer. */
@@ -676,7 +691,7 @@ public final class ChatController implements Disposable {
         if (image == null) {
           this.postError(TakoBundle.message("error.image.unsupported", file.getFileName()));
         } else {
-          this.view.post(new ChatMessage.Image(image));
+          this.view.post(new ChatImage(image));
         }
       } catch (IOException e) {
         this.postError(TakoBundle.message("error.image.read", file.getFileName(), e.getMessage()));
@@ -743,7 +758,7 @@ public final class ChatController implements Disposable {
 
   /** @param now write on this thread, else on a pooled one */
   private void stash(boolean now) {
-    List<ChatMessage.Submit> prompts = this.queue.drain();
+    List<Submit> prompts = this.queue.drain();
     if (prompts.isEmpty() || this.project.isDisposed()) {
       return;
     }
@@ -754,7 +769,7 @@ public final class ChatController implements Disposable {
       }
       try {
         int kept = PromptStash.getInstance(this.project).pushAll(prompts);
-        this.view.post(new ChatMessage.QueueStashed(kept));
+        this.view.post(new QueueStashed(kept));
       } catch (IOException | IllegalStateException e) {
         LOG.warn("Could not stash the queued prompts of thread " + this.record.id, e);
       }
@@ -772,10 +787,10 @@ public final class ChatController implements Disposable {
     boolean showsCard = worktreeSetup.showsCard();
     worktreeSetup.dispose();
     if (showsCard) {
-      this.view.post(new ChatMessage.Setup(ChatMessage.SetupPhase.DONE, 0, 0, "", "", null, 0, 0));
+      this.view.post(new Setup(SetupPhase.DONE, 0, 0, "", "", null, 0, 0));
     }
     if (holds) {
-      this.view.post(new ChatMessage.Exit(0, ""));
+      this.view.post(new Exit(0, ""));
     }
   }
 
@@ -836,8 +851,8 @@ public final class ChatController implements Disposable {
       this.hasTools = launch.toolsUrl() != null && session.takesTools();
       this.canRewind = info.capabilities().rewind() && !this.record.sideChat;
       this.canSteer = info.capabilities().steer();
-      ChatMessage.Submit prompt = this.firstPrompt.getAndSet(null);
-      this.view.post(new ChatMessage.Init(info, this.projectPath()));
+      Submit prompt = this.firstPrompt.getAndSet(null);
+      this.view.post(new Init(info, this.projectPath()));
       this.refreshContext();
       if (prompt != null) {
         this.submit(prompt);
@@ -859,7 +874,7 @@ public final class ChatController implements Disposable {
    */
   public QueuedPrompts.Action send(String text, List<ContextItem> context, List<ImageAttachment> images, int turn,
     int prompts, QueuedPrompts.Delivery delivery) {
-    ChatMessage.Submit prompt = new ChatMessage.Submit(text, context, images);
+    Submit prompt = new Submit(text, context, images);
     QueuedPrompts.Action action = this.queue.offer(turn, prompt, delivery, this.canSteer);
     if (action != QueuedPrompts.Action.HOLD && !this.queue.isClosed()) {
       this.deliver(turn, prompt, action == QueuedPrompts.Action.STEER,
@@ -869,7 +884,7 @@ public final class ChatController implements Disposable {
   }
 
   /** Takes a queued prompt out of the queue, e.g. to edit it. Null once it is on its way. */
-  public ChatMessage.@Nullable Submit unqueue(int turn) {
+  public @Nullable Submit unqueue(int turn) {
     return this.queue.take(turn);
   }
 
@@ -884,7 +899,7 @@ public final class ChatController implements Disposable {
    * @return what became of it
    */
   public QueuedPrompts.SendNow sendQueuedNow(int turn) {
-    ChatMessage.Submit prompt = this.queue.promptOf(turn);
+    Submit prompt = this.queue.promptOf(turn);
     QueuedPrompts.SendNow result = this.queue.sendNow(turn);
     switch (result) {
       case INTERRUPT -> this.connection.ifLive(AgentSession::interrupt);
@@ -897,7 +912,7 @@ public final class ChatController implements Disposable {
 
   /** Hands a queued prompt to the running turn. */
   public void steerQueued(int turn) {
-    ChatMessage.Submit prompt = this.queue.promptOf(turn);
+    Submit prompt = this.queue.promptOf(turn);
     if (prompt != null && this.queue.steer(turn, this.canSteer)) {
       this.deliver(turn, prompt, true, null);
     }
@@ -908,7 +923,7 @@ public final class ChatController implements Disposable {
    *
    * @param prompts how many prompts the session got before this one, or null to count on from the last one sent
    */
-  private void deliver(int turn, ChatMessage.Submit prompt, boolean steer, @Nullable Integer prompts) {
+  private void deliver(int turn, Submit prompt, boolean steer, @Nullable Integer prompts) {
     List<ImageAttachment> images = new ArrayList<>();
     for (ImageAttachment image : prompt.images()) {
       if (image.isValid()) {
@@ -1138,7 +1153,7 @@ public final class ChatController implements Disposable {
   /**
    * Makes the agent forget the last of {@code prompts} and everything after it, and with {@code files} puts the
    * files back to when that prompt was sent. Only while the agent is idle or stopped. Posts one
-   * {@link ChatMessage.Rewound} when done; the chat's timeline is replayed from the rewound session before.
+   * {@link Rewound} when done; the chat's timeline is replayed from the rewound session before.
    *
    * @param prompts the typed texts of the session's prompts up to and including the first one to forget
    */
@@ -1147,7 +1162,7 @@ public final class ChatController implements Disposable {
     synchronized (this.rewindLock) {
       boolean idle = this.state == State.IDLE || this.state == State.STOPPED;
       if (!this.rewinding.isDone() || !this.switching.isDone() || !idle || prompts.isEmpty() || this.isDisposed) {
-        this.view.post(new ChatMessage.Rewound(false, this.isDisposed || prompts.isEmpty()
+        this.view.post(new Rewound(false, this.isDisposed || prompts.isEmpty()
           ? null
           : TakoBundle.message("error.rewind.busy")));
         return;
@@ -1155,12 +1170,12 @@ public final class ChatController implements Disposable {
       this.rewinding = done;
     }
     Async.inBackground(() -> {
-      ChatMessage.Rewound result = new ChatMessage.Rewound(false, null);
+      Rewound result = new Rewound(false, null);
       try {
         result = this.rewindNow(prompts, files);
       } catch (RuntimeException e) {
         LOG.warn("Could not rewind thread " + this.record.id, e);
-        result = new ChatMessage.Rewound(false, Objects.toString(e.getMessage(), e.toString()));
+        result = new Rewound(false, Objects.toString(e.getMessage(), e.toString()));
       } finally {
         this.view.post(result);
         done.complete(null);
@@ -1181,7 +1196,7 @@ public final class ChatController implements Disposable {
     return other == null ? null : TakoBundle.message("error.rewind.folder.busy", other);
   }
 
-  private ChatMessage.Rewound rewindNow(List<String> prompts, boolean files) {
+  private Rewound rewindNow(List<String> prompts, boolean files) {
     int kept = prompts.size() - 1;
     String folder = this.projectPath();
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
@@ -1191,17 +1206,17 @@ public final class ChatController implements Disposable {
         ? null
         : Checkpoints.find(Path.of(folder), this.record.id, kept, prompts.getLast(), environment);
       if (commit == null) {
-        return new ChatMessage.Rewound(false, TakoBundle.message("error.rewind.no.checkpoint"));
+        return new Rewound(false, TakoBundle.message("error.rewind.no.checkpoint"));
       }
       String blocker = this.filesBlocker(folder, environment);
       if (blocker != null) {
-        return new ChatMessage.Rewound(false, blocker);
+        return new Rewound(false, blocker);
       }
     }
     this.setState(State.STARTING);
     this.connection.stop();
     if (this.isDisposed) {
-      return new ChatMessage.Rewound(false, null);
+      return new Rewound(false, null);
     }
     String sessionId = this.record.sessionId;
     String rewound = null;
@@ -1214,12 +1229,12 @@ public final class ChatController implements Disposable {
       } catch (AgentException e) {
         this.keepsTimeline = true;
         this.stopped(null);
-        this.view.post(new ChatMessage.Exit(0, ""));
-        return new ChatMessage.Rewound(false, e.getMessage());
+        this.view.post(new Exit(0, ""));
+        return new Rewound(false, e.getMessage());
       }
     }
     if (this.isDisposed) {
-      return new ChatMessage.Rewound(false, null);
+      return new Rewound(false, null);
     }
     this.record.sessionId = rewound;
     this.recordChanged();
@@ -1247,13 +1262,13 @@ public final class ChatController implements Disposable {
     }
     rewound = this.replayRewound(rewound, folder);
     if (this.isDisposed) {
-      return new ChatMessage.Rewound(true, filesError);
+      return new Rewound(true, filesError);
     }
     this.launch(rewound, this.deferredSubmits.get() > 0).handle((ready, error) -> null).join();
     if (this.isDisposed) {
       this.connection.stop();
     }
-    return new ChatMessage.Rewound(true, filesError);
+    return new Rewound(true, filesError);
   }
 
   /**
@@ -1367,7 +1382,7 @@ public final class ChatController implements Disposable {
     Image clipboardImage = image;
     Async.inBackground(() -> {
       try {
-        this.view.post(new ChatMessage.Image(Images.fromImage(clipboardImage, PASTED_IMAGE_NAME)));
+        this.view.post(new ChatImage(Images.fromImage(clipboardImage, PASTED_IMAGE_NAME)));
       } catch (IOException e) {
         this.postError(TakoBundle.message("error.clipboard.image", e.getMessage()));
       }
@@ -1440,7 +1455,7 @@ public final class ChatController implements Disposable {
     return directory == null ? null : IdeFiles.newestFiles(Path.of(directory), SCRATCHPAD_FILES);
   }
 
-  /** Asks the agent how full its context is, which arrives as {@link ChatMessage.ContextUsage}. */
+  /** Asks the agent how full its context is, which arrives as {@link ChatContextUsage}. */
   public void refreshContext() {
     this.connection.ifLive(session -> {
       CompletableFuture<ContextUsage> usage = session.contextUsage();
@@ -1452,7 +1467,7 @@ public final class ChatController implements Disposable {
           LOG.debug("No context usage", error);
           return;
         }
-        this.view.post(new ChatMessage.ContextUsage(breakdown));
+        this.view.post(new ChatContextUsage(breakdown));
       });
     });
   }
@@ -1462,7 +1477,7 @@ public final class ChatController implements Disposable {
     this.conversation.reset(events);
     List<AgentEvent> all = new ArrayList<>(this.conversation.past().events());
     all.addAll(events);
-    this.view.post(new ChatMessage.Replay(all));
+    this.view.post(new Replay(all));
   }
 
   /** Sends the next queued prompt only after the event was posted, so the chat hears of its turn after this one. */
@@ -1509,7 +1524,7 @@ public final class ChatController implements Disposable {
       default -> {
       }
     }
-    this.view.post(new ChatMessage.Event(event));
+    this.view.post(new Event(event));
     if (next != null) {
       this.deliver(next.turn(), next.prompt(), false, null);
     }
@@ -1575,7 +1590,7 @@ public final class ChatController implements Disposable {
    * Under the queue's lock: the state follows whether a turn runs or a prompt is on its way. A thread done working
    * needs a look.
    */
-  private void queueChanged(ChatMessage.Queue snapshot) {
+  private void queueChanged(Queue snapshot) {
     State current = this.state;
     if (snapshot.running() && (current == State.IDLE || current == State.STOPPED || current == State.STARTING)) {
       this.setState(State.WORKING);
@@ -1588,7 +1603,7 @@ public final class ChatController implements Disposable {
 
   private void onPermission(String requestId, PermissionPrompt prompt) {
     this.setState(State.WAITING);
-    this.view.post(new ChatMessage.Permission(requestId, prompt));
+    this.view.post(new Permission(requestId, prompt));
     String agent = this.backend.displayName();
     String reason = prompt.kind() == PermissionPrompt.Kind.QUESTION
       ? TakoBundle.message("notification.question", agent)
@@ -1619,11 +1634,11 @@ public final class ChatController implements Disposable {
   private void startFailed(String message) {
     this.stopped(message);
     this.startFailed = true;
-    this.view.post(new ChatMessage.Error(message, true));
+    this.view.post(new ChatError(message, true));
   }
 
   private void postError(String text) {
-    this.view.post(new ChatMessage.Error(text));
+    this.view.post(new ChatError(text));
   }
 
   /** What the thread's agent is doing. */
@@ -1653,7 +1668,7 @@ public final class ChatController implements Disposable {
     private @Nullable String error;
 
     @Override
-    public void changed(ChatMessage.Setup setup) {
+    public void changed(Setup setup) {
       ChatController.this.view.post(setup);
     }
 
@@ -1698,7 +1713,7 @@ public final class ChatController implements Disposable {
       if (resumed != null && event instanceof AgentEvent.SessionStarted started && started.sessionId() != null) {
         this.resumes = null;
         if (!resumed.equals(started.sessionId())) {
-          ChatController.this.view.post(new ChatMessage.Notice(
+          ChatController.this.view.post(new Notice(
             TakoBundle.message("error.session.not.resumed", ChatController.this.backend.displayName())));
         }
       }
@@ -1725,7 +1740,7 @@ public final class ChatController implements Disposable {
     @Override
     public void onExit(int exitCode, String stderrTail) {
       ChatController.this.stopped(exitCode == 0 ? null : stderrTail);
-      ChatController.this.view.post(new ChatMessage.Exit(exitCode, stderrTail));
+      ChatController.this.view.post(new Exit(exitCode, stderrTail));
     }
   }
 }

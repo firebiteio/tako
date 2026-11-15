@@ -4,7 +4,7 @@ import androidx.compose.foundation.text.input.clearText
 import com.intellij.openapi.diagnostic.logger
 import io.firebite.tako.chat.Orchestration
 import io.firebite.tako.chat.thread.ChatController
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Submit
 import io.firebite.tako.ui.t
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.max
@@ -310,9 +310,9 @@ fun ThreadState.perform(action: TakoAction) {
 /** Opens a thread in this one's folder; a prompt or images go there with the attached context. */
 private fun ThreadState.openNewThread(prompt: String) {
   val images = this.images.map { it.image }
-  var submit: ChatMessage.Submit? = null
+  var submit: Submit? = null
   if (prompt.isNotEmpty() || images.isNotEmpty()) {
-    submit = ChatMessage.Submit(prompt, this.contexts.toList(), images)
+    submit = Submit(prompt, this.contexts.toList(), images)
     this.contexts.clear()
     this.images.clear()
   }

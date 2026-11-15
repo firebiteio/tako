@@ -5,7 +5,8 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.chat.store.ThreadStore;
 import io.firebite.tako.ide.project.SetupScript;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.thread.Setup;
+import io.firebite.tako.ui.bridge.message.thread.SetupPhase;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -86,8 +87,8 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     throw new AssertionError("No matching " + type.getSimpleName());
   }
 
-  private ChatMessage.Setup awaitPhase(ChatMessage.SetupPhase phase) throws InterruptedException {
-    return this.await(ChatMessage.Setup.class, setup -> setup.phase() == phase);
+  private Setup awaitPhase(SetupPhase phase) throws InterruptedException {
+    return this.await(Setup.class, setup -> setup.phase() == phase);
   }
 
   private void awaitFinished() throws InterruptedException {
@@ -123,10 +124,10 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
 
-    ChatMessage.Setup first = this.await(ChatMessage.Setup.class, s -> s.step() == 1);
+    Setup first = this.await(Setup.class, s -> s.step() == 1);
     assertEquals(2, first.steps());
     assertTrue(first.command().contains("first.txt"));
-    ChatMessage.Setup done = this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    Setup done = this.awaitPhase(SetupPhase.DONE);
     assertEquals(2, done.step());
     assertTrue(done.endedAt() >= done.startedAt());
     this.awaitFinished();
@@ -138,7 +139,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     assertEquals(this.repository.toString(), Files.readString(this.worktree.resolve("second.txt")).strip());
     assertFalse(setup.holdsPrompts());
     for (Object late : this.drainFor(600)) {
-      assertFalse("nothing shows after the setup is done: " + late, late instanceof ChatMessage.Setup);
+      assertFalse("nothing shows after the setup is done: " + late, late instanceof Setup);
     }
 
     setup.whenReady(this.prompt("b"));
@@ -151,7 +152,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
 
-    this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    this.awaitPhase(SetupPhase.DONE);
     assertTrue("a trailing backslash stays the command's", Files.isDirectory(this.worktree.resolve("made")));
     String written = Files.readString(this.worktree.resolve("quoted file.txt")).strip();
     assertEquals(SystemInfo.isWindows ? "\"a  b\"" : "a  b", written);
@@ -164,7 +165,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
 
-    ChatMessage.Setup failed = this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    Setup failed = this.awaitPhase(SetupPhase.FAILED);
     assertEquals(TakoBundle.message("setup.error.exit", "exit 3", "3"), failed.error());
     assertEquals(2, failed.step());
     assertEquals(failed.error(), this.await(Failed.class, f -> true).reason());
@@ -178,7 +179,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     setup.retry();
 
     assertNull(this.await(Held.class, held -> true).failure());
-    this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    this.awaitPhase(SetupPhase.DONE);
     this.awaitRan(2);
     assertEquals("held prompts go in order", List.of("a", "b"), this.ran);
     assertTrue(Files.exists(this.worktree.resolve("fixed.txt")));
@@ -193,7 +194,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     this.awaitFinished();
     this.awaitRan(1);
     for (Object event : this.drainFor(300)) {
-      assertFalse(event instanceof ChatMessage.Setup);
+      assertFalse(event instanceof Setup);
     }
     assertFalse(setup.showsCard());
   }
@@ -228,14 +229,14 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     WorktreeSetup setup = this.setup();
     setup.whenReady(this.prompt("a"));
     setup.start();
-    this.await(ChatMessage.Setup.class, s -> s.step() == 1);
+    this.await(Setup.class, s -> s.step() == 1);
     Thread.sleep(300);
     long cancelledAt = System.currentTimeMillis();
 
     assertTrue(setup.cancelHeld());
     assertFalse("a second cancel does nothing", setup.cancel());
 
-    ChatMessage.Setup failed = this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    Setup failed = this.awaitPhase(SetupPhase.FAILED);
     assertEquals(TakoBundle.message("setup.error.cancelled"), failed.error());
     assertTrue("cancel kills at once", System.currentTimeMillis() - cancelledAt < 15_000);
     for (Object event : this.drainFor(300)) {
@@ -245,7 +246,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     this.file("echo again> again.txt");
     setup.retry();
     setup.retry();
-    this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    this.awaitPhase(SetupPhase.DONE);
     this.awaitRan(1);
     assertTrue(Files.exists(this.worktree.resolve("again.txt")));
   }
@@ -258,8 +259,8 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     setup.start();
     setup.cancel();
 
-    ChatMessage.Setup end = this.await(ChatMessage.Setup.class, s -> s.phase() != ChatMessage.SetupPhase.RUNNING);
-    assertEquals(ChatMessage.SetupPhase.FAILED, end.phase());
+    Setup end = this.await(Setup.class, s -> s.phase() != SetupPhase.RUNNING);
+    assertEquals(SetupPhase.FAILED, end.phase());
     assertEquals(TakoBundle.message("setup.error.cancelled"), end.error());
   }
 
@@ -267,11 +268,11 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     this.file(sleep(60));
     WorktreeSetup setup = this.setup();
     setup.start();
-    this.await(ChatMessage.Setup.class, s -> s.step() == 1);
+    this.await(Setup.class, s -> s.step() == 1);
 
     assertFalse(setup.cancelHeld());
     assertTrue(setup.cancel());
-    this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    this.awaitPhase(SetupPhase.FAILED);
     assertFalse("nothing waits", setup.holdsFailed());
   }
 
@@ -280,17 +281,17 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     WorktreeSetup setup = this.setup();
     setup.whenReady(this.prompt("a"));
     setup.start();
-    this.await(ChatMessage.Setup.class, s -> s.step() == 1);
+    this.await(Setup.class, s -> s.step() == 1);
 
     setup.skip();
     setup.skip();
 
-    this.awaitPhase(ChatMessage.SetupPhase.SKIPPED);
+    this.awaitPhase(SetupPhase.SKIPPED);
     this.awaitFinished();
     this.awaitRan(1);
     assertFalse(setup.showsCard());
     for (Object event : this.drainFor(500)) {
-      assertFalse("the killed run reports nothing: " + event, event instanceof ChatMessage.Setup);
+      assertFalse("the killed run reports nothing: " + event, event instanceof Setup);
     }
   }
 
@@ -302,7 +303,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
     setup.start();
-    this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    this.awaitPhase(SetupPhase.DONE);
     this.awaitFinished();
 
     setup.retry();
@@ -310,7 +311,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     setup.start();
     assertFalse(setup.cancel());
     for (Object event : this.drainFor(500)) {
-      assertFalse("nothing runs again: " + event, event instanceof ChatMessage.Setup || FINISHED.equals(event));
+      assertFalse("nothing runs again: " + event, event instanceof Setup || FINISHED.equals(event));
     }
   }
 
@@ -320,7 +321,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
 
-    ChatMessage.Setup failed = this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    Setup failed = this.awaitPhase(SetupPhase.FAILED);
     assertEquals(TakoBundle.message("setup.error.timeout", "1"), failed.error());
     this.await(Failed.class, f -> true);
   }
@@ -331,7 +332,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
 
-    assertEquals(TakoBundle.message("setup.error.untrusted"), this.awaitPhase(ChatMessage.SetupPhase.FAILED).error());
+    assertEquals(TakoBundle.message("setup.error.untrusted"), this.awaitPhase(SetupPhase.FAILED).error());
     assertFalse(Files.exists(this.worktree.resolve("ran.txt")));
   }
 
@@ -353,10 +354,10 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     WorktreeSetup setup = this.setup();
     setup.startWhenReady(this.prompt("start"));
     setup.start();
-    this.await(ChatMessage.Setup.class, s -> s.step() == 1);
+    this.await(Setup.class, s -> s.step() == 1);
 
     assertTrue("a held start can be cancelled", setup.cancelHeld());
-    this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    this.awaitPhase(SetupPhase.FAILED);
     assertTrue(setup.holdsFailed());
     assertFalse(setup.holdsPrompts());
     setup.whenReady(this.prompt("a"));
@@ -371,13 +372,13 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     this.file("exit 1");
     WorktreeSetup setup = this.setup();
     setup.start();
-    this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    this.awaitPhase(SetupPhase.FAILED);
     assertTrue(setup.showsCard());
 
     Files.delete(this.repository.resolve(SetupScript.FILE));
     setup.retry();
 
-    ChatMessage.Setup done = this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    Setup done = this.awaitPhase(SetupPhase.DONE);
     assertEquals(0, done.steps());
     this.awaitFinished();
     assertFalse(setup.showsCard());
@@ -388,7 +389,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     WorktreeSetup setup = this.setup();
     setup.whenReady(this.prompt("a"));
     setup.start();
-    this.await(ChatMessage.Setup.class, s -> s.step() == 1);
+    this.await(Setup.class, s -> s.step() == 1);
     assertTrue(setup.showsCard());
 
     setup.dispose();
@@ -408,7 +409,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
     WorktreeSetup setup = this.setup();
     setup.whenReady(this.prompt("a"));
     setup.start();
-    this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    this.awaitPhase(SetupPhase.FAILED);
 
     setup.dropHeld();
     setup.skip();
@@ -427,7 +428,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.whenReady(this.prompt("a"));
     setup.start();
-    this.awaitPhase(ChatMessage.SetupPhase.FAILED);
+    this.awaitPhase(SetupPhase.FAILED);
     this.events.clear();
     setup.settle(() -> idle.add("idle"));
 
@@ -443,7 +444,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
     setup.start();
 
-    ChatMessage.Setup done = this.awaitPhase(ChatMessage.SetupPhase.DONE);
+    Setup done = this.awaitPhase(SetupPhase.DONE);
     assertTrue(done.output(), done.output().contains("line 6000"));
     assertTrue(done.output(), done.output().contains("Grüße ✓ 日本"));
     assertTrue(done.output().startsWith("…"));
@@ -462,7 +463,7 @@ public class WorktreeSetupTest extends BasePlatformTestCase {
 
   private final class Recorder implements WorktreeSetup.Listener {
     @Override
-    public void changed(ChatMessage.Setup setup) {
+    public void changed(Setup setup) {
       WorktreeSetupTest.this.events.add(setup);
     }
 

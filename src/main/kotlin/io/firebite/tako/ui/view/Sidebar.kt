@@ -49,7 +49,8 @@ import com.intellij.openapi.ui.MessageDialogBuilder
 import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.ui.ago
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.BenchItem
+import io.firebite.tako.ui.bridge.message.workspace.ProjectItem
 import io.firebite.tako.ui.dateTime
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.elapsed
@@ -358,11 +359,11 @@ private fun RailBranch(workspace: Workspace, node: ThreadNode<ThreadState>) {
   }
 }
 
-private fun projectBenches(workspace: Workspace, project: ChatMessage.ProjectItem): List<ChatMessage.BenchItem> =
+private fun projectBenches(workspace: Workspace, project: ProjectItem): List<BenchItem> =
   workspace.benches.reversed().filter { workspace.projectAt(it.projectPath).path == project.path }
 
 /** The project's threads as the list nests them, pinned first. [listed] leaves out the threads a snooze hides. */
-private fun projectThreads(workspace: Workspace, project: ChatMessage.ProjectItem, listed: List<ThreadState>,
+private fun projectThreads(workspace: Workspace, project: ProjectItem, listed: List<ThreadState>,
   runIds: Set<String>): List<ThreadNode<ThreadState>> =
   threadTree(pinnedFirst(listed.filter {
     !it.archived && it.id !in runIds && workspace.projectOf(it).path == project.path
@@ -385,7 +386,7 @@ fun SessionsMenu(workspace: Workspace) {
 }
 
 @Composable
-private fun ProjectGroup(workspace: Workspace, project: ChatMessage.ProjectItem, sorted: List<ThreadState>,
+private fun ProjectGroup(workspace: Workspace, project: ProjectItem, sorted: List<ThreadState>,
   runIds: Set<String>, narrow: Boolean) {
   val benches = projectBenches(workspace, project)
   val threads = projectThreads(workspace, project, sorted, runIds)
@@ -615,7 +616,7 @@ private fun snoozeLabel(preset: SnoozePreset): String = when (preset) {
 }
 
 @Composable
-private fun BenchGroup(workspace: Workspace, bench: ChatMessage.BenchItem, narrow: Boolean) {
+private fun BenchGroup(workspace: Workspace, bench: BenchItem, narrow: Boolean) {
   val runs = bench.threads.mapNotNull { workspace.threads[it] }.filter { !it.archived }
   val collapsed = workspace.collapsedBenches[bench.id] == true
   val (interaction, hovered) = rememberHover()
@@ -648,7 +649,7 @@ private fun BenchGroup(workspace: Workspace, bench: ChatMessage.BenchItem, narro
   }
 }
 
-fun confirmDiscard(workspace: Workspace, bench: ChatMessage.BenchItem) {
+fun confirmDiscard(workspace: Workspace, bench: BenchItem) {
   if (MessageDialogBuilder.yesNo(t("bench.discard"), t("bench.discard.confirm", bench.title)).guessWindowAndAsk()) {
     workspace.service.discardBench(bench.id)
     workspace.shownBench = null

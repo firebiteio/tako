@@ -18,12 +18,14 @@ import io.firebite.tako.chat.thread.ChatController
 import io.firebite.tako.chat.thread.ThreadTitles
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ide.project.GitInfo
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Setup
+import io.firebite.tako.ui.bridge.message.thread.SetupPhase
+import io.firebite.tako.ui.bridge.message.workspace.ThreadItem
 
 /** A thread as the chat shows it: the IDE's record of it, its conversation and its composer. */
 private val LOG = logger<ThreadState>()
 
-class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
+class ThreadState(val workspace: Workspace, item: ThreadItem) {
   val id: String = item.id
   /** The thread whose agent created this one, which the list nests it under, or a side chat's main thread. */
   val parentId: String? = item.parentId
@@ -130,7 +132,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   var scratchpad by mutableStateOf<String?>(null)
   val alerts = mutableStateListOf<Alert>()
   /** The setup of the thread's new worktree while it runs or after it failed, which the prompts wait for. */
-  var setup by mutableStateOf<ChatMessage.Setup?>(null)
+  var setup by mutableStateOf<Setup?>(null)
   /** The prompt a running rewind goes back to before; sending waits until it is done. */
   var rewinding by mutableStateOf<Prompt?>(null)
   /** The stashed drafts to pick from, while their menu is open. */
@@ -151,7 +153,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
   /** Whether the panel of the threads this one created is folded. Only this session remembers. */
   var childrenFolded by mutableStateOf(false)
 
-  fun update(item: ChatMessage.ThreadItem) {
+  fun update(item: ThreadItem) {
     this.title = item.title.ifEmpty { this.title }
     this.archived = item.archived
     if (item.archived) {
@@ -214,7 +216,7 @@ class ThreadState(val workspace: Workspace, item: ChatMessage.ThreadItem) {
 
   /** The worktree setup failed, so the prompts wait for the person to retry or skip it. */
   val setupFailed: Boolean
-    get() = this.setup?.phase == ChatMessage.SetupPhase.FAILED
+    get() = this.setup?.phase == SetupPhase.FAILED
 
   /** The folder paths are shown relative to. */
   val root: String

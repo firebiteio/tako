@@ -31,7 +31,9 @@ import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.em
 import androidx.compose.ui.unit.sp
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.usage.DayCost
+import io.firebite.tako.ui.bridge.message.usage.SessionCost
+import io.firebite.tako.ui.bridge.message.usage.Usage
 import io.firebite.tako.ui.money
 import io.firebite.tako.ui.shortDay
 import io.firebite.tako.ui.state.Workspace
@@ -123,7 +125,7 @@ fun UsageView(workspace: Workspace, modifier: Modifier) {
 }
 
 /** Opens a session from the table: its thread, restored if archived, or a new thread resuming it. */
-private fun openSession(workspace: Workspace, item: ChatMessage.SessionCost) {
+private fun openSession(workspace: Workspace, item: SessionCost) {
   workspace.usageOpen = false
   val thread = item.thread
   when {
@@ -138,7 +140,7 @@ private fun openSession(workspace: Workspace, item: ChatMessage.SessionCost) {
 
 /** Tiles in a grid of columns at least [TILE_WIDTH] wide; a row's tiles share its height. */
 @Composable
-private fun Tiles(usage: ChatMessage.Usage) {
+private fun Tiles(usage: Usage) {
   val tiles = listOf(
     Triple(t("usage.tile.cost"), money(usage.totalCost), t("usage.tile.cost.detail")),
     Triple(t("usage.tokens"), tokens(usage.totalTokens), t("usage.tile.tokens.detail")),
@@ -201,7 +203,7 @@ private fun Section(title: String, content: @Composable () -> Unit) {
 }
 
 @Composable
-private fun DailyChart(days: List<ChatMessage.DayCost>, span: Int) {
+private fun DailyChart(days: List<DayCost>, span: Int) {
   val byDay = days.associate { it.day to it.cost }
   val today = LocalDate.now()
   val series = (span - 1 downTo 0).map { offset ->

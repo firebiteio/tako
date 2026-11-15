@@ -3,7 +3,7 @@ package io.firebite.tako.ui.state
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.chat.store.ThreadStore
 import io.firebite.tako.ide.context.ContextItem
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Submit
 import io.firebite.tako.ui.t
 
 /** The prompts the agent got in the turn, as its session counts them: the turn's prompt and its follow-ups. */
@@ -102,7 +102,7 @@ fun ThreadState.startSideChat(question: String, contexts: List<ContextItem> = em
   // Before the main agent started its capabilities are unknown; a fork it can't make falls back to an excerpt.
   val canFork = main.info?.capabilities?.fork != false
   val started = this.workspace.service.startSideChat(main.id, if (canFork) main.settledPrompts() else 0,
-    ChatMessage.Submit(question, contexts, images))
+    Submit(question, contexts, images))
   main.startingSideChat = started
   return started
 }

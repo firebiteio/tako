@@ -51,7 +51,7 @@ import androidx.compose.ui.unit.em
 import io.firebite.tako.agent.ImageAttachment
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.ide.project.ProjectIcons
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.ProjectItem
 import io.firebite.tako.ui.state.Alert
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.textLocale
@@ -317,7 +317,7 @@ private val projectIcons = HashMap<ByteBuffer, Painter?>()
 
 /** A project folder's own icon, else a folder. */
 @Composable
-fun ProjectIcon(project: ChatMessage.ProjectItem?, size: Dp = 14.dp, tint: Color = Color.Unspecified) {
+fun ProjectIcon(project: ProjectItem?, size: Dp = 14.dp, tint: Color = Color.Unspecified) {
   val icon = project?.let { if (JewelTheme.isDark) it.iconDark ?: it.icon else it.icon }
   val density = LocalDensity.current
   val painter = remember(icon) {

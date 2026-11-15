@@ -12,7 +12,8 @@ import io.firebite.tako.chat.SideChats
 import io.firebite.tako.chat.store.ThreadStore
 import io.firebite.tako.ide.context.ContextItem
 import io.firebite.tako.settings.ChatSettings
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.ShowSideChat
+import io.firebite.tako.ui.bridge.message.workspace.ThreadRemoved
 import io.firebite.tako.ui.view.StatusKind
 import io.firebite.tako.ui.view.threadStatus
 import io.firebite.tako.ui.view.waitingThreads
@@ -274,7 +275,7 @@ class SideChatTest : BasePlatformTestCase() {
     main.startingSideChat = true
     side.unread = true
 
-    this.workspace.receive(ChatMessage.ShowSideChat(side.id, true))
+    this.workspace.receive(ShowSideChat(side.id, true))
 
     assertEquals(side.id, main.sideChatShown)
     assertFalse(main.startingSideChat)
@@ -287,7 +288,7 @@ class SideChatTest : BasePlatformTestCase() {
     val main = this.thread()
     main.startingSideChat = true
 
-    this.workspace.receive(ChatMessage.ShowSideChat(main.id, true))
+    this.workspace.receive(ShowSideChat(main.id, true))
 
     assertFalse(main.startingSideChat)
     assertNull(main.sideChatShown)
@@ -299,7 +300,7 @@ class SideChatTest : BasePlatformTestCase() {
     val side = this.sideChat(main)
     main.startingSideChat = true
 
-    this.workspace.receive(ChatMessage.ShowSideChat(side.id, false))
+    this.workspace.receive(ShowSideChat(side.id, false))
 
     assertTrue(main.startingSideChat)
   }
@@ -351,11 +352,11 @@ class SideChatTest : BasePlatformTestCase() {
     this.workspace.showSideChat(first.id, false)
 
     this.workspace.closeSideChat(first)
-    this.workspace.receive(ChatMessage.ThreadRemoved(first.id))
+    this.workspace.receive(ThreadRemoved(first.id))
 
     assertEquals(second.id, main.sideChatShown)
     this.workspace.closeSideChat(second)
-    this.workspace.receive(ChatMessage.ThreadRemoved(second.id))
+    this.workspace.receive(ThreadRemoved(second.id))
     assertNull(main.sideChatShown)
   }
 

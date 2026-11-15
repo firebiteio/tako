@@ -12,7 +12,9 @@ import io.firebite.tako.agent.claude.ClaudeBackend;
 import io.firebite.tako.chat.watch.PullRequestWatch;
 import io.firebite.tako.chat.watch.PullRequestWatcher;
 import io.firebite.tako.ide.project.GitInfo;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.workspace.BenchItem;
+import io.firebite.tako.ui.bridge.message.workspace.LimitItem;
+import io.firebite.tako.ui.bridge.message.workspace.ThreadItem;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -394,7 +396,7 @@ public final class ThreadStore {
     }
 
     /** Cost and tokens sum up every session of the thread, the earlier agents' included. */
-    public ChatMessage.ThreadItem toItem() {
+    public ThreadItem toItem() {
       double cost = this.costUsd;
       long tokens = this.inputTokens + this.outputTokens + this.cacheReadTokens + this.cacheWriteTokens;
       for (EarlierSession earlier : this.earlierSessions()) {
@@ -402,7 +404,7 @@ public final class ThreadStore {
         tokens += earlier.inputTokens + earlier.outputTokens + earlier.cacheReadTokens + earlier.cacheWriteTokens;
       }
       PullRequestWatch watched = this.watch;
-      return new ChatMessage.ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
+      return new ThreadItem(this.id, this.title, this.archived, this.updatedAt, this.sessionId != null,
         cost, tokens, this.branch, this.worktree, this.projectPath, this.pullRequest, this.agent(),
         this.firstTurnMillis, this.parentId, watched == null ? null : watched.number, this.pinned, this.unread,
         this.snoozedUntil, this.limit == null ? null : this.limit.item(TakoBundle.message("limit.prompt.default")),
@@ -435,8 +437,8 @@ public final class ThreadStore {
     }
 
     /** @param defaultPrompt what the resume sends when the person did not change it */
-    public ChatMessage.LimitItem item(String defaultPrompt) {
-      return new ChatMessage.LimitItem(this.label, this.resetsAt, this.scheduled,
+    public LimitItem item(String defaultPrompt) {
+      return new LimitItem(this.label, this.resetsAt, this.scheduled,
         this.prompt != null ? this.prompt : defaultPrompt, this.fireAt());
     }
   }
@@ -472,12 +474,12 @@ public final class ThreadStore {
     public String baseCommit = "";
     public List<Run> runs = new ArrayList<>();
 
-    public ChatMessage.BenchItem toItem() {
+    public BenchItem toItem() {
       List<String> threads = new ArrayList<>();
       for (Run run : this.runs) {
         threads.add(run.thread);
       }
-      return new ChatMessage.BenchItem(this.id, this.title, this.projectPath,
+      return new BenchItem(this.id, this.title, this.projectPath,
         this.baseCommit.substring(0, Math.min(SHORT_COMMIT, this.baseCommit.length())), threads);
     }
   }

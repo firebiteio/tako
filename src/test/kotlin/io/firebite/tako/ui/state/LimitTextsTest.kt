@@ -4,7 +4,7 @@ import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import io.firebite.tako.TakoBundle
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.store.ThreadStore
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.LimitItem
 import io.firebite.tako.ui.clock
 import io.firebite.tako.ui.dateTime
 import io.firebite.tako.ui.t
@@ -19,7 +19,7 @@ class LimitTextsTest : BasePlatformTestCase() {
   private val hour = 3_600_000L
 
   private fun limit(label: String?, resetsAt: Long, scheduled: Boolean = false, prompt: String = "Continue"):
-    ChatMessage.LimitItem {
+    LimitItem {
     val stop = ThreadStore.LimitStop()
     stop.label = label
     stop.resetsAt = resetsAt

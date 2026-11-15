@@ -4,7 +4,11 @@ import com.intellij.openapi.diagnostic.Logger;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
 import io.firebite.tako.chat.store.ThreadStore;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.usage.DayCost;
+import io.firebite.tako.ui.bridge.message.usage.ModelCost;
+import io.firebite.tako.ui.bridge.message.usage.ProjectCost;
+import io.firebite.tako.ui.bridge.message.usage.SessionCost;
+import io.firebite.tako.ui.bridge.message.usage.Usage;
 import java.io.IOException;
 import java.time.LocalDate;
 import java.util.ArrayList;
@@ -22,10 +26,10 @@ final class UsageReport {
   }
 
   /** Reads every transcript, which {@link SessionStore} caches, so call off the EDT. */
-  static ChatMessage.Usage build(List<ThreadStore.ProjectFolder> folders, ThreadStore threads,
+  static Usage build(List<ThreadStore.ProjectFolder> folders, ThreadStore threads,
     Map<String, String> environment) {
     List<FolderSession> all = new ArrayList<>();
-    List<ChatMessage.ProjectCost> projects = new ArrayList<>();
+    List<ProjectCost> projects = new ArrayList<>();
     for (ThreadStore.ProjectFolder folder : folders) {
       SessionStore sessions = SessionStore.forProject(environment, folder.path);
       double cost = 0;
@@ -41,7 +45,7 @@ final class UsageReport {
       } catch (IOException e) {
         LOG.warn("Could not read session usage of " + folder.path, e);
       }
-      projects.add(new ChatMessage.ProjectCost(folder.name, folder.path, cost, tokens, count));
+      projects.add(new ProjectCost(folder.name, folder.path, cost, tokens, count));
     }
 
     Map<String, ModelTotals> byModel = new TreeMap<>();
@@ -66,30 +70,30 @@ final class UsageReport {
       }
     }
 
-    List<ChatMessage.ModelCost> models = new ArrayList<>();
+    List<ModelCost> models = new ArrayList<>();
     for (Map.Entry<String, ModelTotals> entry : byModel.entrySet()) {
       ModelTotals totals = entry.getValue();
-      models.add(new ChatMessage.ModelCost(entry.getKey(), totals.input, totals.output, totals.cacheRead,
+      models.add(new ModelCost(entry.getKey(), totals.input, totals.output, totals.cacheRead,
         totals.cacheWrite, totals.cost));
     }
-    List<ChatMessage.DayCost> days = new ArrayList<>();
+    List<DayCost> days = new ArrayList<>();
     for (Map.Entry<LocalDate, Double> entry : byDay.entrySet()) {
-      days.add(new ChatMessage.DayCost(entry.getKey().toString(), entry.getValue()));
+      days.add(new DayCost(entry.getKey().toString(), entry.getValue()));
     }
-    return new ChatMessage.Usage(totalCost, totalTokens, all.size(), estimated, estimatedCost,
+    return new Usage(totalCost, totalTokens, all.size(), estimated, estimatedCost,
       SessionStore.retentionDays(environment), byDay.isEmpty() ? null : byDay.firstKey().toString(), models, days,
       projects, topSessions(all, threads));
   }
 
-  private static List<ChatMessage.SessionCost> topSessions(List<FolderSession> all, ThreadStore threads) {
+  private static List<SessionCost> topSessions(List<FolderSession> all, ThreadStore threads) {
     List<FolderSession> sorted = new ArrayList<>(all);
     sorted.sort(Comparator.comparingDouble((FolderSession session) -> session.usage().costUsd()).reversed());
-    List<ChatMessage.SessionCost> top = new ArrayList<>();
+    List<SessionCost> top = new ArrayList<>();
     for (FolderSession session : sorted.subList(0, Math.min(TOP_SESSIONS, sorted.size()))) {
       SessionUsage usage = session.usage();
       ThreadStore.Record thread = threads.findBySession(usage.sessionId());
       String title = thread != null ? thread.title : session.sessions().title(usage.sessionId());
-      top.add(new ChatMessage.SessionCost(usage.sessionId(), session.folder().path, session.folder().name,
+      top.add(new SessionCost(usage.sessionId(), session.folder().path, session.folder().name,
         title != null ? title : usage.sessionId(), usage.costUsd(), usage.totalTokens(),
         thread != null ? thread.id : null, thread != null && thread.archived, usage.estimated()));
     }

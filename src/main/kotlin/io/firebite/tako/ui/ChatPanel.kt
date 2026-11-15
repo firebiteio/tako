@@ -6,7 +6,8 @@ import com.intellij.openapi.application.ModalityState
 import com.intellij.openapi.project.Project
 import com.intellij.openapi.util.Disposer
 import io.firebite.tako.chat.ChatService
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.ThreadMessage
+import io.firebite.tako.ui.bridge.message.WorkspaceMessage
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.view.ChatScreen
 import kotlinx.coroutines.cancel
@@ -14,7 +15,7 @@ import org.jetbrains.jewel.bridge.JewelComposePanel
 import javax.swing.JComponent
 
 /**
- * The chat in Compose. The IDE posts [ChatMessage]s from any thread; they reach the chat's state on the EDT in the
+ * The chat in Compose. The IDE posts [WorkspaceMessage]s and [ThreadMessage]s from any thread; they reach the chat's state on the EDT in the
  * order posted. The chat calls the [ChatService] directly.
  */
 class ChatPanel(parent: Disposable, project: Project, service: ChatService) : Disposable {
@@ -26,12 +27,12 @@ class ChatPanel(parent: Disposable, project: Project, service: ChatService) : Di
   }
 
   /** Safe from any thread. */
-  fun post(message: ChatMessage.WorkspaceMessage) {
+  fun post(message: WorkspaceMessage) {
     this.onEdt { this.workspace.receive(message) }
   }
 
   /** Safe from any thread. */
-  fun post(message: ChatMessage.ThreadMessage, threadId: String) {
+  fun post(message: ThreadMessage, threadId: String) {
     this.onEdt { this.workspace.receive(message, threadId) }
   }
 

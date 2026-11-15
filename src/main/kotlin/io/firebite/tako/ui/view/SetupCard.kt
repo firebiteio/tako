@@ -24,7 +24,8 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Setup
+import io.firebite.tako.ui.bridge.message.thread.SetupPhase
 import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.t
@@ -38,8 +39,8 @@ private const val TAIL_LINES = 6
  * failed, a retry or a start without it.
  */
 @Composable
-fun SetupCard(thread: ThreadState, setup: ChatMessage.Setup) {
-  val failed = setup.phase == ChatMessage.SetupPhase.FAILED
+fun SetupCard(thread: ThreadState, setup: Setup) {
+  val failed = setup.phase == SetupPhase.FAILED
   var expanded by remember(thread) { mutableStateOf(false) }
   val shape = RoundedCornerShape(12.dp)
   val border = if (failed) colors.del.copy(alpha = 0.35f) else colors.softBorder
@@ -93,8 +94,8 @@ private fun SetupOutput(output: String, expanded: Boolean) {
 /** The output's last [lines] lines, without trailing blank ones. */
 internal fun setupTail(output: String, lines: Int): String = output.trimEnd().lines().takeLast(lines).joinToString("\n")
 
-private fun setupStatus(setup: ChatMessage.Setup, now: Long): String = when {
-  setup.phase == ChatMessage.SetupPhase.FAILED -> t("setup.status.failed")
+private fun setupStatus(setup: Setup, now: Long): String = when {
+  setup.phase == SetupPhase.FAILED -> t("setup.status.failed")
   setup.steps == 0 -> t("setup.status.starting")
   else -> t("setup.status.step", setup.step, setup.steps, elapsed(setup.startedAt, now))
 }

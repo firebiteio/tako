@@ -2,7 +2,7 @@ package io.firebite.tako.ui.state
 
 import androidx.compose.foundation.text.input.setTextAndPlaceCursorAtEnd
 import io.firebite.tako.chat.thread.QueuedPrompts
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Queue
 import io.firebite.tako.ui.t
 
 /** Whether queued prompts are still to go once the running turn ends. */
@@ -25,7 +25,7 @@ fun followUpDelivery(steers: Boolean, opposite: Boolean, canSteer: Boolean): Que
  * Follows the IDE's queue: each prompt's status and their order. A prompt it no longer lists stays until the agent's
  * take of it arrives, or the person took it out. Once nothing runs, a thread whose last turn ended is done.
  */
-fun ThreadState.applyQueue(message: ChatMessage.Queue) {
+fun ThreadState.applyQueue(message: Queue) {
   this.queueHeld = message.held
   val order = HashMap<Int, Int>()
   for ((index, item) in message.items.withIndex()) {

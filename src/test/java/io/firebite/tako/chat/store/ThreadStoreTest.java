@@ -7,7 +7,8 @@ import static org.junit.Assert.assertTrue;
 
 import io.firebite.tako.agent.SessionCost;
 import io.firebite.tako.ide.project.GitInfo;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.workspace.LimitItem;
+import io.firebite.tako.ui.bridge.message.workspace.ThreadItem;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
@@ -88,7 +89,7 @@ public class ThreadStoreTest {
     assertTrue(restored.scheduled);
     assertEquals("Weiter 🐙", restored.prompt);
     assertNull(reloaded.find(plain.id).limit);
-    assertEquals(new ChatMessage.LimitItem("7d Opus", 1_900_000_000_000L, true, "Weiter 🐙",
+    assertEquals(new LimitItem("7d Opus", 1_900_000_000_000L, true, "Weiter 🐙",
       1_900_000_000_000L + ThreadStore.LimitStop.GRACE_MILLIS), restored.item("Continue"));
     restored.prompt = null;
     assertEquals("Continue", restored.item("Continue").prompt());
@@ -218,7 +219,7 @@ public class ThreadStoreTest {
     assertEquals(1_800_000_000_000L, restored.snoozedUntil);
     assertEquals(1_700_000_000_000L, restored.seenAt);
     assertEquals("https://github.com/o/r/pull/7", restored.settledPullRequest);
-    ChatMessage.ThreadItem item = restored.toItem();
+    ThreadItem item = restored.toItem();
     assertTrue(item.pinned());
     assertTrue(item.unread());
     assertEquals(1_800_000_000_000L, item.snoozedUntil());

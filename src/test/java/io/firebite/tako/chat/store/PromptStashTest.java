@@ -13,7 +13,7 @@ import io.firebite.tako.ide.context.IdeContext;
 import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.context.ReviewComment;
 import io.firebite.tako.ide.context.ReviewTarget;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.thread.Submit;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -25,8 +25,8 @@ import org.junit.Test;
 public class PromptStashTest {
   private static final ImageAttachment IMAGE = new ImageAttachment("image/png", "iVBORw0KGgo=", "screenshot.png");
 
-  private static ChatMessage.Submit prompt(String text) {
-    return new ChatMessage.Submit(text, List.of(), List.of());
+  private static Submit prompt(String text) {
+    return new Submit(text, List.of(), List.of());
   }
 
   private static Path newFile() throws IOException {
@@ -45,7 +45,7 @@ public class PromptStashTest {
     ContextItem reused = IdeContext.file(PastedText.write(folder, "second paste"));
     ContextItem kept = IdeContext.file(PastedText.write(folder, "third paste"));
     PromptStash stash = open(file);
-    PromptStash.Entry entry = stash.push(new ChatMessage.Submit("Look", List.of(deleted, reused, kept), List.of()));
+    PromptStash.Entry entry = stash.push(new Submit("Look", List.of(deleted, reused, kept), List.of()));
     Files.delete(PastedText.fileOf(deleted, folder));
     Files.writeString(PastedText.fileOf(reused, folder), "a newer paste", StandardCharsets.UTF_8);
 
@@ -63,7 +63,7 @@ public class PromptStashTest {
     ContextItem review = ReviewComment.item(ReviewTarget.turn("thread-1", "/repo/Ünï.java"),
       List.of(new ReviewComment.Line(0, 3, "int x = 1; // 😀")), "rename x", ReviewComment.note("a", false, null));
     assertNotNull(review);
-    PromptStash.Entry entry = open(file).push(new ChatMessage.Submit("", List.of(review), List.of()));
+    PromptStash.Entry entry = open(file).push(new Submit("", List.of(review), List.of()));
     String saved = Files.readString(file, StandardCharsets.UTF_8);
 
     List<ContextItem> context = open(file).take(entry.id).prompt.context();
@@ -84,7 +84,7 @@ public class PromptStashTest {
     assertEquals("queued first", entries.get(1).prompt.text());
     assertEquals("older draft", entries.get(2).prompt.text());
 
-    List<ChatMessage.Submit> many = new ArrayList<>();
+    List<Submit> many = new ArrayList<>();
     for (int i = 0; i < PromptStash.MAX_ENTRIES + 5; i++) {
       many.add(prompt("queued " + i));
     }
@@ -101,7 +101,7 @@ public class PromptStashTest {
     ContextItem paste = IdeContext.file(PastedText.write(folder, "pasted"));
     ContextItem other = IdeContext.file(Files.writeString(file.resolveSibling("Parser.java"), "class Parser"));
     PromptStash stash = open(file);
-    PromptStash.Entry entry = stash.push(new ChatMessage.Submit("", List.of(paste, other), List.of()));
+    PromptStash.Entry entry = stash.push(new Submit("", List.of(paste, other), List.of()));
 
     stash.remove(entry.id);
 
@@ -115,14 +115,14 @@ public class PromptStashTest {
     Path file = newFile();
     PromptStash stash = open(file);
     ContextItem selection = ContextItem.create(ContextItem.Kind.SELECTION, "Parser.java:10-12", "int x;");
-    stash.push(new ChatMessage.Submit("  indented()\nthen the tests", List.of(selection), List.of(IMAGE)));
+    stash.push(new Submit("  indented()\nthen the tests", List.of(selection), List.of(IMAGE)));
     stash.push(prompt("Second idea"));
 
     List<PromptStash.Entry> entries = open(file).entries();
 
     assertEquals(2, entries.size());
     assertEquals("Second idea", entries.get(0).prompt.text());
-    ChatMessage.Submit first = entries.get(1).prompt;
+    Submit first = entries.get(1).prompt;
     assertEquals("  indented()\nthen the tests", first.text());
     assertEquals(List.of(selection), first.context());
     assertEquals(List.of(IMAGE), first.images());
@@ -203,6 +203,6 @@ public class PromptStashTest {
     PromptStash stash = open(newFile());
 
     assertEquals("Fix the parser", stash.push(prompt("\n  Fix the parser  \nmore")).label());
-    assertEquals("screenshot.png", stash.push(new ChatMessage.Submit("", List.of(), List.of(IMAGE))).label());
+    assertEquals("screenshot.png", stash.push(new Submit("", List.of(), List.of(IMAGE))).label());
   }
 }

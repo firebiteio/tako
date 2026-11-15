@@ -11,17 +11,19 @@ import io.firebite.tako.chat.thread.QueuedPrompts.Action;
 import io.firebite.tako.chat.thread.QueuedPrompts.Delivery;
 import io.firebite.tako.chat.thread.QueuedPrompts.SendNow;
 import io.firebite.tako.chat.thread.QueuedPrompts.Status;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.thread.Queue;
+import io.firebite.tako.ui.bridge.message.thread.QueueItem;
+import io.firebite.tako.ui.bridge.message.thread.Submit;
 import java.util.ArrayList;
 import java.util.List;
 import org.junit.Test;
 
 public class QueuedPromptsTest {
-  private final List<ChatMessage.Queue> snapshots = new ArrayList<>();
+  private final List<Queue> snapshots = new ArrayList<>();
   private final QueuedPrompts queue = new QueuedPrompts(this.snapshots::add);
 
-  private static ChatMessage.Submit prompt(String text) {
-    return new ChatMessage.Submit(text, List.of(), List.of());
+  private static Submit prompt(String text) {
+    return new Submit(text, List.of(), List.of());
   }
 
   /** A turn runs for prompt 1, which the agent took. */
@@ -31,20 +33,20 @@ public class QueuedPromptsTest {
     this.queue.taken(1, true);
   }
 
-  private ChatMessage.Queue last() {
+  private Queue last() {
     return this.snapshots.getLast();
   }
 
   private List<Integer> turns() {
     List<Integer> turns = new ArrayList<>();
-    for (ChatMessage.QueueItem item : this.last().items()) {
+    for (QueueItem item : this.last().items()) {
       turns.add(item.turn());
     }
     return turns;
   }
 
   private Status status(int turn) {
-    for (ChatMessage.QueueItem item : this.last().items()) {
+    for (QueueItem item : this.last().items()) {
       if (item.turn() == turn) {
         return item.status();
       }
@@ -384,7 +386,7 @@ public class QueuedPromptsTest {
   @Test
   public void takeEditsOnlyHeldPrompts() {
     this.runTurn();
-    ChatMessage.Submit second = prompt("second");
+    Submit second = prompt("second");
     this.queue.offer(2, second, Delivery.QUEUE, true);
     assertSame(second, this.queue.take(2));
     assertNull("twice gives nothing", this.queue.take(2));
@@ -430,7 +432,7 @@ public class QueuedPromptsTest {
     assertFalse(this.queue.isRunning());
     assertTrue(this.last().held());
     assertEquals(List.of(2, 3, 4), this.turns());
-    for (ChatMessage.QueueItem item : this.last().items()) {
+    for (QueueItem item : this.last().items()) {
       assertEquals(Status.HELD, item.status());
     }
     assertEquals(Action.SEND, this.queue.offer(5, prompt("again"), Delivery.QUEUE, true));
@@ -441,7 +443,7 @@ public class QueuedPromptsTest {
     this.runTurn();
     this.queue.offer(2, prompt("ä 😀 日本"), Delivery.QUEUE, true);
     this.queue.offer(3, prompt(""), Delivery.QUEUE, true);
-    List<ChatMessage.Submit> drained = this.queue.drain();
+    List<Submit> drained = this.queue.drain();
     assertEquals(2, drained.size());
     assertEquals("ä 😀 日本", drained.get(0).text());
     assertEquals("", drained.get(1).text());

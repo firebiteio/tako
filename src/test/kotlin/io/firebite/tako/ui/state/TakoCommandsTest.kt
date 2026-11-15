@@ -9,7 +9,8 @@ import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.store.ThreadStore
 import io.firebite.tako.ide.context.ContextItem
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.AgentOption
+import io.firebite.tako.ui.bridge.message.workspace.BenchItem
 import io.firebite.tako.ui.t
 import kotlinx.coroutines.cancel
 
@@ -141,18 +142,18 @@ class TakoCommandsTest : BasePlatformTestCase() {
 
   fun testTheAgentChangesMidThreadExceptInAParallelRun() {
     assertEquals(t("slash.error.agent.single"), this.fail("/agent codex"))
-    this.workspace.agents = listOf(ChatMessage.AgentOption("claude", "Claude Code"),
-      ChatMessage.AgentOption("codex", "Codex"))
+    this.workspace.agents = listOf(AgentOption("claude", "Claude Code"),
+      AgentOption("codex", "Codex"))
     assertEquals(TakoAction.Select(TakoCommand.AGENT, "codex"), this.resolve("/agent codex"))
     this.answeredTurn("hi")
     assertEquals(TakoAction.Select(TakoCommand.AGENT, "codex"), this.resolve("/agent codex"))
-    this.workspace.benches = listOf(ChatMessage.BenchItem("b", "Bench", null, "abc", listOf(this.thread.id)))
+    this.workspace.benches = listOf(BenchItem("b", "Bench", null, "abc", listOf(this.thread.id)))
     assertEquals(t("slash.error.agent.locked"), this.fail("/agent codex"))
   }
 
   fun testPickingTheSameAgentChangesNothing() {
-    this.workspace.agents = listOf(ChatMessage.AgentOption("claude", "Claude Code"),
-      ChatMessage.AgentOption("codex", "Codex"))
+    this.workspace.agents = listOf(AgentOption("claude", "Claude Code"),
+      AgentOption("codex", "Codex"))
     this.type("/agent claude code")
 
     this.thread.submit()

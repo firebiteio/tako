@@ -8,7 +8,7 @@ import com.intellij.openapi.project.Project;
 import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.IdeContext;
 import io.firebite.tako.ide.context.PastedText;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.thread.Submit;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -61,7 +61,7 @@ public final class PromptStash {
    *
    * @throws IOException when it could not be saved; the stash is then as before
    */
-  public synchronized Entry push(ChatMessage.Submit prompt) throws IOException {
+  public synchronized Entry push(Submit prompt) throws IOException {
     Entry entry = this.entry(prompt);
     this.save(List.of(entry));
     return entry;
@@ -73,7 +73,7 @@ public final class PromptStash {
    * @return how many of them the stash kept
    * @throws IOException when they could not be saved; the stash is then as before
    */
-  public synchronized int pushAll(List<ChatMessage.Submit> prompts) throws IOException {
+  public synchronized int pushAll(List<Submit> prompts) throws IOException {
     List<Entry> added = new ArrayList<>();
     for (int i = prompts.size() - 1; i >= 0; i--) {
       added.add(this.entry(prompts.get(i)));
@@ -82,7 +82,7 @@ public final class PromptStash {
     return Math.min(added.size(), MAX_ENTRIES);
   }
 
-  private Entry entry(ChatMessage.Submit prompt) {
+  private Entry entry(Submit prompt) {
     Entry entry = new Entry();
     entry.id = UUID.randomUUID().toString();
     entry.prompt = prompt;
@@ -138,7 +138,7 @@ public final class PromptStash {
     for (ContextItem item : entry.prompt.context()) {
       context.add(this.withPastedFile(item, entry.pasted.get(item.id())));
     }
-    entry.prompt = new ChatMessage.Submit(entry.prompt.text(), context, entry.prompt.images());
+    entry.prompt = new Submit(entry.prompt.text(), context, entry.prompt.images());
     return entry;
   }
 
@@ -240,8 +240,8 @@ public final class PromptStash {
     }
     for (Entry entry : data.entries) {
       if (entry != null && entry.id != null && entry.prompt != null) {
-        ChatMessage.Submit prompt = entry.prompt;
-        entry.prompt = new ChatMessage.Submit(Objects.requireNonNullElse(prompt.text(), ""), present(prompt.context()),
+        Submit prompt = entry.prompt;
+        entry.prompt = new Submit(Objects.requireNonNullElse(prompt.text(), ""), present(prompt.context()),
           present(prompt.images()));
         if (entry.pasted == null) {
           entry.pasted = new HashMap<>();
@@ -267,7 +267,7 @@ public final class PromptStash {
   /** One stashed draft. */
   public static final class Entry {
     public String id = "";
-    public ChatMessage.Submit prompt = new ChatMessage.Submit("", List.of(), List.of());
+    public Submit prompt = new Submit("", List.of(), List.of());
     public long savedAt;
     /** The text of each pasted text chip, by chip id. */
     public Map<String, String> pasted = new HashMap<>();

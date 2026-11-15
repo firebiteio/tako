@@ -6,7 +6,7 @@ import io.firebite.tako.agent.PermissionPrompt
 import io.firebite.tako.agent.ToolKind
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.store.ThreadStore
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.BenchItem
 import io.firebite.tako.ui.t
 import io.firebite.tako.ui.textLocale
 import io.firebite.tako.ui.view.StatusKind
@@ -105,7 +105,7 @@ class ThreadActionsTest : BasePlatformTestCase() {
 
   fun testRunsKeepTheirPlaceAndName() {
     val run = this.thread()
-    this.workspace.benches = listOf(ChatMessage.BenchItem("b", "Fix", null, "0123456", listOf(run.id)))
+    this.workspace.benches = listOf(BenchItem("b", "Fix", null, "0123456", listOf(run.id)))
 
     assertEquals(listOf(ThreadAction.MARK_UNREAD, ThreadAction.REGENERATE_TITLE), this.actions(run))
   }

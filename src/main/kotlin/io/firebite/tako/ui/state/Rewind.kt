@@ -1,6 +1,6 @@
 package io.firebite.tako.ui.state
 
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Submit
 
 /**
  * The typed texts of the prompts the agent got, up to and including the one that starts [turn], in the order its
@@ -78,7 +78,7 @@ fun ThreadState.onRewound(rewound: Boolean, error: String?) {
     if (this.typed.isNotEmpty() || this.images.isNotEmpty() || this.contexts.isNotEmpty()) {
       this.toggleStash()
     }
-    this.putBack(ChatMessage.Submit(prompt.text, prompt.contexts.filter { it.text.isNotEmpty() }, prompt.images))
+    this.putBack(Submit(prompt.text, prompt.contexts.filter { it.text.isNotEmpty() }, prompt.images))
     this.workspace.focusComposer++
   }
   error?.let { this.showAlert(it) }

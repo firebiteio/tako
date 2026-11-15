@@ -9,7 +9,8 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.unit.dp
 import com.intellij.openapi.ui.MessageDialogBuilder
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.workspace.BenchItem
+import io.firebite.tako.ui.bridge.message.workspace.RunChanges
 import io.firebite.tako.ui.duration
 import io.firebite.tako.ui.elapsed
 import io.firebite.tako.ui.money
@@ -29,7 +30,7 @@ fun BenchView(workspace: Workspace, modifier: Modifier) {
     IconBtn(Icons.refresh, t("bench.refresh"), iconSize = 14.dp) { workspace.openBench(bench.id) }
   }) {
     ViewNote(t("bench.note", bench.baseCommit))
-    val runs = produceState<List<ChatMessage.RunChanges>?>(null, bench.id, workspace.benchLoads) {
+    val runs = produceState<List<RunChanges>?>(null, bench.id, workspace.benchLoads) {
       this.value = null
       this.value = withContext(Dispatchers.IO) { workspace.service.compareBench(bench.id) }
     }.value
@@ -46,7 +47,7 @@ fun BenchView(workspace: Workspace, modifier: Modifier) {
 }
 
 /** @param index the run's number, from 1 */
-private fun runRow(workspace: Workspace, bench: ChatMessage.BenchItem, run: ChatMessage.RunChanges,
+private fun runRow(workspace: Workspace, bench: BenchItem, run: RunChanges,
   index: Int): TableRow {
   val thread = workspace.threads[bench.threads.getOrNull(index - 1)]
   val name = thread?.runName(index) ?: "#$index"

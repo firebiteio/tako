@@ -5,7 +5,9 @@ import io.firebite.tako.agent.AgentEvent
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.thread.QueuedPrompts.Delivery
 import io.firebite.tako.chat.thread.QueuedPrompts.Status
-import io.firebite.tako.ui.bridge.ChatMessage
+import io.firebite.tako.ui.bridge.message.thread.Queue
+import io.firebite.tako.ui.bridge.message.thread.QueueItem
+import io.firebite.tako.ui.bridge.message.workspace.ThreadItem
 import kotlinx.coroutines.cancel
 
 class QueueTest : BasePlatformTestCase() {
@@ -15,7 +17,7 @@ class QueueTest : BasePlatformTestCase() {
   override fun setUp() {
     super.setUp()
     this.workspace = Workspace(ChatService.getInstance(this.project), this.project)
-    this.thread = ThreadState(this.workspace, ChatMessage.ThreadItem("thread", "Chat", false, 0, false, 0.0, 0, null,
+    this.thread = ThreadState(this.workspace, ThreadItem("thread", "Chat", false, 0, false, 0.0, 0, null,
       null, null, null, "claude", 0, null, null, false, false, 0, null, false, 0))
   }
 
@@ -31,7 +33,7 @@ class QueueTest : BasePlatformTestCase() {
     QueuedPrompt(no, Prompt(text, emptyList(), emptyList())).also { this.thread.queued.add(it) }
 
   private fun snapshot(held: Boolean, running: Boolean, vararg items: Pair<Int, Status>) =
-    ChatMessage.Queue(items.map { ChatMessage.QueueItem(it.first, it.second) }, held, running)
+    Queue(items.map { QueueItem(it.first, it.second) }, held, running)
 
   fun testDraftAndQueuedTextMerge() {
     assertEquals("queued", mergeDraft("", "queued"))

@@ -15,7 +15,11 @@ import io.firebite.tako.ide.Async;
 import io.firebite.tako.ide.context.ReviewTarget;
 import io.firebite.tako.ide.editor.IdeFiles;
 import io.firebite.tako.ide.project.Worktrees;
-import io.firebite.tako.ui.bridge.ChatMessage;
+import io.firebite.tako.ui.bridge.message.ChatError;
+import io.firebite.tako.ui.bridge.message.thread.BenchFailed;
+import io.firebite.tako.ui.bridge.message.workspace.BenchItem;
+import io.firebite.tako.ui.bridge.message.workspace.ChatBenches;
+import io.firebite.tako.ui.bridge.message.workspace.RunChanges;
 import java.io.IOException;
 import java.nio.file.DirectoryNotEmptyException;
 import java.nio.file.Files;
@@ -50,11 +54,11 @@ final class Benches {
   }
 
   void post() {
-    List<ChatMessage.BenchItem> items = new ArrayList<>();
+    List<BenchItem> items = new ArrayList<>();
     for (ThreadStore.Bench bench : this.store.benches()) {
       items.add(bench.toItem());
     }
-    this.service.post(new ChatMessage.Benches(items));
+    this.service.post(new ChatBenches(items));
   }
 
   /** Checks the folder is in a git repository and asks before leaving uncommitted changes out. Must run on the EDT. */
@@ -84,31 +88,31 @@ final class Benches {
 
   /** What each run changed, in run order, or null for an unknown bench. Reads git, so call off the EDT. */
   @Nullable
-  List<ChatMessage.RunChanges> compare(String benchId) {
+  List<RunChanges> compare(String benchId) {
     ThreadStore.Bench bench = this.store.findBench(benchId);
     if (bench == null) {
       return null;
     }
     Map<String, String> environment = EnvironmentUtil.getEnvironmentMap();
-    List<CompletableFuture<ChatMessage.RunChanges>> lookups = new ArrayList<>();
+    List<CompletableFuture<RunChanges>> lookups = new ArrayList<>();
     for (ThreadStore.Run run : bench.runs) {
       lookups.add(CompletableFuture.supplyAsync(() -> changesOf(run, bench.baseCommit, environment),
         AppExecutorUtil.getAppExecutorService()));
     }
-    List<ChatMessage.RunChanges> runs = new ArrayList<>();
-    for (CompletableFuture<ChatMessage.RunChanges> lookup : lookups) {
+    List<RunChanges> runs = new ArrayList<>();
+    for (CompletableFuture<RunChanges> lookup : lookups) {
       runs.add(lookup.join());
     }
     return runs;
   }
 
-  private static ChatMessage.RunChanges changesOf(ThreadStore.Run run, String commit,
+  private static RunChanges changesOf(ThreadStore.Run run, String commit,
     Map<String, String> environment) {
     try {
       Worktrees.DiffStat stat = Worktrees.diffStat(Path.of(run.worktree), commit, environment);
-      return new ChatMessage.RunChanges(stat.files(), stat.added(), stat.removed(), null);
+      return new RunChanges(stat.files(), stat.added(), stat.removed(), null);
     } catch (Worktrees.GitException e) {
-      return new ChatMessage.RunChanges(0, 0, 0, e.getMessage());
+      return new RunChanges(0, 0, 0, e.getMessage());
     }
   }
 
@@ -123,13 +127,13 @@ final class Benches {
       List<EditPreview> previews = Worktrees.changes(Path.of(run.worktree), bench.baseCommit,
         EnvironmentUtil.getEnvironmentMap());
       if (previews.isEmpty()) {
-        this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.no.changes", runIndex)));
+        this.service.post(new ChatError(TakoBundle.message("error.bench.no.changes", runIndex)));
         return;
       }
       Async.onEdt(() -> IdeFiles.showDiffs(this.project, previews,
         preview -> ReviewTarget.run(run.thread, Path.of(run.worktree).resolve(preview.filePath()).toString())));
     } catch (Worktrees.GitException e) {
-      this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.diff", runIndex, e.getMessage())));
+      this.service.post(new ChatError(TakoBundle.message("error.bench.diff", runIndex, e.getMessage())));
     }
   }
 
@@ -145,7 +149,7 @@ final class Benches {
         EnvironmentUtil.getEnvironmentMap());
     } catch (Worktrees.GitException e) {
       this.applying.remove(bench.id);
-      this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.apply", runIndex, e.getMessage())));
+      this.service.post(new ChatError(TakoBundle.message("error.bench.apply", runIndex, e.getMessage())));
       return;
     }
     VfsUtil.markDirtyAndRefresh(true, true, true, Path.of(bench.repository).toFile());
@@ -257,7 +261,7 @@ final class Benches {
 
   /** @param error why, empty when the person cancelled */
   private void fail(BenchRequest request, String error) {
-    this.service.post(new ChatMessage.BenchFailed(request.prompt(), error), request.source());
+    this.service.post(new BenchFailed(request.prompt(), error), request.source());
   }
 
   /** Removes the worktrees, then the bench's folder and the folder of all benches once they are empty. */
@@ -272,7 +276,7 @@ final class Benches {
         Worktrees.remove(repository, Path.of(run.worktree), run.branch, environment);
       } catch (Worktrees.GitException e) {
         LOG.warn("Could not remove the worktree " + run.worktree, e);
-        this.service.post(new ChatMessage.Error(TakoBundle.message("error.bench.remove", run.worktree,
+        this.service.post(new ChatError(TakoBundle.message("error.bench.remove", run.worktree,
           e.getMessage())));
       }
     }
