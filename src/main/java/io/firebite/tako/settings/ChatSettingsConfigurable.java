@@ -14,6 +14,7 @@ import com.intellij.util.ui.JBUI;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentRegistry;
 import io.firebite.tako.chat.ChatService;
+import io.firebite.tako.chat.Orchestration;
 import java.awt.FlowLayout;
 import java.util.List;
 import javax.swing.DefaultComboBoxModel;
@@ -31,6 +32,7 @@ public final class ChatSettingsConfigurable implements Configurable {
   private JBCheckBox settleIdleBox;
   private JBIntSpinner settleDaysSpinner;
   private JBTextArea delegationNotesArea;
+  private JBTextArea orchestrationArea;
 
   @Override
   public @Nls String getDisplayName() {
@@ -55,6 +57,9 @@ public final class ChatSettingsConfigurable implements Configurable {
     this.delegationNotesArea = new JBTextArea(5, 0);
     this.delegationNotesArea.setLineWrap(true);
     this.delegationNotesArea.setWrapStyleWord(true);
+    this.orchestrationArea = new JBTextArea(10, 0);
+    this.orchestrationArea.setLineWrap(true);
+    this.orchestrationArea.setWrapStyleWord(true);
     JPanel panel = FormBuilder.createFormBuilder()
       .addLabeledComponent(TakoBundle.message("settings.tako.default.agent"), this.defaultAgentBox)
       .addComponentToRightColumn(new JBLabel(TakoBundle.message("settings.tako.default.agent.hint")))
@@ -70,6 +75,9 @@ public final class ChatSettingsConfigurable implements Configurable {
       .addLabeledComponent(TakoBundle.message("settings.tako.delegation.notes"),
         new JBScrollPane(this.delegationNotesArea), true)
       .addComponent(new JBLabel(TakoBundle.message("settings.tako.delegation.notes.hint")))
+      .addLabeledComponent(TakoBundle.message("settings.tako.orchestration"),
+        new JBScrollPane(this.orchestrationArea), true)
+      .addComponent(new JBLabel(TakoBundle.message("settings.tako.orchestration.hint")))
       .addComponentFillVertically(new JPanel(), 0)
       .getPanel();
     this.reset();
@@ -84,7 +92,8 @@ public final class ChatSettingsConfigurable implements Configurable {
       || this.settlePullRequestBox.isSelected() != data.settleOnPullRequest
       || this.settleIdleBox.isSelected() != data.settleIdle
       || this.settleDaysSpinner.getNumber() != data.idleDays()
-      || !this.delegationNotesArea.getText().equals(data.delegationNotes);
+      || !this.delegationNotesArea.getText().equals(data.delegationNotes)
+      || !this.orchestrationText().equals(data.orchestrationInstructions);
   }
 
   @Override
@@ -98,6 +107,7 @@ public final class ChatSettingsConfigurable implements Configurable {
     data.settleIdle = this.settleIdleBox.isSelected();
     data.settleIdleDays = this.settleDaysSpinner.getNumber();
     data.delegationNotes = this.delegationNotesArea.getText();
+    data.orchestrationInstructions = this.orchestrationText();
     if (changed) {
       ChatService.postSettingsToOpenProjects();
     }
@@ -120,9 +130,16 @@ public final class ChatSettingsConfigurable implements Configurable {
     this.settleDaysSpinner.setNumber(data.idleDays());
     this.settleDaysSpinner.setEnabled(data.settleIdle);
     this.delegationNotesArea.setText(data.delegationNotes);
+    this.orchestrationArea.setText(Orchestration.instructions());
   }
 
   private String selectedId() {
     return this.defaultAgentBox.getSelectedItem() instanceof AgentRegistry.Choice choice ? choice.id() : "";
+  }
+
+  /** The area's text to store: blank when it holds the defaults, so later default changes still reach it. */
+  private String orchestrationText() {
+    String text = this.orchestrationArea.getText();
+    return text.isBlank() || text.equals(Orchestration.DEFAULT_INSTRUCTIONS) ? "" : text;
   }
 }

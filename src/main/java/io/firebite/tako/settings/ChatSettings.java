@@ -55,6 +55,8 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
     public int settleIdleDays = DEFAULT_IDLE_DAYS;
     /** Free text on which agent or model suits which work, for agents that hand tasks to other threads. */
     public String delegationNotes = "";
+    /** What {@code /orchestrate} tells the agent. Blank keeps the built in instructions. */
+    public String orchestrationInstructions = "";
 
     @OptionTag("executablePath")
     public String claudePath = "";

@@ -1,10 +1,12 @@
 package io.firebite.tako.chat;
 
 import io.firebite.tako.ide.context.ContextItem;
+import io.firebite.tako.settings.ChatSettings;
 
 /** The orchestrator role Tako's `/orchestrate` gives a thread's agent for one task. */
 public final class Orchestration {
-  private static final String INSTRUCTIONS = """
+  /** What the orchestrator is told when the settings hold no instructions of their own. */
+  public static final String DEFAULT_INSTRUCTIONS = """
     You are the orchestrator for the task above. Plan it and delegate the parts worth delegating to other Tako threads.
 
     1. Understand the task and the relevant code yourself first.
@@ -31,6 +33,12 @@ public final class Orchestration {
    * and transcripts show the task alone.
    */
   public static ContextItem context(String label) {
-    return ContextItem.create(ContextItem.Kind.SELECTION, label, INSTRUCTIONS);
+    return ContextItem.create(ContextItem.Kind.SELECTION, label, instructions());
+  }
+
+  /** The instructions from the settings, or the defaults when those are blank. */
+  public static String instructions() {
+    String custom = ChatSettings.state().orchestrationInstructions;
+    return custom.isBlank() ? DEFAULT_INSTRUCTIONS : custom;
   }
 }
