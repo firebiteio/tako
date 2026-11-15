@@ -99,6 +99,7 @@ intellijPlatform {
     ideaVersion {
       sinceBuild = "262"
     }
+    changeNotes = "Initial release."
   }
   instrumentCode = false
   buildSearchableOptions = false
