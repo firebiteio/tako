@@ -1,3 +1,4 @@
+import org.jetbrains.changelog.Changelog
 import org.jetbrains.intellij.platform.gradle.TestFrameworkType
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompile
@@ -9,6 +10,7 @@ plugins {
   id("checkstyle")
   id("com.diffplug.spotless") version "8.10.3"
   id("org.jetbrains.intellij.platform") version "2.19.0"
+  id("org.jetbrains.changelog") version "2.5.0"
 }
 
 group = "io.firebite"
@@ -89,6 +91,11 @@ spotless {
   }
 }
 
+changelog {
+  groups.empty()
+  repositoryUrl = "https://github.com/firebiteio/tako"
+}
+
 checkstyle {
   toolVersion = "14.3.0"
   configFile = file("config/checkstyle/checkstyle.xml")
@@ -99,7 +106,12 @@ intellijPlatform {
     ideaVersion {
       sinceBuild = "262"
     }
-    changeNotes = "Initial release."
+    changeNotes = providers.provider {
+      with(changelog) {
+        renderItem((getOrNull(project.version.toString()) ?: getUnreleased()).withHeader(false).withEmptySections(false),
+          Changelog.OutputType.HTML)
+      }
+    }
   }
   instrumentCode = false
   buildSearchableOptions = false

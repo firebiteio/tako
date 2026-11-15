@@ -132,7 +132,13 @@ Every push to `master` builds the plugin and replaces the [nightly pre-release](
 
 ### Releasing
 
-Push a tag like `v0.2.0`. The release workflow builds that version, runs the checks, signs the plugin, publishes it to the JetBrains Marketplace and creates a GitHub release with the signed zip. It needs these repository secrets:
+Add changes under `## [Unreleased]` in `CHANGELOG.md` as you go. To release:
+
+1. Set `pluginVersion` in `gradle.properties`, e.g. `0.2.0`.
+2. Run `./gradlew patchChangelog` to move the unreleased notes under that version.
+3. Commit, then push a tag with the same version, e.g. `v0.2.0`.
+
+The release workflow fails if the tag and `pluginVersion` differ or `CHANGELOG.md` has no section for the version. It runs the checks, signs the plugin, publishes it to the JetBrains Marketplace and creates a GitHub release with the signed zip. It needs these repository secrets:
 
 - `PUBLISH_TOKEN`, a JetBrains Marketplace token
 - `CERTIFICATE_CHAIN`, `PRIVATE_KEY` and `PRIVATE_KEY_PASSWORD` for [plugin signing](https://plugins.jetbrains.com/docs/intellij/plugin-signing.html)
