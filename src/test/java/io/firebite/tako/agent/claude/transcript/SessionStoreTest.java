@@ -19,9 +19,8 @@ public class SessionStoreTest {
 
   @Test
   public void encodesProjectPathsLikeTheCli() {
-    assertEquals("D--Development-Prototypes-claude-mods",
-      SessionStore.encode("D:\\Development\\Prototypes\\claude-mods"));
-    assertEquals("D--Development-Prototypes-claude-mods", SessionStore.encode("D:/Development/Prototypes/claude-mods"));
+    assertEquals("D--Projects-my-app", SessionStore.encode("D:\\Projects\\my-app"));
+    assertEquals("D--Projects-my-app", SessionStore.encode("D:/Projects/my-app"));
   }
 
   @Test
