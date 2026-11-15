@@ -18,23 +18,35 @@ It works with:
 - Comment on lines in those diffs, or in any file, and send the comments to the agent together
 - Rewind a thread to before one of your prompts and edit it, with or without putting the files back (Claude Code and Codex)
 - The diff button in the thread header opens the thread folder's uncommitted changes, its branch against the default branch, or one of its commits in the diff viewer
+- The git button commits, pushes and opens a GitHub pull request or GitLab merge request. The thread's agent writes the commit message and description
+- Watch a thread's pull request, and the agent wakes up when checks fail or pass, a review comes in, the branch gets conflicts, or it is merged
+- In a wide tool window, a work pane beside the conversation lists the thread's changed files, its plan or task list, and its subagents and background tasks
+- Implement a plan the agent proposes in a new thread or git worktree, or save it as Markdown
+- Agents can start, follow and steer other threads through tools Tako gives them. `/orchestrate <task>` has the agent split a task across threads with the agents and models that suit each part
 - Threads are grouped by project. Archive them, or resume a session you started in the agent's CLI
 - Pin, rename, snooze or mark threads unread from their menu. A thread whose agent finished or asked something while you looked elsewhere gets a dot until you open it. Optionally archive threads automatically once their pull request is merged or after some days without activity (Settings > Tools > Tako)
 - Each thread has its own model, mode and effort
 - Switch a thread to another agent between turns. The new agent starts a fresh session and its first prompt carries the conversation so far, cut to about 16k tokens
-- Type `@` to mention a file or another thread, paste images, or send the editor selection
+- Type `@` to mention a file or another thread, paste images, or send the editor, terminal or console selection. Tako attaches large pastes as a text file
+- Up and Down in an empty composer recall sent prompts. `Ctrl+S` stashes the draft and brings it back later
 - Prompts sent while the agent works queue up. Edit, reorder or remove them, send one now, or steer the running turn with it (Claude Code, Codex)
-- Type `/` for the agent's commands and Tako's own, marked Tako: `/model`, `/effort`, `/mode`, `/new`, `/fork`, `/archive` and more. `//model` sends `/model` to the agent instead
+- Type `/` for the agent's commands and Tako's own, marked Tako: `/model`, `/effort`, `/mode`, `/new`, `/fork`, `/archive`, `/title`, `/restart` and more. `//model` sends `/model` to the agent instead
 - Ask a side question with `/side` or `/btw` while the thread works, then bring the answer back into its composer
 - Fix Problems sends a file's inspection results to the agent
 - For Claude Code, a context meter and a usage view with cost and tokens per session
 - When Claude Code or Codex stops on a usage limit, the thread says when the limit resets and can send a continue prompt then
+- A status bar widget counts threads that are working or waiting for you
 - Optional parallel runs: one prompt goes to several agents or models at once, each in its own git worktree. Compare what each changed, cost and took, then apply the best one
 
 ## Requirements
 
 - An IntelliJ-based IDE, 2026.2 or newer
 - At least one agent CLI, either on your `PATH` or with its path set in the settings
+- For pull requests: the [GitHub CLI](https://cli.github.com) (`gh`) or, for GitLab, [`glab`](https://gitlab.com/gitlab-org/cli), logged in
+
+## Installation
+
+In the IDE, open Settings > Plugins > Marketplace, search for Tako and install it. To try the latest changes, install a [nightly build](#nightly-builds) instead.
 
 ## Usage
 
@@ -71,6 +83,18 @@ A side chat answers a question about a thread without adding to it. Type `/side`
 With Claude Code the side chat continues a copy of the thread's session up to its last finished turn. Codex and ACP agents start a new session, with the thread's prompts and answers attached as a Main thread chip.
 
 Each answer in a side chat has a Bring back button, which quotes the answer in the thread's composer. Side chats show only in their thread's pane, not in the thread list. Archiving a thread stops its side chats, and closing it closes them.
+
+### Pull requests
+
+The git button in the thread header offers Commit, Commit and Push, Push, and Create Pull Request, or Merge Request on GitLab, also self-hosted. Tako asks the thread's agent for the commit message and the pull request's title and description, and shows them for editing before it runs anything. Pull requests use `gh` or `glab` and need a branch other than the default one.
+
+The watch button in the header watches the branch's open pull request. Tako checks it every 2 minutes and wakes the agent when checks fail or pass, someone reviews or comments, the branch gets merge conflicts, or the pull request is merged or closed. Agents can start and stop a watch themselves.
+
+### Threads that start threads
+
+Tako gives every agent tools to list the agents you set up, start threads, read and message other threads, wait for them and stop them. Threads an agent starts are nested under it in the sidebar, and can run in their own git worktree.
+
+`/orchestrate <task>` makes the thread's agent the orchestrator for one task. It plans the task, does the small parts itself, hands the rest to new threads, then checks their results. To steer its choice of agent, model and effort, describe what suits which work in the Delegation field under Settings > Tools > Tako, e.g. "sonnet: mechanical edits. codex: hard debugging."
 
 ### Parallel runs
 
