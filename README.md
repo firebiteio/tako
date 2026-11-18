@@ -148,6 +148,8 @@ The release workflow fails if the tag and `pluginVersion` differ or `CHANGELOG.m
 
 Publishing can only update a plugin that already exists on the Marketplace, so upload the first version by hand.
 
+If the Marketplace has a version but its GitHub release is missing, run the Release workflow by hand with the tag, e.g. `gh workflow run release.yml -f tag=v0.2.0`. It skips the Marketplace upload.
+
 ## License
 
 Copyright 2026 The Tako Authors. Licensed under the [Apache License 2.0](LICENSE).
