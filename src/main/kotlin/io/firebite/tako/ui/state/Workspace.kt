@@ -138,6 +138,9 @@ class Workspace(val service: ChatService, val project: Project) {
 
   fun agentName(id: String): String? = this.agents.firstOrNull { it.id == id }?.name
 
+  /** The agent of that id, or the default one when the id is unknown, as the IDE picks it. */
+  fun agentOf(id: String): AgentOption? = this.agents.firstOrNull { it.id == id } ?: this.agents.firstOrNull()
+
   fun projectList(): List<ProjectItem> {
     if (this.projects.isNotEmpty()) {
       return this.projects

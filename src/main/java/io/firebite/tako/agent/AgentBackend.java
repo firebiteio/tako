@@ -63,7 +63,15 @@ public interface AgentBackend {
    * the CLI keeps itself is only checked once it starts. Looks for files, so call off the EDT.
    */
   default boolean canStart() {
-    return true;
+    return this.setupProblem() == null;
+  }
+
+  /**
+   * What keeps {@link #start} from running now, null when nothing Tako can see does. A login the CLI keeps itself is
+   * only checked once it starts. Looks for files, so call off the EDT.
+   */
+  default @Nullable SetupProblem setupProblem() {
+    return null;
   }
 
   /** Whether {@link #ask} can run now, e.g. the agent's CLI is installed. Looks for files, so call off the EDT. */

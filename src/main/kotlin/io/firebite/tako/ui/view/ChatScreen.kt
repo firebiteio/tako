@@ -54,6 +54,7 @@ import com.intellij.openapi.ide.CopyPasteManager
 import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
+import io.firebite.tako.ui.state.agentToSetUp
 import io.firebite.tako.ui.state.shownSideChat
 import io.firebite.tako.ui.t
 import java.awt.datatransfer.StringSelection
@@ -144,7 +145,9 @@ private fun Main(workspace: Workspace, markdown: ChatMarkdown, actions: CodeActi
         ThreadArea(thread, markdown, actions, Modifier.weight(1f))
       }
     }
-    val alerts = workspace.alerts + (workspace.active?.alerts ?: emptyList())
+    val active = workspace.active
+    val threadAlerts = active?.alerts?.filter { !it.start || active.agentToSetUp == null } ?: emptyList()
+    val alerts = workspace.alerts + threadAlerts
     if (alerts.isNotEmpty()) {
       val rem = textStyle.fontSize.value
       Column(Modifier.align(Alignment.TopCenter).padding(top = 52.dp, start = rem.dp, end = rem.dp)

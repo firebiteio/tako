@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- A new thread whose agent is not installed or has no API key now shows how to set it up. It links the installer, asks for an API key or switches to the Claude CLI login, and offers the agents that are ready.
+
 ## [0.1.1] - 2026-11-15
 
 - Fix the composer suggestion popup and context panel crashing on IntelliJ IDEA 2026.2.

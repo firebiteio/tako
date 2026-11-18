@@ -32,6 +32,8 @@ import io.firebite.tako.ide.context.ContextItem;
 import io.firebite.tako.ide.context.PastedText;
 import io.firebite.tako.ide.project.Checkpoints;
 import io.firebite.tako.mcp.McpServer;
+import io.firebite.tako.settings.ApiKeyStore;
+import io.firebite.tako.settings.AuthMode;
 import io.firebite.tako.settings.ChatSettings;
 import io.firebite.tako.ui.ChatPanel;
 import io.firebite.tako.ui.bridge.message.ChatError;
@@ -62,6 +64,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.concurrent.ScheduledFuture;
 import java.util.concurrent.TimeUnit;
@@ -84,6 +87,9 @@ public final class ChatService implements Disposable {
   private static final Map<String, Long> LAST_RESUMES = new ConcurrentHashMap<>();
   /** Across projects, as an agent offers the same models in each. */
   private static final AgentCatalog AGENTS = new AgentCatalog();
+  /** One at a time, so the chat gets each agent list in the order the checks began. */
+  private static final Executor AGENT_CHECKS = AppExecutorUtil.createBoundedApplicationPoolExecutor("Tako agent checks",
+    1);
 
   private final Project project;
   private final ThreadStore store;
@@ -309,13 +315,33 @@ public final class ChatService implements Disposable {
     }
   }
 
-  /** Starts again every open thread whose agent failed to start, after the settings that may have broken it changed. */
+  /**
+   * Checks each agent's setup again and starts again every open thread whose agent failed to start, after the settings
+   * or programs that may have broken it changed. Must run on the EDT.
+   */
   public static void retryFailedStartsInOpenProjects() {
     for (Project project : ProjectManager.getInstance().getOpenProjects()) {
-      for (ChatController controller : ChatService.getInstance(project).controllers.values()) {
+      ChatService service = ChatService.getInstance(project);
+      service.postAgents();
+      for (ChatController controller : service.controllers.values()) {
         controller.retryFailedStart();
       }
     }
+  }
+
+  /** Signs Claude Code in with an API key, kept in the password safe, then retries failed starts. Must run on the EDT. */
+  public static void useClaudeApiKey(String apiKey) {
+    ChatSettings.state().authMode = AuthMode.API_KEY;
+    Async.inBackground(() -> {
+      ApiKeyStore.save(apiKey);
+      Async.onEdt(ChatService::retryFailedStartsInOpenProjects);
+    });
+  }
+
+  /** Lets Claude Code use the login of its own CLI, then retries failed starts. Must run on the EDT. */
+  public static void useClaudeCliLogin() {
+    ChatSettings.state().authMode = AuthMode.CLI_LOGIN;
+    retryFailedStartsInOpenProjects();
   }
 
   private void showInitialState() {
@@ -992,13 +1018,15 @@ public final class ChatService implements Disposable {
     return this.benches.compare(benchId);
   }
 
-  /** Tells the chat which agents a thread can run. */
+  /** Tells the chat which agents a thread can run and what keeps each from starting. Checks in the background. */
   public void postAgents() {
-    List<AgentOption> agents = new ArrayList<>();
-    for (AgentBackend backend : AgentRegistry.backends(EnvironmentUtil.getEnvironmentMap())) {
-      agents.add(new AgentOption(backend.id(), backend.displayName()));
-    }
-    this.post(new Agents(agents));
+    AGENT_CHECKS.execute(() -> {
+      List<AgentOption> agents = new ArrayList<>();
+      for (AgentBackend backend : AgentRegistry.backends(EnvironmentUtil.getEnvironmentMap())) {
+        agents.add(new AgentOption(backend.id(), backend.displayName(), backend.setupProblem()));
+      }
+      this.post(new Agents(agents));
+    });
   }
 
   private void refreshActiveGit() {

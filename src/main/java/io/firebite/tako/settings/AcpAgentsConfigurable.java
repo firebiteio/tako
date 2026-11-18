@@ -57,6 +57,7 @@ public final class AcpAgentsConfigurable implements Configurable {
   public void apply() {
     ChatSettings.state().acpAgents = this.lines();
     ChatService.postSettingsToOpenProjects();
+    ChatService.retryFailedStartsInOpenProjects();
   }
 
   @Override

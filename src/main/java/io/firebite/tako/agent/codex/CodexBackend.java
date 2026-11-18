@@ -18,6 +18,7 @@ import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
 import io.firebite.tako.agent.Processes;
 import io.firebite.tako.agent.PromptText;
+import io.firebite.tako.agent.SetupProblem;
 import io.firebite.tako.agent.rpc.JsonRpcConnection;
 import io.firebite.tako.json.Json;
 import java.io.IOException;
@@ -210,10 +211,10 @@ public final class CodexBackend implements AgentBackend {
     return this.locate(this.environment) != null;
   }
 
-  /** The CLI is found; Codex checks its own login when it starts. */
+  /** Codex checks its own login when it starts. */
   @Override
-  public boolean canStart() {
-    return this.canAsk();
+  public @Nullable SetupProblem setupProblem() {
+    return this.canAsk() ? null : SetupProblem.NOT_INSTALLED;
   }
 
   @Override

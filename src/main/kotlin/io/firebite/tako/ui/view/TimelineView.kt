@@ -62,6 +62,7 @@ import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Turn
 import io.firebite.tako.ui.state.TurnItem
 import io.firebite.tako.ui.state.WorkTab
+import io.firebite.tako.ui.state.agentToSetUp
 import io.firebite.tako.ui.state.bringBack
 import io.firebite.tako.ui.state.canActOn
 import io.firebite.tako.ui.state.canBringBack
@@ -182,6 +183,9 @@ fun ThreadView(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions
     if (thread.ownTurns.isEmpty()) {
       Spacer(Modifier.weight(1f))
       Hero(thread)
+      thread.agentToSetUp?.let { agent ->
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) { AgentSetupCard(thread, agent) }
+      }
       Dock(thread, markdown, actions)
       Spacer(Modifier.weight(1f))
     } else {

@@ -10,6 +10,7 @@ import com.intellij.util.ui.FormBuilder;
 import io.firebite.tako.TakoBundle;
 import io.firebite.tako.agent.AgentInfo;
 import io.firebite.tako.agent.codex.CodexBackend;
+import io.firebite.tako.chat.ChatService;
 import java.util.ArrayList;
 import java.util.List;
 import javax.swing.JComponent;
@@ -73,6 +74,7 @@ public final class CodexConfigurable implements Configurable {
     data.codexModel = this.modelField.getText().trim();
     data.codexMode = SettingsUi.selected(this.modeBox);
     data.codexEffort = SettingsUi.selected(this.effortBox);
+    ChatService.retryFailedStartsInOpenProjects();
   }
 
   @Override

@@ -17,6 +17,7 @@ import io.firebite.tako.agent.ExecutableLocator;
 import io.firebite.tako.agent.Processes;
 import io.firebite.tako.agent.PromptText;
 import io.firebite.tako.agent.SessionCost;
+import io.firebite.tako.agent.SetupProblem;
 import io.firebite.tako.agent.claude.transcript.SessionStore;
 import io.firebite.tako.agent.claude.transcript.SessionUsage;
 import io.firebite.tako.json.Json;
@@ -209,20 +210,20 @@ public final class ClaudeBackend implements AgentBackend {
   /** The CLI is found and, in API key mode, a key is set. */
   @Override
   public boolean canAsk() {
-    ChatSettings.Data settings = ChatSettings.state();
-    if (locate(settings, this.environment) == null) {
-      return false;
-    }
-    if (settings.authMode != AuthMode.API_KEY) {
-      return true;
-    }
-    String apiKey = ApiKeyStore.load();
-    return apiKey != null && !apiKey.isBlank();
+    return this.setupProblem() == null;
   }
 
   @Override
-  public boolean canStart() {
-    return this.canAsk();
+  public @Nullable SetupProblem setupProblem() {
+    ChatSettings.Data settings = ChatSettings.state();
+    if (locate(settings, this.environment) == null) {
+      return SetupProblem.NOT_INSTALLED;
+    }
+    if (settings.authMode != AuthMode.API_KEY) {
+      return null;
+    }
+    String apiKey = ApiKeyStore.load();
+    return apiKey == null || apiKey.isBlank() ? SetupProblem.NO_API_KEY : null;
   }
 
   @Override

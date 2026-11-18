@@ -13,6 +13,7 @@ import io.firebite.tako.agent.AgentListener;
 import io.firebite.tako.agent.AgentSession;
 import io.firebite.tako.agent.AgentSessionInfo;
 import io.firebite.tako.agent.ExecutableLocator;
+import io.firebite.tako.agent.SetupProblem;
 import io.firebite.tako.agent.rpc.JsonRpcConnection;
 import io.firebite.tako.json.Json;
 import java.io.IOException;
@@ -23,6 +24,7 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
+import org.jetbrains.annotations.Nullable;
 
 /**
  * Any agent speaking the Agent Client Protocol, started by a command line, such as Gemini CLI
@@ -119,14 +121,14 @@ public final class AcpBackend implements AgentBackend {
     return sessions;
   }
 
-  /** The command's program is found; the agent checks its own login when it starts. */
+  /** The agent checks its own login when it starts. */
   @Override
-  public boolean canStart() {
+  public @Nullable SetupProblem setupProblem() {
     try {
       this.command(this.environment);
-      return true;
+      return null;
     } catch (AgentException e) {
-      return false;
+      return SetupProblem.NOT_INSTALLED;
     }
   }
 

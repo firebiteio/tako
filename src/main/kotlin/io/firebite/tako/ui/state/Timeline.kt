@@ -485,10 +485,13 @@ fun ThreadState.onSetup(setup: Setup) {
   }
 }
 
-/** @param start the agent failed to start, so the alert goes once it starts */
+/** @param start the agent failed to start, so the alert replaces an earlier start's and goes once it starts */
 fun ThreadState.onError(text: String, start: Boolean) {
   this.setBusy(false)
   this.failed = true
+  if (start) {
+    this.alerts.removeAll { it.start }
+  }
   this.alerts.add(Alert(text, start = start))
 }
 
