@@ -1,12 +1,23 @@
 <idea-plugin>
   <id>io.firebite.tako</id>
-  <name>Tako</name>
+  <name>Tako: AI Agent Chat</name>
   <vendor url="https://firebite.io">Firebite</vendor>
   <description><![CDATA[
-    A chat for coding agents in the IDE. It runs the Claude Code (<code>claude</code>) or Codex (<code>codex</code>)
-    you have installed, or any agent that speaks the Agent Client Protocol, such as Gemini CLI.
-    Answers stream in, tool calls show as cards, and permission prompts open the change in the IDE diff viewer.
-    The editor selection and inspection results go along as context, and you can resume the agents' own sessions.
+    <p>Chat with Claude Code, OpenAI Codex, Gemini CLI, OpenCode or any Agent Client Protocol (ACP) agent
+    in a JetBrains IDE tool window. Tako runs the agent CLI you already have installed. You review its edits in the IDE diff viewer.</p>
+    <ul>
+      <li>Answers stream in, tool calls show as cards, and permission prompts open the edit in the diff viewer</li>
+      <li>After each turn, open a diff of every file the agent touched. Comment on lines and send the comments back</li>
+      <li>Run several threads per project, each with its own agent, model, mode and effort</li>
+      <li>Rewind a thread to an earlier prompt, with or without restoring the files</li>
+      <li>Commit, push and open a GitHub pull request or GitLab merge request. The agent writes the message</li>
+      <li>Watch a pull request. The agent wakes up when checks fail, a review comes in or it gets merged</li>
+      <li>Send one prompt to several agents or models at once, each in its own git worktree, and keep the best result</li>
+      <li>Let agents start and steer other threads. <code>/orchestrate</code> splits a task across them</li>
+      <li>Attach the editor selection, files, images or inspection results. Resume sessions you started in the CLI</li>
+    </ul>
+    <p>You need at least one agent CLI, such as <code>claude</code>, <code>codex</code> or <code>gemini</code>,
+    on your <code>PATH</code> or set in Settings | Tools | Tako.</p>
   ]]></description>
 
   <resource-bundle>messages.TakoBundle</resource-bundle>
