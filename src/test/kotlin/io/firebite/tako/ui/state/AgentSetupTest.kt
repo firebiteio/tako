@@ -54,6 +54,30 @@ class AgentSetupTest : BasePlatformTestCase() {
     assertEquals("claude", this.thread("acp:Removed").agentToSetUp?.id)
   }
 
+  fun testAnEmptyThreadOffersTheAgentsUntilOneIsPicked() {
+    this.workspace.agents = listOf(AgentOption("claude", "Claude Code", SetupProblem.NOT_INSTALLED),
+      AgentOption("codex", "Codex"))
+    this.workspace.agentPicked = false
+    val thread = this.thread("claude")
+
+    assertTrue(thread.offersAgentPick)
+    assertNull(thread.agentToSetUp)
+
+    this.workspace.agentPicked = true
+
+    assertFalse(thread.offersAgentPick)
+    assertEquals("claude", thread.agentToSetUp?.id)
+  }
+
+  fun testNoReadyAgentShowsTheSetupInsteadOfThePick() {
+    this.workspace.agents = listOf(AgentOption("claude", "Claude Code", SetupProblem.NOT_INSTALLED))
+    this.workspace.agentPicked = false
+    val thread = this.thread("claude")
+
+    assertFalse(thread.offersAgentPick)
+    assertEquals("claude", thread.agentToSetUp?.id)
+  }
+
   fun testAFailedStartReplacesTheEarlierStartError() {
     val thread = this.thread("claude")
 

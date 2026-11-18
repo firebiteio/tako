@@ -100,6 +100,9 @@ public final class ChatSettingsConfigurable implements Configurable {
   public void apply() {
     boolean changed = this.isModified();
     ChatSettings.Data data = ChatSettings.state();
+    if (!this.selectedId().equals(data.defaultAgent)) {
+      data.defaultAgentPicked = true;
+    }
     data.defaultAgent = this.selectedId();
     data.parallelRuns = this.parallelRunsBox.isSelected();
     data.steerWhileWorking = this.steerBox.isSelected();

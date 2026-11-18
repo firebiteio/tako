@@ -55,6 +55,7 @@ import io.firebite.tako.ide.editor.IdeFiles
 import io.firebite.tako.ui.state.ThreadState
 import io.firebite.tako.ui.state.Workspace
 import io.firebite.tako.ui.state.agentToSetUp
+import io.firebite.tako.ui.state.offersAgentPick
 import io.firebite.tako.ui.state.shownSideChat
 import io.firebite.tako.ui.t
 import java.awt.datatransfer.StringSelection
@@ -146,7 +147,7 @@ private fun Main(workspace: Workspace, markdown: ChatMarkdown, actions: CodeActi
       }
     }
     val active = workspace.active
-    val threadAlerts = active?.alerts?.filter { !it.start || active.agentToSetUp == null } ?: emptyList()
+    val threadAlerts = active?.alerts?.filter { !it.start || (active.agentToSetUp == null && !active.offersAgentPick) } ?: emptyList()
     val alerts = workspace.alerts + threadAlerts
     if (alerts.isNotEmpty()) {
       val rem = textStyle.fontSize.value

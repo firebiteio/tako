@@ -44,6 +44,8 @@ public final class ChatSettings implements PersistentStateComponent<ChatSettings
   public static final class Data {
     /** The id of the agent new threads run. */
     public String defaultAgent = "claude";
+    /** The person picked {@link #defaultAgent}, so empty threads stop offering the agents to pick from. */
+    public boolean defaultAgentPicked;
     /** Lets one prompt start several runs at once, each in its own git worktree. */
     public boolean parallelRuns;
     /** A prompt sent while the agent works steers its running turn instead of waiting for it to end. */

@@ -86,6 +86,8 @@ class Workspace(val service: ChatService, val project: Project) {
   var parallelRuns by mutableStateOf(false)
   /** A prompt sent while the agent works steers its turn by default, instead of queuing. */
   var steers by mutableStateOf(false)
+  /** The person picked the agent of new threads. True until the settings say otherwise, so the picker never flashes. */
+  var agentPicked by mutableStateOf(true)
   var benches by mutableStateOf<List<BenchItem>>(emptyList())
   /** Benches the person folded; only this session remembers. */
   val collapsedBenches = mutableStateMapOf<String, Boolean>()
@@ -313,6 +315,7 @@ class Workspace(val service: ChatService, val project: Project) {
       is Settings -> {
         this.parallelRuns = message.parallelRuns
         this.steers = message.steers
+        this.agentPicked = message.agentPicked
       }
       is ChatBenches -> {
         this.benches = message.items

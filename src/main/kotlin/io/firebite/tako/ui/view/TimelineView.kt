@@ -66,6 +66,7 @@ import io.firebite.tako.ui.state.agentToSetUp
 import io.firebite.tako.ui.state.bringBack
 import io.firebite.tako.ui.state.canActOn
 import io.firebite.tako.ui.state.canBringBack
+import io.firebite.tako.ui.state.offersAgentPick
 import io.firebite.tako.ui.state.canMoveUp
 import io.firebite.tako.ui.state.canQuote
 import io.firebite.tako.ui.state.canRewind
@@ -183,6 +184,9 @@ fun ThreadView(thread: ThreadState, markdown: ChatMarkdown, actions: CodeActions
     if (thread.ownTurns.isEmpty()) {
       Spacer(Modifier.weight(1f))
       Hero(thread)
+      if (thread.offersAgentPick) {
+        Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) { AgentPickCard(thread) }
+      }
       thread.agentToSetUp?.let { agent ->
         Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.TopCenter) { AgentSetupCard(thread, agent) }
       }

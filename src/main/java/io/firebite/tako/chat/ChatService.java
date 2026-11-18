@@ -300,7 +300,16 @@ public final class ChatService implements Disposable {
   /** Tells the chat what the settings let it offer. */
   public void postSettings() {
     ChatSettings.Data settings = ChatSettings.state();
-    this.post(new Settings(settings.parallelRuns, settings.steerWhileWorking));
+    this.post(new Settings(settings.parallelRuns, settings.steerWhileWorking, settings.defaultAgentPicked));
+  }
+
+  /** Makes the agent the one of new threads and moves the empty thread it was picked in to it. Must run on the EDT. */
+  public void pickDefaultAgent(String threadId, String agent) {
+    ChatSettings.Data settings = ChatSettings.state();
+    settings.defaultAgent = agent;
+    settings.defaultAgentPicked = true;
+    this.setAgent(threadId, agent);
+    postSettingsToOpenProjects();
   }
 
   /**

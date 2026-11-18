@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - A new thread whose agent is not installed or has no API key now shows how to set it up. It links the installer, asks for an API key or switches to the Claude CLI login, and offers the agents that are ready.
+- Until you pick the agent of new threads, a new thread lists the agents found on this computer. The one you pick becomes the default.
 
 ## [0.1.1] - 2026-11-15
 
