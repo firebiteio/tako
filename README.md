@@ -2,6 +2,9 @@
 
 # Tako
 
+[![JetBrains Marketplace](https://img.shields.io/jetbrains/plugin/v/36160?label=JetBrains%20Marketplace)](https://plugins.jetbrains.com/plugin/36160-tako)
+[![Downloads](https://img.shields.io/jetbrains/plugin/d/36160)](https://plugins.jetbrains.com/plugin/36160-tako)
+
 Tako puts coding agents in an IntelliJ tool window. It starts the agent CLI you already have installed and shows the conversation as a chat, with tool calls as cards and file edits in the IDE's diff viewer.
 
 It works with:
@@ -46,7 +49,7 @@ It works with:
 
 ## Installation
 
-In the IDE, open Settings > Plugins > Marketplace, search for Tako and install it. To try the latest changes, install a [nightly build](#nightly-builds) instead.
+In the IDE, open Settings > Plugins > Marketplace, search for Tako and install it, or install it from its [Marketplace page](https://plugins.jetbrains.com/plugin/36160-tako). To try the latest changes, install a [nightly build](#nightly-builds) instead.
 
 ## Usage
 
@@ -108,9 +111,9 @@ The group's compare button lists each run's changed files, lines, cost, tokens a
 
 ### Signing in
 
-Codex and ACP agents use their own CLI login. Run `codex login`, for example.
+Each agent uses its own CLI login. Run `codex login`, for example.
 
-Claude Code is different. Tako passes it an Anthropic API key, which it keeps in the IDE password safe. [Anthropic doesn't allow](https://code.claude.com/docs/en/agent-sdk/overview#get-started) third-party tools to offer a claude.ai subscription login without its approval. There is a Claude CLI login option, but you use it at your own risk.
+For Claude Code, choose an API key or the Claude CLI login under Settings > Tools > Tako > Claude Code. Tako keeps the API key in the IDE password safe. The Claude CLI login uses whatever your `claude` install is signed in with. See [Anthropic's terms](https://code.claude.com/docs/en/agent-sdk/overview#get-started) on using a claude.ai subscription in third-party tools.
 
 ## Building
 
