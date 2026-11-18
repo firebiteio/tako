@@ -588,20 +588,30 @@ public final class ChatController implements Disposable {
   }
 
   /**
-   * Waits until the agent is no longer {@link State#isBusy busy}, the timeout passed or the thread closed.
+   * Waits until no agent switch runs and the agent is no longer {@link State#isBusy busy}, the timeout passed or the
+   * thread closed.
    *
    * @return the state then
    */
   public State awaitSettled(long timeoutMillis) throws InterruptedException {
-    return this.status.awaitSettled(timeoutMillis);
+    long deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis);
+    try {
+      this.switching.get(timeoutMillis, TimeUnit.MILLISECONDS);
+    } catch (TimeoutException e) {
+      return this.status.get();
+    } catch (ExecutionException e) {
+      throw new IllegalStateException(e);
+    }
+    long left = TimeUnit.NANOSECONDS.toMillis(deadline - System.nanoTime());
+    return this.status.awaitSettled(Math.max(0, left));
   }
 
   /**
-   * Like {@link #awaitSettled} without blocking: completes with the state once the agent is no longer busy or the
-   * thread closed.
+   * Like {@link #awaitSettled} without blocking: completes with the state once no agent switch runs and the agent is
+   * no longer busy or the thread closed.
    */
   public CompletableFuture<State> settled() {
-    return this.status.settled();
+    return this.switching.thenCompose(ignored -> this.status.settled());
   }
 
   @Override
