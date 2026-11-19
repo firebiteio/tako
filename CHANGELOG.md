@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-19
+
 - Fix a new thread still showing as failed after you pick an agent that starts, when the default agent could not start.
 - Fix the changes of a turn missing files the agent created, edited or deleted with scripts or shell commands.
 
@@ -22,7 +24,8 @@
 
 - Initial release.
 
-[Unreleased]: https://github.com/firebiteio/tako/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/firebiteio/tako/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/firebiteio/tako/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/firebiteio/tako/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/firebiteio/tako/compare/v0.1.1...v0.2.0
 [0.1.1]: https://github.com/firebiteio/tako/compare/v0.1.0...v0.1.1
