@@ -96,6 +96,12 @@ public final class Conversation {
           this.files.add(finished.change().path());
         }
       }
+      case AgentEvent.FilesChanged changed -> {
+        for (AgentEvent.Change change : changed.changes()) {
+          this.files.remove(change.path());
+          this.files.add(change.path());
+        }
+      }
       default -> {
       }
     }

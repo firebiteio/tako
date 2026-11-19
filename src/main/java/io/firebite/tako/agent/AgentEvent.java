@@ -243,6 +243,15 @@ public sealed interface AgentEvent {
   ) implements AgentEvent {
   }
 
+  /**
+   * Tako's own event, which no agent sends: files the turn changed without a tool call reporting them, for example
+   * through a script. Sent just before the turn's {@link TurnEnded}. Never part of a replay.
+   */
+  record FilesChanged(
+    List<Change> changes
+  ) implements AgentEvent {
+  }
+
   /** The agent withdrew a permission prompt. */
   record PermissionCancelled(
     String requestId

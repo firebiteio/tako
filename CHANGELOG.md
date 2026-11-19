@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 - Fix a new thread still showing as failed after you pick an agent that starts, when the default agent could not start.
+- Fix the changes of a turn missing files the agent created, edited or deleted with scripts or shell commands.
 
 ## [0.2.1] - 2026-11-18
 

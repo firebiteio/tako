@@ -67,6 +67,9 @@ fun ThreadState.handleEvent(event: AgentEvent) {
     is AgentEvent.TaskUpdated -> this.onTaskEvent(event)
     is AgentEvent.PromptTaken -> this.takeQueued(event.key, event.startsTurn)
     is AgentEvent.AgentSwitched -> this.addDivider(t("timeline.switched", event.from, event.to))
+    is AgentEvent.FilesChanged -> this.turn?.takeIf { !it.done }?.let { turn ->
+      event.changes.forEach { turn.changes.putIfAbsent(it.path, it) }
+    }
   }
 }
 

@@ -139,7 +139,7 @@ public final class ChatController implements Disposable {
     this.backend = backend;
     this.isTitled = record.sessionId != null && !record.sideChat
       || !ThreadStore.Record.DEFAULT_TITLE.equals(record.title);
-    this.changes = new TurnChanges(project);
+    this.changes = new TurnChanges(project, this::gitFolder);
     this.handoff = new HandoffTracker(record, this.conversation);
     this.status = new StateCell(host::stateChanged);
     ThreadStore.PendingSetup pending = record.pendingSetup;
@@ -1128,7 +1128,10 @@ public final class ChatController implements Disposable {
       }
       case AgentEvent.LimitReached limit -> Async.onEdt(() -> this.host.limitReached(limit.label(), limit.resetsAt(),
         limit.namesReset()));
-      case AgentEvent.TurnEnded ended -> next = this.onTurnEnded(ended);
+      case AgentEvent.TurnEnded ended -> {
+        this.postUnreportedChanges();
+        next = this.onTurnEnded(ended);
+      }
       case AgentEvent.PromptTaken taken -> next = this.onPromptTaken(taken);
       default -> {
       }
@@ -1136,6 +1139,16 @@ public final class ChatController implements Disposable {
     this.view.post(new Event(event));
     if (next != null) {
       this.deliver(next.turn(), next.prompt(), false, null);
+    }
+  }
+
+  /** Sends the chat the files the turn changed without a tool call reporting them, so its changes list them too. */
+  private void postUnreportedChanges() {
+    List<AgentEvent.Change> unreported = this.changes.endTurn();
+    if (!unreported.isEmpty()) {
+      AgentEvent.FilesChanged event = new AgentEvent.FilesChanged(unreported);
+      this.conversation.add(event);
+      this.view.post(new Event(event));
     }
   }
 
