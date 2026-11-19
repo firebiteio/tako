@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fix the cost and tokens of a thread dropping to a lower figure when you continue it after the IDE was closed.
+
 ## [0.2.2] - 2026-11-19
 
 - Fix a new thread still showing as failed after you pick an agent that starts, when the default agent could not start.

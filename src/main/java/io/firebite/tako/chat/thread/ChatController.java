@@ -83,6 +83,8 @@ public final class ChatController implements Disposable {
   private volatile boolean isInterrupted;
   /** The last launch failed, so {@link #retryFailedStart} starts the agent again. */
   private volatile boolean startFailed;
+  /** The session's usage when the agent last launched, and the part of it the agent restored and counts on from. */
+  private volatile UsageBase usageBase = new UsageBase(SessionCost.NONE, SessionCost.NONE);
   private final AgentConnection connection = new AgentConnection();
   private final TurnChanges changes;
   /** Done once {@link #open} launched the agent, so a prompt sent meanwhile does not launch a second one. */
@@ -696,6 +698,10 @@ public final class ChatController implements Disposable {
       this.startFailed(e.getMessage());
       return CompletableFuture.completedFuture(null);
     }
+    SessionCost restored = resumeSessionId != null && basePath != null
+      ? this.backend.sessionCost(basePath, resumeSessionId)
+      : null;
+    this.usageBase = new UsageBase(this.record.usage(), restored != null ? restored : SessionCost.NONE);
     this.keepsTimeline = false;
     return session.initialize().whenComplete((info, error) -> {
       if (error != null) {
@@ -1190,7 +1196,8 @@ public final class ChatController implements Disposable {
     this.error = ended.error();
     this.refreshContext();
     if (ended.cost() != null) {
-      this.record.setUsage(ended.cost());
+      UsageBase base = this.usageBase;
+      this.record.setUsage(base.atLaunch().plusSince(ended.cost(), base.restored()));
       this.recordChanged();
     }
     if (this.record.firstTurnMillis == 0 && ended.durationMs() != null) {
@@ -1253,6 +1260,9 @@ public final class ChatController implements Disposable {
 
   private void postError(String text) {
     this.view.post(new ChatError(text));
+  }
+
+  private record UsageBase(SessionCost atLaunch, SessionCost restored) {
   }
 
   /** What the thread's agent is doing. */

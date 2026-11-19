@@ -371,7 +371,7 @@ public final class ThreadStore {
         this.earlierSessions = sessions;
       }
       this.sessionId = null;
-      this.setUsage(new SessionCost(0, 0, 0, 0, 0, null));
+      this.setUsage(SessionCost.NONE);
     }
 
     /** The folder the thread works in: its {@link #workPath}, its {@link #projectPath} or else {@code basePath}. */
@@ -380,6 +380,12 @@ public final class ThreadStore {
         return this.workPath;
       }
       return this.projectPath != null ? this.projectPath : basePath;
+    }
+
+    /** The current session's usage. */
+    public SessionCost usage() {
+      return new SessionCost(this.costUsd, this.inputTokens, this.outputTokens, this.cacheReadTokens,
+        this.cacheWriteTokens, null);
     }
 
     public void setUsage(SessionCost cost) {
