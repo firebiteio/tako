@@ -2,6 +2,7 @@ package io.firebite.tako.ui.state
 
 import com.intellij.testFramework.fixtures.BasePlatformTestCase
 import io.firebite.tako.agent.AgentEvent
+import io.firebite.tako.agent.AgentInfo
 import io.firebite.tako.agent.SetupProblem
 import io.firebite.tako.chat.ChatService
 import io.firebite.tako.chat.store.ThreadStore
@@ -85,6 +86,17 @@ class AgentSetupTest : BasePlatformTestCase() {
     thread.onError("Could not start", true)
 
     assertEquals(listOf("Could not start"), thread.alerts.map { it.text })
+  }
+
+  fun testAStartAfterAFailedStartClearsTheFailure() {
+    val thread = this.thread("claude")
+    thread.onError("CLI not found", true)
+
+    thread.onInit(AgentInfo("codex", "Codex", "", AgentInfo.Capabilities(true, false, true, false, true, true, false),
+      emptyList(), null, emptyList(), null, null, emptyList()), null)
+
+    assertFalse(thread.failed)
+    assertTrue(thread.alerts.isEmpty())
   }
 
   fun testAThreadWithTurnsShowsNoSetup() {

@@ -2,6 +2,8 @@
 
 ## [Unreleased]
 
+- Fix a new thread still showing as failed after you pick an agent that starts, when the default agent could not start.
+
 ## [0.2.1] - 2026-11-18
 
 - Fix switching agents right after a switch, which was sometimes refused while the previous switch was still finishing.

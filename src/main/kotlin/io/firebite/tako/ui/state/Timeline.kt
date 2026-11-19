@@ -402,7 +402,9 @@ fun ThreadState.onInit(info: AgentInfo, projectRoot: String?) {
   }
   this.info = info
   this.stopped = false
-  this.alerts.removeAll { it.start }
+  if (this.alerts.removeAll { it.start }) {
+    this.failed = false
+  }
   this.commands = info.commands
   val wanted = info.model ?: ""
   val models = info.models
